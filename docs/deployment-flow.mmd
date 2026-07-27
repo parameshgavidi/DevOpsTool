@@ -1,10 +1,61 @@
-%% Custom DevOps Deployment Tool - simple gated workflow
+%% Custom DevOps Deployment Tool - main gated workflow steps
 %% Render:  npx -y @mermaid-js/mermaid-cli -i docs/deployment-flow.mmd -o docs/deployment-flow.png
 flowchart TD
-    Start([Launch DevOps Tool]) --> Load[Load appsettings.json]
-    Load --> Env[Determine active environment]
-    Env --> Build[1. Build Application]
-    Build --> Backup[2. Backup target environment]
-    Backup --> Deploy[3. Deploy to SIT]
-    Deploy --> Done([Complete])
-    Backup -. optional .-> Rollback[4. Rollback]
+    Start([Launch DevOps Tool]) --> Load[/"Load appsettings.json<br/>env, apps, repoRoot, outputRoot, logging"/]
+    Load --> ActiveEnv[Determine active environment]
+    ActiveEnv --> BuildGate["BUILD enabled (gate 1)"]
+
+    subgraph BUILD["1 - Build Application"]
+        direction TB
+        BuildGate --> ShowApps[Display configured apps]
+        ShowApps --> ValBuild[Validate project, source, output paths]
+        ValBuild --> RunBuild[Run msbuild and stream logs to UI]
+        RunBuild --> BuildOk{Build succeeded?}
+        BuildOk -- Yes --> Artifacts[Write artifacts to output folder]
+    end
+
+    Artifacts --> BackupGate["BACKUP enabled (gate 2)"]
+
+    subgraph BACKUP["2 - Backup target environment (SIT)"]
+        direction TB
+        BackupGate --> ValPaths[Validate source, destination, backup paths]
+        ValPaths --> TsFolder[Create timestamped backup folder]
+        TsFolder --> DoBackup[Copy deployment and env config files]
+        DoBackup --> BackupOk{Backup succeeded?}
+    end
+
+    BackupOk -- Yes --> DeployGate["DEPLOY enabled (gate 3)"]
+    BackupOk -- Yes --> RollbackGate[ROLLBACK available]
+
+    subgraph DEPLOY["3 - Deploy to SIT"]
+        direction TB
+        DeployGate --> CopyRelease[Copy artifacts to IIS release folder]
+        CopyRelease --> Overrides[Apply config overrides and run scripts]
+        Overrides --> ValDeploy[Validate destination and files]
+        ValDeploy --> DeployOk{Deploy succeeded?}
+    end
+
+    subgraph ROLLBACK["4 - Rollback (optional)"]
+        direction TB
+        RollbackGate --> Restore[Restore files and config from backup]
+    end
+
+    BuildOk -- No --> Fail([Failed])
+    BackupOk -- No --> Fail
+    DeployOk -- No --> Fail
+    DeployOk -- Yes --> Done([Complete])
+    Restore --> Done
+
+    Log[["Logging<br/>Timestamped entries in daily log file"]]
+    Fail -.-> Log
+    Done -.-> Log
+
+    classDef gate fill:#2d6cdf,stroke:#1b3f8a,color:#fff;
+    classDef ok fill:#1b8a5a,stroke:#0f5132,color:#fff;
+    classDef fail fill:#c0392b,stroke:#7b241c,color:#fff;
+    classDef log fill:#6c3483,stroke:#4a235a,color:#fff;
+
+    class BuildGate,BackupGate,DeployGate,RollbackGate gate;
+    class Done ok;
+    class Fail fail;
+    class Log log;

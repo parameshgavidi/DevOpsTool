@@ -1,23 +1,29 @@
 # DevOpsTool - Deployment Flow
 
-Simple end-to-end workflow for the **Custom DevOps Deployment Tool** — a
+End-to-end workflow for the **Custom DevOps Deployment Tool** — a
 configuration-driven **.NET MAUI Blazor Hybrid** app for building, backing up,
 deploying, and rolling back on-premises GSS applications in the **SIT**
 environment.
 
-Each step is **gated**: the next step is enabled only after the previous one
+Each stage is **gated**: the next step is enabled only after the previous one
 succeeds.
 
 ![DevOps deployment flow](./deployment-flow.png)
 
 ## Stages
 
-1. **Load configuration** — Read `appsettings.json` (environment, apps, paths, logging).
-2. **Determine active environment** — Use the configured SIT environment.
-3. **Build Application** — Build the app and write artifacts to the output folder.
-4. **Backup target environment** — Back up the current SIT deployment before changes.
-5. **Deploy to SIT** — Copy artifacts to the release folder and apply config overrides.
-6. **Rollback** *(optional)* — Restore from a backup if needed.
+1. **Startup** — Load `appsettings.json`, determine the active environment, enable
+   the BUILD tab (gate 1).
+2. **Build Application** — Display configured apps, validate paths, run
+   `msbuild` (stream logs to UI), write artifacts to the output folder.
+3. **Backup target environment (gate 2)** — Validate paths, create a timestamped
+   backup folder, copy deployment and env config files.
+4. **Deploy to SIT (gate 3)** — Copy artifacts to the IIS release folder, apply
+   config overrides, run scripts, validate the destination.
+5. **Rollback (optional)** — Restore files and configuration from a backup
+   snapshot when needed.
+6. **Logging** — All build, release, and exception activity is written to a daily
+   log file.
 
 ## Editing the diagram
 
