@@ -1,29 +1,30 @@
 # DevOpsTool - Deployment Flow
 
-End-to-end workflow for the **Custom DevOps Deployment Tool** — a
-configuration-driven **.NET MAUI Blazor Hybrid** app for building, backing up,
-deploying, and rolling back on-premises GSS applications in the **SIT**
-environment.
-
-Each stage is **gated**: the next step is enabled only after the previous one
-succeeds.
+Flowchart based on the **BUILD** and **SIT** screens in the Custom DevOps
+Deployment Tool (.NET MAUI Blazor Hybrid app).
 
 ![DevOps deployment flow](./deployment-flow.png)
 
-## Stages
+## BUILD tab
 
-1. **Startup** — Load `appsettings.json`, determine the active environment, enable
-   the BUILD tab (gate 1).
-2. **Build Application** — Display configured apps, validate paths, run
-   `msbuild` (stream logs to UI), write artifacts to the output folder.
-3. **Backup target environment (gate 2)** — Validate paths, create a timestamped
-   backup folder, copy deployment and env config files.
-4. **Deploy to SIT (gate 3)** — Copy artifacts to the IIS release folder, apply
-   config overrides, run scripts, validate the destination.
-5. **Rollback (optional)** — Restore files and configuration from a backup
-   snapshot when needed.
-6. **Logging** — All build, release, and exception activity is written to a daily
-   log file.
+1. **Configure paths** — Set Repo Root and Output Root.
+2. **Applications list** — Shows configured apps with name, type, status, and action.
+3. **Choose action** — Build a selected app, **Build All**, or optionally **Bundle DB
+   Rollup Scripts**.
+4. **Run msbuild** — `Configuration=Release`, `DeployOnBuild=true`.
+5. **Output Log** — Streams build progress and results.
+6. **Output** — Artifacts written to the Output Root folder.
+
+## SIT deployment tab
+
+1. **Backup** — Back up all sources to a timestamped backup folder.
+2. **Deploy by application type**
+   - **Web / API / MVC / ASMX** — Stop App Pool → Copy Files → Apply config override
+     → Status Ready (Rollback available).
+   - **Windows Service / MSI** — Install MSI → Confirm install → Copy Config →
+     Status Ready.
+3. **Database** — After file copy completes: Backup DB → Apply Schema Scripts.
+4. **Deployment Log** — Records backup, deploy, and config override activity.
 
 ## Editing the diagram
 
