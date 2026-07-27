@@ -1,0 +1,85 @@
+%% Custom DevOps Deployment Tool - .NET MAUI Blazor Hybrid App
+%% Configuration-driven, gated workflow: Build -> Backup -> Deploy -> Rollback
+%% Render:  npx -y @mermaid-js/mermaid-cli -i docs/deployment-flow.mmd -o docs/deployment-flow.png
+flowchart TD
+    Start([User launches Custom DevOps Tool]) --> Load[/"Load appsettings.json<br/>env config, app definitions,<br/>repoRoot, outputRoot, logging"/]
+    Load --> ActiveEnv{Determine active<br/>environment}
+    ActiveEnv --> EnableTab["Enable only the active<br/>environment tab (SIT)"]
+    EnableTab --> BuildTab["BUILD tab enabled<br/>(gate 1)"]
+
+    %% ---------------- BUILD ----------------
+    subgraph BUILD["1 - Build Application"]
+        direction TB
+        BuildTab --> ShowApps["Display configured apps<br/>name, type, status, action"]
+        ShowApps --> Pending["Status = Pending"]
+        Pending --> ValBuild{"Validate:<br/>project file exists?<br/>source dir accessible?<br/>output subfolder created?"}
+        ValBuild -- No --> BuildFail["Status = Failed<br/>Show config validation error<br/>Log invalid path"]
+        ValBuild -- Yes --> Building["Status = Building"]
+        Building --> Stream["Stream stdout / stderr<br/>to UI log (msbuild)"]
+        Stream --> BuildOk{"Build succeeded?"}
+        BuildOk -- No --> BuildErr["Status = Failed<br/>Show last relevant error lines"]
+        BuildOk -- Yes --> Artifacts["Write artifacts to<br/>configured output folder"]
+        Artifacts --> BuildSuccess["Status = Success"]
+    end
+
+    BuildErr --> LogSink
+    BuildFail --> LogSink
+    BuildSuccess --> BackupGate["BACKUP enabled<br/>(gate 2)"]
+
+    %% ---------------- BACKUP ----------------
+    subgraph BACKUP["2 - Backup target environment (SIT)"]
+        direction TB
+        BackupGate --> ValPaths["Startup validation:<br/>source, destination, backup paths"]
+        ValPaths --> CopyOnly["Only 'Copy files' enabled"]
+        CopyOnly --> TsFolder["Create timestamped<br/>backup root folder"]
+        TsFolder --> DoBackup["Validate deployment dir<br/>Create app-specific folder<br/>Copy deployment files<br/>Copy env config files<br/>Record file count"]
+        DoBackup --> BackupOk{"Backup completed<br/>successfully?"}
+        BackupOk -- No --> BackupFail["Status = Failed<br/>Environment stays LOCKED<br/>No partial backup allowed"]
+        BackupOk -- Yes --> BackupComplete["Backup = Complete<br/>Deploy + Rollback enabled"]
+    end
+
+    BackupFail --> LogSink
+    BackupComplete --> DeployGate["DEPLOY enabled<br/>(gate 3)"]
+    BackupComplete --> RollbackAvail["ROLLBACK available"]
+
+    %% ---------------- DEPLOY ----------------
+    subgraph DEPLOY["3 - Deploy to SIT"]
+        direction TB
+        DeployGate --> PreDeploy{"Preconditions:<br/>artifacts exist?<br/>config valid?<br/>targets accessible?<br/>backup complete?"}
+        PreDeploy -- No --> DeployBlocked["Deploy actions stay disabled"]
+        PreDeploy -- Yes --> CopyRelease["Copy build artifacts to<br/>release folder (IIS)"]
+        CopyRelease --> Overrides["Apply env-specific + config overrides<br/>Run pre/post deployment scripts"]
+        Overrides --> ValDeploy{"Validate:<br/>destination dir exists?<br/>expected files present?<br/>config override done?"}
+        ValDeploy -- No --> DeployFail["Status = Failed<br/>Log failed file + environment"]
+        ValDeploy -- Yes --> DeploySuccess["Status = Success"]
+    end
+
+    DeployFail --> LogSink
+    DeployBlocked --> LogSink
+    DeploySuccess --> LogSink
+
+    %% ---------------- ROLLBACK ----------------
+    subgraph ROLLBACK["4 - Rollback"]
+        direction TB
+        RollbackAvail --> HasBackup{"Successful backup<br/>exists for app?"}
+        HasBackup -- No --> NoRollback["Rollback unavailable"]
+        HasBackup -- Yes --> Restore["Restore files + configuration<br/>from selected backup snapshot"]
+        Restore --> RollbackDone["Application restored<br/>to last backup"]
+    end
+
+    NoRollback --> LogSink
+    RollbackDone --> LogSink
+
+    %% ---------------- LOGGING (cross-cutting) ----------------
+    LogSink[["6 - Logging<br/>Timestamped build/release/exception<br/>entries in daily log file (root)"]]
+
+    %% ---------------- styles ----------------
+    classDef ok fill:#1b8a5a,stroke:#0f5132,color:#fff;
+    classDef fail fill:#c0392b,stroke:#7b241c,color:#fff;
+    classDef gate fill:#2d6cdf,stroke:#1b3f8a,color:#fff;
+    classDef log fill:#6c3483,stroke:#4a235a,color:#fff;
+
+    class BuildSuccess,BackupComplete,DeploySuccess,RollbackDone ok;
+    class BuildFail,BuildErr,BackupFail,DeployFail,DeployBlocked,NoRollback fail;
+    class BuildTab,BackupGate,DeployGate,RollbackAvail gate;
+    class LogSink log;
