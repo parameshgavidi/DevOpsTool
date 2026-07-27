@@ -14,7 +14,7 @@ predecessor completes successfully, preventing partial or unsafe releases.
 
 1. **Startup / Configuration** - Load `appsettings.json` (environment config, app
    definitions, `repoRoot`, `outputRoot`, logging). The active environment is
-   determined by configuration and only its tab (SIT) is enabled.
+   determined by configuration; the BUILD tab is then enabled (gate 1).
 2. **Build Application (gate 1)** - Validate project file / source dir / output
    subfolder, run `msbuild`, stream stdout+stderr to the UI log, write artifacts
    to the output folder. Status moves Pending -> Building -> Success/Failed; a

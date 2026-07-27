@@ -4,8 +4,7 @@
 flowchart TD
     Start([User launches Custom DevOps Tool]) --> Load[/"Load appsettings.json<br/>env config, app definitions,<br/>repoRoot, outputRoot, logging"/]
     Load --> ActiveEnv{Determine active<br/>environment}
-    ActiveEnv --> EnableTab["Enable only the active<br/>environment tab (SIT)"]
-    EnableTab --> BuildTab["BUILD tab enabled<br/>(gate 1)"]
+    ActiveEnv --> BuildTab["BUILD tab enabled<br/>(gate 1)"]
 
     %% ---------------- BUILD ----------------
     subgraph BUILD["1 - Build Application"]
