@@ -1,61 +1,61 @@
-%% Custom DevOps Deployment Tool - main gated workflow steps
+%% DevOps Tool flow - based on BUILD and SIT UI screens
 %% Render:  npx -y @mermaid-js/mermaid-cli -i docs/deployment-flow.mmd -o docs/deployment-flow.png
 flowchart TD
-    Start([Launch DevOps Tool]) --> Load[/"Load appsettings.json<br/>env, apps, repoRoot, outputRoot, logging"/]
-    Load --> ActiveEnv[Determine active environment]
-    ActiveEnv --> BuildGate["BUILD enabled (gate 1)"]
+    Start([Launch DevOps Tool]) --> BuildTab[BUILD tab]
 
-    subgraph BUILD["1 - Build Application"]
+    subgraph BUILD["BUILD tab"]
         direction TB
-        BuildGate --> ShowApps[Display configured apps]
-        ShowApps --> ValBuild[Validate project, source, output paths]
-        ValBuild --> RunBuild[Run msbuild and stream logs to UI]
-        RunBuild --> BuildOk{Build succeeded?}
-        BuildOk -- Yes --> Artifacts[Write artifacts to output folder]
+        Config["Configure paths<br/>Repo Root and Output Root"]
+        Config --> AppList["Display applications<br/>name, type, status, action"]
+        AppList --> BuildChoice{Choose action}
+        BuildChoice --> BuildOne[Build selected app]
+        BuildChoice --> BuildAll[Build All]
+        BuildChoice --> DbRollup["Bundle DB Rollup Scripts<br/>(optional)"]
+        BuildOne --> Msbuild["Run msbuild<br/>Configuration=Release, DeployOnBuild=true"]
+        BuildAll --> Msbuild
+        Msbuild --> BuildLog[Stream progress to Output Log]
+        BuildLog --> BuildOk{Build succeeded?}
+        BuildOk -- Yes --> Output["Artifacts written to<br/>Output Root folder"]
     end
 
-    Artifacts --> BackupGate["BACKUP enabled (gate 2)"]
+    BuildTab --> Config
+    Output --> SitTab[SIT tab]
 
-    subgraph BACKUP["2 - Backup target environment (SIT)"]
+    subgraph SIT["SIT deployment tab"]
         direction TB
-        BackupGate --> ValPaths[Validate source, destination, backup paths]
-        ValPaths --> TsFolder[Create timestamped backup folder]
-        TsFolder --> DoBackup[Copy deployment and env config files]
-        DoBackup --> BackupOk{Backup succeeded?}
+        SitTab --> Backup["Backup all sources<br/>to timestamped backup folder"]
+        Backup --> AppType{Application type?}
+
+        AppType --> WebApi["Web / API / MVC / ASMX"]
+        AppType --> WinSvc["Windows Service / MSI"]
+
+        WebApi --> StopPool[Stop App Pool]
+        StopPool --> CopyFiles["Copy Files<br/>build-output to IIS folder"]
+        CopyFiles --> ConfigOverride["Apply config override<br/>e.g. web.config"]
+        ConfigOverride --> ReadyWeb[Status = Ready]
+
+        WinSvc --> InstallMsi[Install MSI]
+        InstallMsi --> ConfirmMsi[Confirm install]
+        ConfirmMsi --> CopyConfig[Copy Config]
+        CopyConfig --> ReadySvc[Status = Ready]
+
+        CopyFiles --> DbActions["Database actions<br/>after file copy completes"]
+        DbActions --> BackupDb[Backup DB]
+        BackupDb --> ApplySchema[Apply Schema Scripts]
+
+        ReadyWeb -. optional .-> Rollback[Rollback]
     end
 
-    BackupOk -- Yes --> DeployGate["DEPLOY enabled (gate 3)"]
-    BackupOk -- Yes --> RollbackGate[ROLLBACK available]
+    BuildOk -- No --> BuildFail([Build failed])
+    ReadyWeb --> DeployLog[Write Deployment Log]
+    ReadySvc --> DeployLog
+    ApplySchema --> DeployLog
+    DeployLog --> Done([Complete])
 
-    subgraph DEPLOY["3 - Deploy to SIT"]
-        direction TB
-        DeployGate --> CopyRelease[Copy artifacts to IIS release folder]
-        CopyRelease --> Overrides[Apply config overrides and run scripts]
-        Overrides --> ValDeploy[Validate destination and files]
-        ValDeploy --> DeployOk{Deploy succeeded?}
-    end
-
-    subgraph ROLLBACK["4 - Rollback (optional)"]
-        direction TB
-        RollbackGate --> Restore[Restore files and config from backup]
-    end
-
-    BuildOk -- No --> Fail([Failed])
-    BackupOk -- No --> Fail
-    DeployOk -- No --> Fail
-    DeployOk -- Yes --> Done([Complete])
-    Restore --> Done
-
-    Log[["Logging<br/>Timestamped entries in daily log file"]]
-    Fail -.-> Log
-    Done -.-> Log
-
-    classDef gate fill:#2d6cdf,stroke:#1b3f8a,color:#fff;
     classDef ok fill:#1b8a5a,stroke:#0f5132,color:#fff;
     classDef fail fill:#c0392b,stroke:#7b241c,color:#fff;
-    classDef log fill:#6c3483,stroke:#4a235a,color:#fff;
+    classDef tab fill:#2d6cdf,stroke:#1b3f8a,color:#fff;
 
-    class BuildGate,BackupGate,DeployGate,RollbackGate gate;
-    class Done ok;
-    class Fail fail;
-    class Log log;
+    class Output,ReadyWeb,ReadySvc,Done ok;
+    class BuildFail fail;
+    class BuildTab,SitTab tab;
