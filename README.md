@@ -7,6 +7,6 @@ applications across the SIT environment.
 ## Deployment flow
 
 See [`docs/deployment-flow.md`](docs/deployment-flow.md) for the end-to-end
-workflow diagram (Build -> Backup -> Deploy -> Rollback, with logging).
-
-![DevOps deployment flow](docs/deployment-flow.png)
+workflow diagram (Build → Backup → Deploy → Rollback, with logging). On GitHub
+it renders as a live Mermaid flowchart — open that file instead of copying the
+PNG export.
