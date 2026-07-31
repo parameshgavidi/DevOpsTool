@@ -3,6 +3,8 @@
 Flowchart based on the **BUILD**, **SIT**, **CAT**, and **PROD** screens in the Custom DevOps
 Deployment Tool (.NET MAUI Blazor Hybrid app).
 
+![DevOps deployment flow — BUILD, SIT, CAT, PROD](./deployment-flow.png)
+
 ```mermaid
 flowchart TD
     Start([Launch DevOps Tool]) --> BuildTab[BUILD tab]

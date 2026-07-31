@@ -2,11 +2,13 @@
 
 Custom DevOps Deployment Tool - a configuration-driven **.NET MAUI Blazor Hybrid**
 application for building, backing up, deploying and rolling back on-premises GSS
-applications across the SIT environment.
+applications across SIT, CAT, and PROD environments.
 
 ## Deployment flow
 
-See [`docs/deployment-flow.md`](docs/deployment-flow.md) for the end-to-end
-workflow diagram (Build → Backup → Deploy → Rollback, with logging). On GitHub
-it renders as a live Mermaid flowchart — open that file instead of copying the
-PNG export.
+See [`docs/deployment-flow.md`](docs/deployment-flow.md) for the full end-to-end
+workflow (BUILD → SIT → CAT → PROD, with backup, DB script deploy, and logging).
+
+![DevOps deployment flow](docs/deployment-flow.png)
+
+Plain-text Mermaid source for copy-paste: [`docs/deployment-flow.txt`](docs/deployment-flow.txt)
