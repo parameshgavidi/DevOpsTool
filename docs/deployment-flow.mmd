@@ -1,9 +1,9 @@
-%% DevOps Tool flow - based on BUILD and SIT UI screens
+%% DevOps Tool flow - BUILD, SIT, and PROD environments
 %% Render:  npx -y @mermaid-js/mermaid-cli -i docs/deployment-flow.mmd -o docs/deployment-flow.png
 flowchart TD
     Start([Launch DevOps Tool]) --> BuildTab[BUILD tab]
 
-    subgraph BUILD["BUILD tab"]
+    subgraph BUILD["BUILD environment"]
         direction TB
         Config["Configure paths<br/>Code Repo Root, DB Repo Root,<br/>Output Root, Build Backup folder"]
         Config --> PullLatest["Pull latest changes<br/>from Code repo and DB repo"]
@@ -21,41 +21,82 @@ flowchart TD
 
     BuildTab --> Config
     Output --> SitTab[SIT tab]
+    BuildOk -- No --> BuildFail([Build failed])
 
-    subgraph SIT["SIT deployment tab"]
+    subgraph SIT["SIT environment"]
         direction TB
-        SitTab --> SitBackup["Backup all sources<br/>to timestamped backup folder"]
-        SitBackup --> AppType{Application type?}
-        SitBackup --> DeployDbScripts["Deploy DB scripts<br/>backup target DB, apply schema scripts"]
+        SitTab --> SitBackupRequired["Backup required<br/>deployment actions locked until complete"]
+        SitBackupRequired --> SitRunBackup["Run backup<br/>timestamped backup folder"]
+        SitRunBackup --> SitAppType{Application type?}
 
-        AppType --> WebApi["Web / API / MVC / ASMX"]
-        AppType --> WinSvc["Windows Service / MSI"]
+        SitAppType --> SitWebApi["Web / API / MVC / ASMX"]
+        SitAppType --> SitWinSvc["Windows Service / MSI"]
 
-        WebApi --> StopPool[Stop App Pool]
-        StopPool --> CopyFiles["Copy Files<br/>build output to IIS folder"]
-        CopyFiles --> ConfigOverride["Apply config override<br/>e.g. web.config"]
-        ConfigOverride --> ReadyWeb[Status = Ready]
+        SitWebApi --> SitStopPool[Stop App Pool]
+        SitStopPool --> SitCopyFiles["Copy Files<br/>build output to IIS folder"]
+        SitCopyFiles --> SitConfigOverride["Apply config override<br/>e.g. web.config"]
+        SitConfigOverride --> SitReadyWeb[Status = Ready]
 
-        WinSvc --> InstallMsi[Install MSI]
-        InstallMsi --> ConfirmMsi[Confirm install]
-        ConfirmMsi --> CopyConfig[Copy Config]
-        CopyConfig --> ReadySvc[Status = Ready]
+        SitWinSvc --> SitInstallMsi[Install MSI]
+        SitInstallMsi --> SitConfirmMsi[Confirm install]
+        SitConfirmMsi --> SitCopyConfig[Copy Config]
+        SitCopyConfig --> SitReadySvc[Status = Ready]
 
-        DeployDbScripts --> DbReady[DB scripts deployed]
+        SitCopyFiles --> SitDbGate["DB actions available<br/>after backup and file copy complete"]
+        SitDbGate --> SitBackupDb[Backup DB]
+        SitBackupDb --> SitApplySchema[Apply Schema Scripts]
+        SitApplySchema --> SitDbReady[DB scripts deployed]
+
+        SitReadyWeb --> SitDeployLog[Write Deployment Log]
+        SitReadySvc --> SitDeployLog
+        SitDbReady --> SitDeployLog
+        SitReadyWeb -. optional .-> SitRollback[Rollback]
     end
 
-    BuildOk -- No --> BuildFail([Build failed])
-    ReadyWeb --> DeployLog[Write Deployment Log]
-    ReadySvc --> DeployLog
-    DbReady --> DeployLog
-    DeployLog --> Done([Complete])
+    SitDeployLog --> ProdTab[PROD tab]
 
-    ReadyWeb -. optional .-> Rollback[Rollback]
+    subgraph PROD["PROD environment"]
+        direction TB
+        ProdTab --> ProdServerSelect["Select target server<br/>e.g. PROD-WEB-01"]
+        ProdServerSelect --> ProdBackup["Run backup"]
+        ProdBackup --> ProdDrain["Load balancer draining<br/>health.gif to health.dat<br/>remove server from pool"]
+        ProdDrain --> ProdDrainWait{Active connections = 0?}
+        ProdDrainWait -- No --> ProdDrain
+        ProdDrainWait -- Yes --> ProdAppType{Application type?}
+
+        ProdAppType --> ProdWebApi["Web / API / MVC / ASMX"]
+        ProdAppType --> ProdWinSvc["Windows Service / MSI"]
+
+        ProdWebApi --> ProdStopPool[Stop App Pool]
+        ProdStopPool --> ProdCopyFiles["Copy Files<br/>build output to IIS folder"]
+        ProdCopyFiles --> ProdConfigOverride["Apply config override"]
+        ProdConfigOverride --> ProdReadyWeb[Status = Ready]
+
+        ProdWinSvc --> ProdInstallMsi[Install MSI]
+        ProdInstallMsi --> ProdConfirmMsi[Confirm install]
+        ProdConfirmMsi --> ProdCopyConfig[Copy Config]
+        ProdCopyConfig --> ProdReadySvc[Status = Ready]
+
+        ProdCopyFiles --> ProdDbGate["DB actions available<br/>after backup and file copy complete"]
+        ProdDbGate --> ProdBackupDb[Backup DB]
+        ProdBackupDb --> ProdApplySchema[Apply Schema Scripts]
+        ProdApplySchema --> ProdDbReady[DB scripts deployed]
+
+        ProdReadyWeb --> ProdReturnLb["Return to load balancer<br/>restore health endpoint"]
+        ProdReadySvc --> ProdReturnLb
+        ProdDbReady --> ProdReturnLb
+        ProdReturnLb --> ProdDeployLog[Write Deployment Log]
+        ProdReadyWeb -. optional .-> ProdRollback[Rollback]
+    end
+
+    ProdDeployLog --> Done([Complete])
 
     classDef ok fill:#1b8a5a,stroke:#0f5132,color:#fff;
     classDef fail fill:#c0392b,stroke:#7b241c,color:#fff;
     classDef tab fill:#2d6cdf,stroke:#1b3f8a,color:#fff;
+    classDef env fill:#5c3d99,stroke:#3d2866,color:#fff;
 
-    class Output,ReadyWeb,ReadySvc,DbReady,Done ok;
+    class Output,SitReadyWeb,SitReadySvc,SitDbReady,ProdReadyWeb,ProdReadySvc,ProdDbReady,Done ok;
     class BuildFail fail;
-    class BuildTab,SitTab tab;
+    class BuildTab,SitTab,ProdTab tab;
+    class SIT,PROD env;
