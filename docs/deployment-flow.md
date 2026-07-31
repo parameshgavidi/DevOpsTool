@@ -1,6 +1,6 @@
 # DevOpsTool - Deployment Flow
 
-Flowchart based on the **BUILD**, **SIT**, and **PROD** screens in the Custom DevOps
+Flowchart based on the **BUILD**, **SIT**, **CAT**, and **PROD** screens in the Custom DevOps
 Deployment Tool (.NET MAUI Blazor Hybrid app).
 
 ```mermaid
@@ -57,7 +57,39 @@ flowchart TD
         SitReadyWeb -. optional .-> SitRollback[Rollback]
     end
 
-    SitDeployLog --> ProdTab[PROD tab]
+    SitDeployLog --> CatTab[CAT tab]
+
+    subgraph CAT["CAT environment"]
+        direction TB
+        CatTab --> CatBackupRequired["Backup required<br/>deployment actions locked until complete"]
+        CatBackupRequired --> CatRunBackup["Run backup<br/>timestamped backup folder"]
+        CatRunBackup --> CatAppType{Application type?}
+
+        CatAppType --> CatWebApi["Web / API / MVC / ASMX"]
+        CatAppType --> CatWinSvc["Windows Service / MSI"]
+
+        CatWebApi --> CatStopPool[Stop App Pool]
+        CatStopPool --> CatCopyFiles["Copy Files<br/>build output to IIS folder"]
+        CatCopyFiles --> CatConfigOverride["Apply config override<br/>e.g. web.config"]
+        CatConfigOverride --> CatReadyWeb[Status = Ready]
+
+        CatWinSvc --> CatInstallMsi[Install MSI]
+        CatInstallMsi --> CatConfirmMsi[Confirm install]
+        CatConfirmMsi --> CatCopyConfig[Copy Config]
+        CatCopyConfig --> CatReadySvc[Status = Ready]
+
+        CatCopyFiles --> CatDbGate["DB actions available<br/>after backup and file copy complete<br/>e.g. CAT-SQL-01 / GSSDB"]
+        CatDbGate --> CatBackupDb[Backup DB]
+        CatBackupDb --> CatApplySchema[Apply Schema Scripts]
+        CatApplySchema --> CatDbReady[DB scripts deployed]
+
+        CatReadyWeb --> CatDeployLog[Write Deployment Log]
+        CatReadySvc --> CatDeployLog
+        CatDbReady --> CatDeployLog
+        CatReadyWeb -. optional .-> CatRollback[Rollback]
+    end
+
+    CatDeployLog --> ProdTab[PROD tab]
 
     subgraph PROD["PROD environment"]
         direction TB
@@ -100,10 +132,10 @@ flowchart TD
     classDef tab fill:#2d6cdf,stroke:#1b3f8a,color:#fff;
     classDef env fill:#5c3d99,stroke:#3d2866,color:#fff;
 
-    class Output,SitReadyWeb,SitReadySvc,SitDbReady,ProdReadyWeb,ProdReadySvc,ProdDbReady,Done ok;
+    class Output,SitReadyWeb,SitReadySvc,SitDbReady,CatReadyWeb,CatReadySvc,CatDbReady,ProdReadyWeb,ProdReadySvc,ProdDbReady,Done ok;
     class BuildFail fail;
-    class BuildTab,SitTab,ProdTab tab;
-    class SIT,PROD env;
+    class BuildTab,SitTab,CatTab,ProdTab tab;
+    class SIT,CAT,PROD env;
 ```
 
 ## BUILD environment
@@ -127,6 +159,19 @@ flowchart TD
    - **Windows Service / MSI** — Install MSI → Confirm install → Copy Config →
      Status Ready.
 4. **Deploy DB scripts** — After backup and file copy complete: Backup DB → Apply Schema Scripts.
+5. **Deployment Log** — Records backup, code deploy, DB script deploy, and config override activity.
+
+## CAT environment
+
+1. **Backup required** — Deployment actions are locked until backup completes.
+2. **Run backup** — Back up all sources to a timestamped backup folder.
+3. **Deploy code by application type**
+   - **Web / API / MVC / ASMX** — Stop App Pool → Copy Files → Apply config override
+     → Status Ready (Rollback available). **Deploy All Web/API Apps** available.
+   - **Windows Service / MSI** — Install MSI → Confirm install → Copy Config →
+     Status Ready.
+4. **Deploy DB scripts** — After backup and file copy complete: Backup DB → Apply Schema Scripts
+   (e.g. `CAT-SQL-01` / `GSSDB`).
 5. **Deployment Log** — Records backup, code deploy, DB script deploy, and config override activity.
 
 ## PROD environment
