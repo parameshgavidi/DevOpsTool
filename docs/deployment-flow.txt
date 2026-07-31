@@ -51,7 +51,39 @@ flowchart TD
         SitReadyWeb -. optional .-> SitRollback[Rollback]
     end
 
-    SitDeployLog --> ProdTab[PROD tab]
+    SitDeployLog --> CatTab[CAT tab]
+
+    subgraph CAT["CAT environment"]
+        direction TB
+        CatTab --> CatBackupRequired["Backup required<br/>deployment actions locked until complete"]
+        CatBackupRequired --> CatRunBackup["Run backup<br/>timestamped backup folder"]
+        CatRunBackup --> CatAppType{Application type?}
+
+        CatAppType --> CatWebApi["Web / API / MVC / ASMX"]
+        CatAppType --> CatWinSvc["Windows Service / MSI"]
+
+        CatWebApi --> CatStopPool[Stop App Pool]
+        CatStopPool --> CatCopyFiles["Copy Files<br/>build output to IIS folder"]
+        CatCopyFiles --> CatConfigOverride["Apply config override<br/>e.g. web.config"]
+        CatConfigOverride --> CatReadyWeb[Status = Ready]
+
+        CatWinSvc --> CatInstallMsi[Install MSI]
+        CatInstallMsi --> CatConfirmMsi[Confirm install]
+        CatConfirmMsi --> CatCopyConfig[Copy Config]
+        CatCopyConfig --> CatReadySvc[Status = Ready]
+
+        CatCopyFiles --> CatDbGate["DB actions available<br/>after backup and file copy complete<br/>e.g. CAT-SQL-01 / GSSDB"]
+        CatDbGate --> CatBackupDb[Backup DB]
+        CatBackupDb --> CatApplySchema[Apply Schema Scripts]
+        CatApplySchema --> CatDbReady[DB scripts deployed]
+
+        CatReadyWeb --> CatDeployLog[Write Deployment Log]
+        CatReadySvc --> CatDeployLog
+        CatDbReady --> CatDeployLog
+        CatReadyWeb -. optional .-> CatRollback[Rollback]
+    end
+
+    CatDeployLog --> ProdTab[PROD tab]
 
     subgraph PROD["PROD environment"]
         direction TB
@@ -94,7 +126,7 @@ flowchart TD
     classDef tab fill:#2d6cdf,stroke:#1b3f8a,color:#fff;
     classDef env fill:#5c3d99,stroke:#3d2866,color:#fff;
 
-    class Output,SitReadyWeb,SitReadySvc,SitDbReady,ProdReadyWeb,ProdReadySvc,ProdDbReady,Done ok;
+    class Output,SitReadyWeb,SitReadySvc,SitDbReady,CatReadyWeb,CatReadySvc,CatDbReady,ProdReadyWeb,ProdReadySvc,ProdDbReady,Done ok;
     class BuildFail fail;
-    class BuildTab,SitTab,ProdTab tab;
-    class SIT,PROD env;
+    class BuildTab,SitTab,CatTab,ProdTab tab;
+    class SIT,CAT,PROD env;
