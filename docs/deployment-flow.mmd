@@ -5,17 +5,18 @@ flowchart TD
 
     subgraph BUILD["BUILD tab"]
         direction TB
-        Config["Configure paths<br/>Repo Root and Output Root"]
-        Config --> AppList["Display applications<br/>name, type, status, action"]
+        Config["Configure paths<br/>Code Repo Root, DB Repo Root,<br/>Output Root, Build Backup folder"]
+        Config --> PullLatest["Pull latest changes<br/>from Code repo and DB repo"]
+        PullLatest --> BuildBackup["Backup previous successful<br/>build files and DB scripts<br/>to Build Backup folder"]
+        BuildBackup --> AppList["Display applications<br/>name, type, status, action"]
         AppList --> BuildChoice{Choose action}
         BuildChoice --> BuildOne[Build selected app]
         BuildChoice --> BuildAll[Build All]
-        BuildChoice --> DbRollup["Bundle DB Rollup Scripts<br/>(optional)"]
-        BuildOne --> Msbuild["Run msbuild<br/>Configuration=Release, DeployOnBuild=true"]
-        BuildAll --> Msbuild
-        Msbuild --> BuildLog[Stream progress to Output Log]
+        BuildOne --> BuildCodeDb["Build code and DB scripts<br/>msbuild Release + DB script build"]
+        BuildAll --> BuildCodeDb
+        BuildCodeDb --> BuildLog[Stream progress to Output Log]
         BuildLog --> BuildOk{Build succeeded?}
-        BuildOk -- Yes --> Output["Artifacts written to<br/>Output Root folder"]
+        BuildOk -- Yes --> Output["Artifacts written to<br/>Output Root folder<br/>(code + DB scripts)"]
     end
 
     BuildTab --> Config
@@ -23,14 +24,15 @@ flowchart TD
 
     subgraph SIT["SIT deployment tab"]
         direction TB
-        SitTab --> Backup["Backup all sources<br/>to timestamped backup folder"]
-        Backup --> AppType{Application type?}
+        SitTab --> SitBackup["Backup all sources<br/>to timestamped backup folder"]
+        SitBackup --> AppType{Application type?}
+        SitBackup --> DeployDbScripts["Deploy DB scripts<br/>backup target DB, apply schema scripts"]
 
         AppType --> WebApi["Web / API / MVC / ASMX"]
         AppType --> WinSvc["Windows Service / MSI"]
 
         WebApi --> StopPool[Stop App Pool]
-        StopPool --> CopyFiles["Copy Files<br/>build-output to IIS folder"]
+        StopPool --> CopyFiles["Copy Files<br/>build output to IIS folder"]
         CopyFiles --> ConfigOverride["Apply config override<br/>e.g. web.config"]
         ConfigOverride --> ReadyWeb[Status = Ready]
 
@@ -39,23 +41,21 @@ flowchart TD
         ConfirmMsi --> CopyConfig[Copy Config]
         CopyConfig --> ReadySvc[Status = Ready]
 
-        CopyFiles --> DbActions["Database actions<br/>after file copy completes"]
-        DbActions --> BackupDb[Backup DB]
-        BackupDb --> ApplySchema[Apply Schema Scripts]
-
-        ReadyWeb -. optional .-> Rollback[Rollback]
+        DeployDbScripts --> DbReady[DB scripts deployed]
     end
 
     BuildOk -- No --> BuildFail([Build failed])
     ReadyWeb --> DeployLog[Write Deployment Log]
     ReadySvc --> DeployLog
-    ApplySchema --> DeployLog
+    DbReady --> DeployLog
     DeployLog --> Done([Complete])
+
+    ReadyWeb -. optional .-> Rollback[Rollback]
 
     classDef ok fill:#1b8a5a,stroke:#0f5132,color:#fff;
     classDef fail fill:#c0392b,stroke:#7b241c,color:#fff;
     classDef tab fill:#2d6cdf,stroke:#1b3f8a,color:#fff;
 
-    class Output,ReadyWeb,ReadySvc,Done ok;
+    class Output,ReadyWeb,ReadySvc,DbReady,Done ok;
     class BuildFail fail;
     class BuildTab,SitTab tab;
