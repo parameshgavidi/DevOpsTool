@@ -109,15 +109,16 @@ flowchart TD
     subgraph PROD["PROD"]
         direction TB
         ProdTab --> ProdServerSelect["Select target server<br/>e.g. PROD-WEB-01"]
-        ProdServerSelect --> ProdValidate["Validate source, destination,<br/>and backup paths"]
-        ProdValidate --> ProdLocked["Deploy actions locked<br/>until application backup completes"]
-        ProdLocked --> ProdAppBackup["Run application backup<br/>copy sources to env backup folder"]
-        ProdAppBackup --> ProdBackupComplete["Backup Complete<br/>deploy and rollback enabled"]
-        ProdBackupComplete --> ProdDrain["Load balancer draining<br/>health.gif to health.dat<br/>wait connections = 0"]
-        ProdDrain --> ProdDrainOk{Connections = 0?}
-        ProdDrainOk -- No --> ProdDrain
-        ProdDrainOk -- Yes --> ProdAppType{Application type?}
+        ProdServerSelect --> ProdAppBackup["Run application backup<br/>copy sources to env backup folder"]
+        ProdAppBackup --> ProdBackupComplete["Backup Complete"]
+        ProdBackupComplete --> ProdLbDrain["Load balancer draining<br/>rename health.gif to health.dat<br/>server removed from pool"]
+        ProdLbDrain --> ProdAppsLocked["Applications locked<br/>status = Draining<br/>waiting for connection drain"]
+        ProdAppsLocked --> ProdPoll["Poll active connections<br/>every 10s"]
+        ProdPoll --> ProdDrainOk{Connections = 0?}
+        ProdDrainOk -- No --> ProdPoll
+        ProdDrainOk -- Yes --> ProdDeployUnlock["Deploy actions unlocked"]
 
+        ProdDeployUnlock --> ProdAppType{Application type?}
         ProdAppType --> ProdWebApi["Web Forms / API / MVC / ASMX"]
         ProdAppType --> ProdWinSvc["Win Service MSI"]
 
@@ -129,18 +130,16 @@ flowchart TD
         ProdConfirmMsi --> ProdCopyConfig[Copy Config]
         ProdCopyConfig --> ProdReadySvc[Status = Ready]
 
-        ProdCopyFiles --> ProdDbEnabled["DATABASE enabled<br/>after file copy completes"]
-        ProdDbEnabled --> ProdDbScripts["Load DB scripts<br/>from repo or env folder path"]
-        ProdDbScripts --> ProdBackupDb[Backup DB]
+        ProdCopyFiles --> ProdDbEnabled["DATABASE enabled<br/>after file copy completes<br/>PROD-SQL-01 / GSSDB<br/>Replication enabled"]
+        ProdDbEnabled --> ProdBackupDb[Backup DB]
         ProdBackupDb --> ProdStopRepl[Stop Replication SQL script]
         ProdStopRepl --> ProdApplySchema[Apply Schema Scripts]
         ProdApplySchema --> ProdStartRepl[Start Replication SQL script]
 
-        ProdReadyWeb --> ProdReturnLb["Return to load balancer<br/>restore health endpoint"]
+        ProdReadyWeb --> ProdReturnLb["Return to load balancer<br/>rename health.dat to health.gif"]
         ProdReadySvc --> ProdReturnLb
         ProdStartRepl --> ProdReturnLb
         ProdReturnLb --> ProdDeployLog[Write Deployment Log]
-        ProdReadyWeb -. optional .-> ProdRollback[Rollback]
     end
 
     ProdDeployLog --> Done([Complete])
@@ -193,13 +192,18 @@ flowchart TD
 
 ## PROD
 
+Workflow: **Target Server → Backup → Draining → Deploy → Return to LB**
+
 1. **Select target server** — e.g. `PROD-WEB-01`.
-2. **Validate paths** and **application backup** — Same pattern as SIT/CAT.
-3. **Backup Complete** → **Load balancer draining** — wait until connections = 0.
-4. **Deploy applications by type** — Copy Files or Install MSI / Copy Config.
-5. **DATABASE** (after file copy completes) — Load scripts → Backup DB → Stop Replication → Apply Schema Scripts → Start Replication.
-6. **Return to load balancer** — Restore health endpoint.
-7. **Deployment Log** — Records backup, draining, deploy, DB actions, and LB return.
+2. **Application backup** — Copy sources to env backup folder → **Backup Complete**.
+3. **Load balancer draining** — Rename `health.gif` to `health.dat`; server removed from pool.
+4. **Wait for drain** — Applications locked (status = Draining); poll active connections every 10s until count = 0.
+5. **Deploy unlocked** — Deploy applications by type:
+   - **Web Forms / API / MVC / ASMX** — Copy Files → Ready.
+   - **Win Service (MSI)** — Install MSI → Confirm install → Copy Config → Ready.
+6. **DATABASE** (after file copy, `PROD-SQL-01` / `GSSDB`, replication enabled) — Backup DB → Stop Replication → Apply Schema Scripts → Start Replication.
+7. **Return to load balancer** — Rename `health.dat` back to `health.gif`.
+8. **Deployment Log** — Records backup, LB drain, deploy, DB actions, and LB return.
 
 ## Editing the diagram
 
