@@ -9,11 +9,11 @@ Deployment Tool (.NET MAUI Blazor Hybrid app).
 flowchart TD
     Start([Launch DevOps Tool]) --> BuildTab[BUILD tab]
 
-    subgraph BUILD["BUILD environment"]
+    subgraph BUILD["BUILD"]
         direction TB
-        Config["Configure paths<br/>Code Repo Root, DB Repo Root,<br/>Output Root, Build Backup folder"]
-        Config --> PullLatest["Pull latest changes<br/>from Code repo and DB repo"]
-        PullLatest --> BuildBackup["Backup previous successful<br/>build files and DB scripts<br/>to Build Backup folder"]
+        Config["Configure paths<br/>Code Repo Root,<br/>Output Root, Build Backup folder"]
+        Config --> PullLatest["Pull latest changes<br/>from Code repo"]
+        PullLatest --> BuildBackup["Backup previous successful<br/>build files<br/>to Build Backup folder"]
         BuildBackup --> AppList["Display applications<br/>name, type, status, action"]
         AppList --> BuildChoice{Choose action}
         BuildChoice --> BuildOne[Build selected app]
@@ -149,11 +149,11 @@ flowchart TD
     class SIT,CAT,PROD env;
 ```
 
-## BUILD environment
+## BUILD
 
-1. **Configure paths** — Set Code Repo Root, DB Repo Root, Output Root, and Build Backup folder.
-2. **Pull latest** — Pull latest changes from the Code repo and DB repo.
-3. **Build backup** — Back up the previous successful build files and DB scripts to the Build Backup folder.
+1. **Configure paths** — Set Code Repo Root, Output Root, and Build Backup folder.
+2. **Pull latest** — Pull latest changes from the Code repo.
+3. **Build backup** — Back up the previous successful build files to the Build Backup folder.
 4. **Applications list** — Shows configured apps with name, type, status, and action.
 5. **Choose action** — Build a selected app, **Build All**, or **Bundle DB Scripts**.
 6. **Build code** — Run msbuild (`Configuration=Release`, `DeployOnBuild=true`) for the selected app or all apps.
