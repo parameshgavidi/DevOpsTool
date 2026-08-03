@@ -12,11 +12,20 @@ flowchart TD
         AppList --> BuildChoice{Choose action}
         BuildChoice --> BuildOne[Build selected app]
         BuildChoice --> BuildAll[Build All]
-        BuildOne --> BuildCodeDb["Build code and DB scripts<br/>msbuild Release + DB script build"]
-        BuildAll --> BuildCodeDb
-        BuildCodeDb --> BuildLog[Stream progress to Output Log]
+        BuildChoice --> DbRollupBtn[Bundle DB Scripts]
+
+        BuildOne --> Msbuild["Run msbuild<br/>Configuration=Release, DeployOnBuild=true"]
+        BuildAll --> Msbuild
+
+        DbRollupBtn --> DbSource["Choose script source folder<br/>e.g. D:\\db-rollup-scripts"]
+        DbSource --> DbConfig["Read build.dbScriptSource<br/>from appsettings.json"]
+        DbConfig --> DbBuilder["Run DBRollupScriptBuilder.exe<br/>generate combined script file"]
+        DbBuilder --> DbCopy["Copy scripts to<br/>{outputRoot}\\db-scripts\\"]
+
+        Msbuild --> BuildLog[Stream progress to Output Log<br/>live UI + log text file]
+        DbCopy --> BuildLog
         BuildLog --> BuildOk{Build succeeded?}
-        BuildOk -- Yes --> Output["Artifacts written to<br/>Output Root folder<br/>(code + DB scripts)"]
+        BuildOk -- Yes --> Output["Artifacts written to<br/>Output Root folder<br/>(code + db-scripts)"]
     end
 
     BuildTab --> Config
