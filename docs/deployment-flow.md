@@ -23,9 +23,9 @@ flowchart TD
         BuildOne --> Msbuild["Run msbuild<br/>Configuration=Release, DeployOnBuild=true"]
         BuildAll --> Msbuild
 
-        DbRollupBtn --> DbSource["Choose script source folder<br/>e.g. D:\\db-rollup-scripts"]
-        DbSource --> DbConfig["Read build.dbScriptSource<br/>from appsettings.json"]
-        DbConfig --> DbBuilder["Run DBRollupScriptBuilder.exe<br/>generate combined script file"]
+        DbRollupBtn --> DbBranches["Determine rollup range<br/>-f previous release branch<br/>-t current branch<br/>e.g. GSSv9.1S2 to GSSv9.2S2"]
+        DbBranches --> DbScripts["Load scripts from repo<br/>or per-environment folder<br/>header, footer, backup, rollup"]
+        DbScripts --> DbBuilder["Run DBRollupScriptBuilder.exe<br/>-f ... -t ..."]
         DbBuilder --> DbCopy["Copy scripts to<br/>{outputRoot}\\db-scripts\\"]
 
         Msbuild --> BuildLog[Stream progress to Output Log<br/>live UI + log text file]
@@ -48,10 +48,11 @@ flowchart TD
         SitDeployEnabled --> SitCopyFiles["Copy Files<br/>deploy build artifacts"]
         SitCopyFiles --> SitValidateDeploy["Validate deployment<br/>destination exists, files present,<br/>config override complete"]
         SitValidateDeploy --> SitSuccess[Status = Success]
-        SitSuccess --> SitBackupDb["Backup DB (user initiated)"]
-        SitBackupDb --> SitDbScript["DBRollupScriptBuilder<br/>Stop Replication"]
-        SitDbScript --> SitRunScript["Run combined DB script<br/>header, rollup, footer"]
-        SitRunScript --> SitStartRepl[Start Replication]
+        SitSuccess --> SitDbScripts["Load DB scripts<br/>from repo or env folder path"]
+        SitDbScripts --> SitBackupDb[Backup DB]
+        SitBackupDb --> SitStopRepl[Stop Replication SQL script]
+        SitStopRepl --> SitPublishDb["Publish DB scripts<br/>header, rollup, footer"]
+        SitPublishDb --> SitStartRepl[Start Replication SQL script]
         SitStartRepl --> SitDeployLog[Log completion status]
         SitBackupOk -- No --> SitBackupFail([Backup failed])
         SitSuccess -. optional .-> SitRollback[Rollback]
@@ -78,10 +79,12 @@ flowchart TD
         CatConfirmMsi --> CatCopyConfig[Copy Config]
         CatCopyConfig --> CatReadySvc[Status = Ready]
 
-        CatCopyFiles --> CatDbGate["DB actions available<br/>after backup and file copy complete<br/>e.g. CAT-SQL-01 / GSSDB"]
-        CatDbGate --> CatBackupDb[Backup DB]
-        CatBackupDb --> CatApplySchema[Apply Schema Scripts]
-        CatApplySchema --> CatDbReady[DB scripts deployed]
+        CatCopyFiles --> CatDbScripts["Load DB scripts<br/>from repo or env folder path"]
+        CatDbScripts --> CatBackupDb[Backup DB]
+        CatBackupDb --> CatStopRepl[Stop Replication SQL script]
+        CatStopRepl --> CatPublishDb["Publish DB scripts<br/>header, rollup, footer"]
+        CatPublishDb --> CatStartRepl[Start Replication SQL script]
+        CatStartRepl --> CatDbReady[DB scripts deployed]
 
         CatReadyWeb --> CatDeployLog[Write Deployment Log]
         CatReadySvc --> CatDeployLog
@@ -113,10 +116,12 @@ flowchart TD
         ProdConfirmMsi --> ProdCopyConfig[Copy Config]
         ProdCopyConfig --> ProdReadySvc[Status = Ready]
 
-        ProdCopyFiles --> ProdDbGate["DB actions available<br/>after backup and file copy complete"]
-        ProdDbGate --> ProdBackupDb[Backup DB]
-        ProdBackupDb --> ProdApplySchema[Apply Schema Scripts]
-        ProdApplySchema --> ProdDbReady[DB scripts deployed]
+        ProdCopyFiles --> ProdDbScripts["Load DB scripts<br/>from repo or env folder path"]
+        ProdDbScripts --> ProdBackupDb[Backup DB]
+        ProdBackupDb --> ProdStopRepl[Stop Replication SQL script]
+        ProdStopRepl --> ProdPublishDb["Publish DB scripts<br/>header, rollup, footer"]
+        ProdPublishDb --> ProdStartRepl[Start Replication SQL script]
+        ProdStartRepl --> ProdDbReady[DB scripts deployed]
 
         ProdReadyWeb --> ProdReturnLb["Return to load balancer<br/>restore health endpoint"]
         ProdReadySvc --> ProdReturnLb
@@ -132,7 +137,7 @@ flowchart TD
     classDef tab fill:#2d6cdf,stroke:#1b3f8a,color:#fff;
     classDef env fill:#5c3d99,stroke:#3d2866,color:#fff;
 
-    class Output,SitSuccess,SitStartRepl,CatReadyWeb,CatReadySvc,CatDbReady,ProdReadyWeb,ProdReadySvc,ProdDbReady,Done ok;
+    class Output,SitSuccess,SitStartRepl,CatReadyWeb,CatReadySvc,CatDbReady,CatStartRepl,ProdReadyWeb,ProdReadySvc,ProdDbReady,ProdStartRepl,Done ok;
     class BuildFail,SitBackupFail fail;
     class BuildTab,SitTab,CatTab,ProdTab tab;
     class SIT,CAT,PROD env;
@@ -147,10 +152,9 @@ flowchart TD
 5. **Choose action** — Build a selected app, **Build All**, or **Bundle DB Scripts**.
 6. **Build code** — Run msbuild (`Configuration=Release`, `DeployOnBuild=true`) for the selected app or all apps.
 7. **DB Rollup Scripts** (Bundle DB Scripts button):
-   - Choose the script source folder directory (e.g. `D:\db-rollup-scripts`).
-   - DB script source path is configured in `appsettings.json` (`build.dbScriptSource`).
-   - Run `DBRollupScriptBuilder.exe` to generate the combined script file.
-   - Copy generated scripts to `{outputRoot}\db-scripts\`.
+   - Determine rollup range: `-f` previous release branch, `-t` current branch (e.g. `GSSv9.1S2` → `GSSv9.2S2`).
+   - Load header, footer, backup, and rollup scripts from repository or per-environment folder path.
+   - Run `DBRollupScriptBuilder.exe -f ... -t ...` and copy output to `{outputRoot}\db-scripts\`.
 8. **Output Log** — Live logs in the UI and saved to a log text file.
 9. **Output** — Code artifacts and DB scripts written to the Output Root folder.
 
@@ -163,7 +167,7 @@ flowchart TD
 5. **Copy Files** — Deploy build artifacts to the target folder.
 6. **Validate deployment** — Confirm destination exists, expected files are present, and config override is complete.
 7. **Status = Success** — Application deployment marked successful.
-8. **Backup DB** (user initiated) — `DBRollupScriptBuilder` → Stop Replication → run combined DB script (header, rollup, footer) → Start Replication.
+8. **DB deploy** (SIT / CAT / PROD) — Load scripts from repo or env folder → **Backup DB** → **Stop Replication** (SQL) → publish DB scripts (header, rollup, footer) → **Start Replication** (SQL).
 9. **Log completion** — Record completion status in the deployment log.
 
 ## CAT environment
@@ -175,9 +179,8 @@ flowchart TD
      → Status Ready (Rollback available). **Deploy All Web/API Apps** available.
    - **Windows Service / MSI** — Install MSI → Confirm install → Copy Config →
      Status Ready.
-4. **Deploy DB scripts** — After backup and file copy complete: Backup DB → Apply Schema Scripts
-   (e.g. `CAT-SQL-01` / `GSSDB`).
-5. **Deployment Log** — Records backup, code deploy, DB script deploy, and config override activity.
+4. **DB deploy** — Load scripts from repo or env folder → Backup DB → Stop Replication (SQL) → publish DB scripts → Start Replication (SQL).
+5. **Deployment Log** — Records backup, code deploy, DB deploy, and config override activity.
 
 ## PROD environment
 
@@ -185,9 +188,9 @@ flowchart TD
 2. **Run backup** — Back up the server before any deploy actions.
 3. **Load balancer draining** — Change `health.gif` to `health.dat` to remove the server from the pool; wait until active connections reach 0.
 4. **Deploy code by application type** — Same paths as SIT (Copy Files / Install MSI / Copy Config).
-5. **Deploy DB scripts** — After backup and file copy complete: Backup DB → Apply Schema Scripts.
+5. **DB deploy** — Load scripts from repo or env folder → Backup DB → Stop Replication (SQL) → publish DB scripts → Start Replication (SQL).
 6. **Return to load balancer** — Restore the health endpoint and return the server to the pool.
-7. **Deployment Log** — Records backup, draining, deploy, DB script deploy, and LB return activity.
+7. **Deployment Log** — Records backup, draining, deploy, DB deploy, and LB return activity.
 
 ## Editing the diagram
 
