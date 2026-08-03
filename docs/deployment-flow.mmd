@@ -5,27 +5,15 @@ flowchart TD
 
     subgraph BUILD["BUILD"]
         direction TB
-        Config["Configure paths<br/>Code Repo Root,<br/>Output Root, Build Backup folder"]
-        Config --> PullLatest["Pull latest changes<br/>from Code repo"]
-        PullLatest --> BuildBackup["Backup previous successful<br/>build files<br/>to Build Backup folder"]
-        BuildBackup --> AppList["Display applications<br/>name, type, status, action"]
-        AppList --> BuildChoice{Choose action}
-        BuildChoice --> BuildOne[Build selected app]
-        BuildChoice --> BuildAll[Build All]
-        BuildChoice --> DbRollupBtn[Bundle DB Scripts]
-
-        BuildOne --> Msbuild["Run msbuild<br/>Configuration=Release, DeployOnBuild=true"]
-        BuildAll --> Msbuild
-
-        DbRollupBtn --> DbBranches["Determine rollup range<br/>-f previous release branch<br/>-t current branch<br/>e.g. GSSv9.1S2 to GSSv9.2S2"]
-        DbBranches --> DbScripts["Load scripts from repo<br/>or per-environment folder<br/>header, footer, backup, rollup"]
-        DbScripts --> DbBuilder["Run DBRollupScriptBuilder.exe<br/>-f ... -t ..."]
-        DbBuilder --> DbCopy["Copy scripts to<br/>{outputRoot}\\db-scripts\\"]
-
-        Msbuild --> BuildLog[Stream progress to Output Log<br/>live UI + log text file]
-        DbCopy --> BuildLog
+        Config["Configure paths<br/>Code Repo, Output Root, Build Backup"]
+        Config --> PullBackup["Pull latest code<br/>+ backup previous build files"]
+        PullBackup --> BuildChoice{Choose action}
+        BuildChoice --> BuildCode["Build code<br/>selected app or Build All"]
+        BuildChoice --> BundleDb["Bundle DB Scripts<br/>DBRollupScriptBuilder.exe"]
+        BuildCode --> BuildLog[Output Log]
+        BundleDb --> BuildLog
         BuildLog --> BuildOk{Build succeeded?}
-        BuildOk -- Yes --> Output["Artifacts written to<br/>Output Root folder<br/>(code + db-scripts)"]
+        BuildOk -- Yes --> Output["Output artifacts<br/>to Output Root folder"]
     end
 
     BuildTab --> Config

@@ -11,27 +11,15 @@ flowchart TD
 
     subgraph BUILD["BUILD"]
         direction TB
-        Config["Configure paths<br/>Code Repo Root,<br/>Output Root, Build Backup folder"]
-        Config --> PullLatest["Pull latest changes<br/>from Code repo"]
-        PullLatest --> BuildBackup["Backup previous successful<br/>build files<br/>to Build Backup folder"]
-        BuildBackup --> AppList["Display applications<br/>name, type, status, action"]
-        AppList --> BuildChoice{Choose action}
-        BuildChoice --> BuildOne[Build selected app]
-        BuildChoice --> BuildAll[Build All]
-        BuildChoice --> DbRollupBtn[Bundle DB Scripts]
-
-        BuildOne --> Msbuild["Run msbuild<br/>Configuration=Release, DeployOnBuild=true"]
-        BuildAll --> Msbuild
-
-        DbRollupBtn --> DbBranches["Determine rollup range<br/>-f previous release branch<br/>-t current branch<br/>e.g. GSSv9.1S2 to GSSv9.2S2"]
-        DbBranches --> DbScripts["Load scripts from repo<br/>or per-environment folder<br/>header, footer, backup, rollup"]
-        DbScripts --> DbBuilder["Run DBRollupScriptBuilder.exe<br/>-f ... -t ..."]
-        DbBuilder --> DbCopy["Copy scripts to<br/>{outputRoot}\\db-scripts\\"]
-
-        Msbuild --> BuildLog[Stream progress to Output Log<br/>live UI + log text file]
-        DbCopy --> BuildLog
+        Config["Configure paths<br/>Code Repo, Output Root, Build Backup"]
+        Config --> PullBackup["Pull latest code<br/>+ backup previous build files"]
+        PullBackup --> BuildChoice{Choose action}
+        BuildChoice --> BuildCode["Build code<br/>selected app or Build All"]
+        BuildChoice --> BundleDb["Bundle DB Scripts<br/>DBRollupScriptBuilder.exe"]
+        BuildCode --> BuildLog[Output Log]
+        BundleDb --> BuildLog
         BuildLog --> BuildOk{Build succeeded?}
-        BuildOk -- Yes --> Output["Artifacts written to<br/>Output Root folder<br/>(code + db-scripts)"]
+        BuildOk -- Yes --> Output["Output artifacts<br/>to Output Root folder"]
     end
 
     BuildTab --> Config
@@ -157,18 +145,12 @@ flowchart TD
 
 ## BUILD
 
-1. **Configure paths** — Set Code Repo Root, Output Root, and Build Backup folder.
-2. **Pull latest** — Pull latest changes from the Code repo.
-3. **Build backup** — Back up the previous successful build files to the Build Backup folder.
-4. **Applications list** — Shows configured apps with name, type, status, and action.
-5. **Choose action** — Build a selected app, **Build All**, or **Bundle DB Scripts**.
-6. **Build code** — Run msbuild (`Configuration=Release`, `DeployOnBuild=true`) for the selected app or all apps.
-7. **DB Rollup Scripts** (Bundle DB Scripts button):
-   - Determine rollup range: `-f` previous release branch, `-t` current branch (e.g. `GSSv9.1S2` → `GSSv9.2S2`).
-   - Load header, footer, backup, and rollup scripts from repository or per-environment folder path.
-   - Run `DBRollupScriptBuilder.exe -f ... -t ...` and copy output to `{outputRoot}\db-scripts\`.
-8. **Output Log** — Live logs in the UI and saved to a log text file.
-9. **Output** — Code artifacts and DB scripts written to the Output Root folder.
+1. **Configure paths** — Code Repo Root, Output Root, Build Backup folder.
+2. **Pull latest + backup** — Pull latest code and back up previous build files.
+3. **Choose action** — Build code (selected app or Build All) **or** Bundle DB Scripts.
+4. **Run build** — msbuild for code, or `DBRollupScriptBuilder.exe` for DB scripts.
+5. **Output Log** — Live UI log and log text file.
+6. **Output** — Artifacts written to Output Root folder.
 
 ## SIT
 
