@@ -33,93 +33,105 @@ flowchart TD
     subgraph SIT["SIT"]
         direction TB
         SitTab --> SitValidate["Validate source, destination,<br/>and backup paths"]
-        SitValidate --> SitLocked["Only Copy Files enabled<br/>deploy actions locked"]
-        SitLocked --> SitBackup["Run backup<br/>timestamped folder, copy deployment<br/>files and environment config"]
-        SitBackup --> SitBackupOk{Backup succeeded?}
-        SitBackupOk -- Yes --> SitDeployEnabled["Backup complete<br/>deploy and rollback enabled"]
-        SitDeployEnabled --> SitCopyFiles["Copy Files<br/>deploy build artifacts"]
-        SitCopyFiles --> SitValidateDeploy["Validate deployment<br/>destination exists, files present,<br/>config override complete"]
-        SitValidateDeploy --> SitSuccess[Status = Success]
-        SitSuccess --> SitDbScripts["Load DB scripts<br/>from repo or env folder path"]
+        SitValidate --> SitLocked["Deploy actions locked<br/>until application backup completes"]
+        SitLocked --> SitAppBackup["Run application backup<br/>copy sources to env backup folder<br/>e.g. D:\\backups\\SIT\\"]
+        SitAppBackup --> SitBackupComplete["Backup Complete<br/>deploy and rollback enabled"]
+        SitBackupComplete --> SitAppType{Application type?}
+
+        SitAppType --> SitWebApi["Web Forms / API / MVC / ASMX"]
+        SitAppType --> SitWinSvc["Win Service MSI"]
+
+        SitWebApi --> SitCopyFiles[Copy Files]
+        SitCopyFiles --> SitReadyWeb[Status = Ready]
+
+        SitWinSvc --> SitInstallMsi[Install MSI]
+        SitInstallMsi --> SitConfirmMsi[Confirm install]
+        SitConfirmMsi --> SitCopyConfig[Copy Config]
+        SitCopyConfig --> SitReadySvc[Status = Ready]
+
+        SitCopyFiles --> SitDbEnabled["DATABASE enabled<br/>after file copy completes<br/>SIT-SQL-01 / GSSDB"]
+        SitDbEnabled --> SitDbScripts["Load DB scripts<br/>from repo or env folder path"]
         SitDbScripts --> SitBackupDb[Backup DB]
         SitBackupDb --> SitStopRepl[Stop Replication SQL script]
-        SitStopRepl --> SitPublishDb["Publish DB scripts<br/>header, rollup, footer"]
-        SitPublishDb --> SitStartRepl[Start Replication SQL script]
-        SitStartRepl --> SitDeployLog[Log completion status]
-        SitBackupOk -- No --> SitBackupFail([Backup failed])
-        SitSuccess -. optional .-> SitRollback[Rollback]
+        SitStopRepl --> SitApplySchema[Apply Schema Scripts]
+        SitApplySchema --> SitStartRepl[Start Replication SQL script]
+
+        SitReadyWeb --> SitDeployLog[Write Deployment Log]
+        SitReadySvc --> SitDeployLog
+        SitStartRepl --> SitDeployLog
+        SitReadyWeb -. optional .-> SitRollback[Rollback]
     end
 
     SitDeployLog --> CatTab[CAT tab]
 
-    subgraph CAT["CAT environment"]
+    subgraph CAT["CAT"]
         direction TB
-        CatTab --> CatBackupRequired["Backup required<br/>deployment actions locked until complete"]
-        CatBackupRequired --> CatRunBackup["Run backup<br/>timestamped backup folder"]
-        CatRunBackup --> CatAppType{Application type?}
+        CatTab --> CatValidate["Validate source, destination,<br/>and backup paths"]
+        CatValidate --> CatLocked["Deploy actions locked<br/>until application backup completes"]
+        CatLocked --> CatAppBackup["Run application backup<br/>copy sources to env backup folder<br/>e.g. D:\\backups\\CAT\\"]
+        CatAppBackup --> CatBackupComplete["Backup Complete<br/>deploy and rollback enabled"]
+        CatBackupComplete --> CatAppType{Application type?}
 
-        CatAppType --> CatWebApi["Web / API / MVC / ASMX"]
-        CatAppType --> CatWinSvc["Windows Service / MSI"]
+        CatAppType --> CatWebApi["Web Forms / API / MVC / ASMX"]
+        CatAppType --> CatWinSvc["Win Service MSI"]
 
-        CatWebApi --> CatStopPool[Stop App Pool]
-        CatStopPool --> CatCopyFiles["Copy Files<br/>build output to IIS folder"]
-        CatCopyFiles --> CatConfigOverride["Apply config override<br/>e.g. web.config"]
-        CatConfigOverride --> CatReadyWeb[Status = Ready]
+        CatWebApi --> CatCopyFiles[Copy Files]
+        CatCopyFiles --> CatReadyWeb[Status = Ready]
 
         CatWinSvc --> CatInstallMsi[Install MSI]
         CatInstallMsi --> CatConfirmMsi[Confirm install]
         CatConfirmMsi --> CatCopyConfig[Copy Config]
         CatCopyConfig --> CatReadySvc[Status = Ready]
 
-        CatCopyFiles --> CatDbScripts["Load DB scripts<br/>from repo or env folder path"]
+        CatCopyFiles --> CatDbEnabled["DATABASE enabled<br/>after file copy completes<br/>CAT-SQL-01 / GSSDB"]
+        CatDbEnabled --> CatDbScripts["Load DB scripts<br/>from repo or env folder path"]
         CatDbScripts --> CatBackupDb[Backup DB]
         CatBackupDb --> CatStopRepl[Stop Replication SQL script]
-        CatStopRepl --> CatPublishDb["Publish DB scripts<br/>header, rollup, footer"]
-        CatPublishDb --> CatStartRepl[Start Replication SQL script]
-        CatStartRepl --> CatDbReady[DB scripts deployed]
+        CatStopRepl --> CatApplySchema[Apply Schema Scripts]
+        CatApplySchema --> CatStartRepl[Start Replication SQL script]
 
         CatReadyWeb --> CatDeployLog[Write Deployment Log]
         CatReadySvc --> CatDeployLog
-        CatDbReady --> CatDeployLog
+        CatStartRepl --> CatDeployLog
         CatReadyWeb -. optional .-> CatRollback[Rollback]
     end
 
     CatDeployLog --> ProdTab[PROD tab]
 
-    subgraph PROD["PROD environment"]
+    subgraph PROD["PROD"]
         direction TB
         ProdTab --> ProdServerSelect["Select target server<br/>e.g. PROD-WEB-01"]
-        ProdServerSelect --> ProdBackup["Run backup"]
-        ProdBackup --> ProdDrain["Load balancer draining<br/>health.gif to health.dat<br/>remove server from pool"]
-        ProdDrain --> ProdDrainWait{Active connections = 0?}
-        ProdDrainWait -- No --> ProdDrain
-        ProdDrainWait -- Yes --> ProdAppType{Application type?}
+        ProdServerSelect --> ProdAppBackup["Run application backup<br/>copy sources to env backup folder"]
+        ProdAppBackup --> ProdBackupComplete["Backup Complete"]
+        ProdBackupComplete --> ProdLbDrain["Load balancer draining<br/>rename health.gif to health.dat<br/>server removed from pool"]
+        ProdLbDrain --> ProdAppsLocked["Applications locked<br/>status = Draining<br/>waiting for connection drain"]
+        ProdAppsLocked --> ProdPoll["Poll active connections<br/>every 10s"]
+        ProdPoll --> ProdDrainOk{Connections = 0?}
+        ProdDrainOk -- No --> ProdPoll
+        ProdDrainOk -- Yes --> ProdDeployUnlock["Deploy actions unlocked"]
 
-        ProdAppType --> ProdWebApi["Web / API / MVC / ASMX"]
-        ProdAppType --> ProdWinSvc["Windows Service / MSI"]
+        ProdDeployUnlock --> ProdAppType{Application type?}
+        ProdAppType --> ProdWebApi["Web Forms / API / MVC / ASMX"]
+        ProdAppType --> ProdWinSvc["Win Service MSI"]
 
-        ProdWebApi --> ProdStopPool[Stop App Pool]
-        ProdStopPool --> ProdCopyFiles["Copy Files<br/>build output to IIS folder"]
-        ProdCopyFiles --> ProdConfigOverride["Apply config override"]
-        ProdConfigOverride --> ProdReadyWeb[Status = Ready]
+        ProdWebApi --> ProdCopyFiles[Copy Files]
+        ProdCopyFiles --> ProdReadyWeb[Status = Ready]
 
         ProdWinSvc --> ProdInstallMsi[Install MSI]
         ProdInstallMsi --> ProdConfirmMsi[Confirm install]
         ProdConfirmMsi --> ProdCopyConfig[Copy Config]
         ProdCopyConfig --> ProdReadySvc[Status = Ready]
 
-        ProdCopyFiles --> ProdDbScripts["Load DB scripts<br/>from repo or env folder path"]
-        ProdDbScripts --> ProdBackupDb[Backup DB]
+        ProdCopyFiles --> ProdDbEnabled["DATABASE enabled<br/>after file copy completes<br/>PROD-SQL-01 / GSSDB<br/>Replication enabled"]
+        ProdDbEnabled --> ProdBackupDb[Backup DB]
         ProdBackupDb --> ProdStopRepl[Stop Replication SQL script]
-        ProdStopRepl --> ProdPublishDb["Publish DB scripts<br/>header, rollup, footer"]
-        ProdPublishDb --> ProdStartRepl[Start Replication SQL script]
-        ProdStartRepl --> ProdDbReady[DB scripts deployed]
+        ProdStopRepl --> ProdApplySchema[Apply Schema Scripts]
+        ProdApplySchema --> ProdStartRepl[Start Replication SQL script]
 
-        ProdReadyWeb --> ProdReturnLb["Return to load balancer<br/>restore health endpoint"]
+        ProdReadyWeb --> ProdReturnLb["Return to load balancer<br/>rename health.dat to health.gif"]
         ProdReadySvc --> ProdReturnLb
-        ProdDbReady --> ProdReturnLb
+        ProdStartRepl --> ProdReturnLb
         ProdReturnLb --> ProdDeployLog[Write Deployment Log]
-        ProdReadyWeb -. optional .-> ProdRollback[Rollback]
     end
 
     ProdDeployLog --> Done([Complete])
@@ -129,7 +141,7 @@ flowchart TD
     classDef tab fill:#2d6cdf,stroke:#1b3f8a,color:#fff;
     classDef env fill:#5c3d99,stroke:#3d2866,color:#fff;
 
-    class Output,SitSuccess,SitStartRepl,CatReadyWeb,CatReadySvc,CatDbReady,CatStartRepl,ProdReadyWeb,ProdReadySvc,ProdDbReady,ProdStartRepl,Done ok;
-    class BuildFail,SitBackupFail fail;
+    class Output,SitReadyWeb,SitReadySvc,SitStartRepl,CatReadyWeb,CatReadySvc,CatStartRepl,ProdReadyWeb,ProdReadySvc,ProdStartRepl,Done ok;
+    class BuildFail fail;
     class BuildTab,SitTab,CatTab,ProdTab tab;
     class SIT,CAT,PROD env;
