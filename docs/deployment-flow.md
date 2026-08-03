@@ -38,34 +38,23 @@ flowchart TD
     Output --> SitTab[SIT tab]
     BuildOk -- No --> BuildFail([Build failed])
 
-    subgraph SIT["SIT environment"]
+    subgraph SIT["SIT"]
         direction TB
-        SitTab --> SitBackupRequired["Backup required<br/>deployment actions locked until complete"]
-        SitBackupRequired --> SitRunBackup["Run backup<br/>timestamped backup folder"]
-        SitRunBackup --> SitAppType{Application type?}
-
-        SitAppType --> SitWebApi["Web / API / MVC / ASMX"]
-        SitAppType --> SitWinSvc["Windows Service / MSI"]
-
-        SitWebApi --> SitStopPool[Stop App Pool]
-        SitStopPool --> SitCopyFiles["Copy Files<br/>build output to IIS folder"]
-        SitCopyFiles --> SitConfigOverride["Apply config override<br/>e.g. web.config"]
-        SitConfigOverride --> SitReadyWeb[Status = Ready]
-
-        SitWinSvc --> SitInstallMsi[Install MSI]
-        SitInstallMsi --> SitConfirmMsi[Confirm install]
-        SitConfirmMsi --> SitCopyConfig[Copy Config]
-        SitCopyConfig --> SitReadySvc[Status = Ready]
-
-        SitCopyFiles --> SitDbGate["DB actions available<br/>after backup and file copy complete"]
-        SitDbGate --> SitBackupDb[Backup DB]
-        SitBackupDb --> SitApplySchema[Apply Schema Scripts]
-        SitApplySchema --> SitDbReady[DB scripts deployed]
-
-        SitReadyWeb --> SitDeployLog[Write Deployment Log]
-        SitReadySvc --> SitDeployLog
-        SitDbReady --> SitDeployLog
-        SitReadyWeb -. optional .-> SitRollback[Rollback]
+        SitTab --> SitValidate["Validate source, destination,<br/>and backup paths"]
+        SitValidate --> SitLocked["Only Copy Files enabled<br/>deploy actions locked"]
+        SitLocked --> SitBackup["Run backup<br/>timestamped folder, copy deployment<br/>files and environment config"]
+        SitBackup --> SitBackupOk{Backup succeeded?}
+        SitBackupOk -- Yes --> SitDeployEnabled["Backup complete<br/>deploy and rollback enabled"]
+        SitDeployEnabled --> SitCopyFiles["Copy Files<br/>deploy build artifacts"]
+        SitCopyFiles --> SitValidateDeploy["Validate deployment<br/>destination exists, files present,<br/>config override complete"]
+        SitValidateDeploy --> SitSuccess[Status = Success]
+        SitSuccess --> SitBackupDb["Backup DB (user initiated)"]
+        SitBackupDb --> SitDbScript["DBRollupScriptBuilder<br/>Stop Replication"]
+        SitDbScript --> SitRunScript["Run combined DB script<br/>header, rollup, footer"]
+        SitRunScript --> SitStartRepl[Start Replication]
+        SitStartRepl --> SitDeployLog[Log completion status]
+        SitBackupOk -- No --> SitBackupFail([Backup failed])
+        SitSuccess -. optional .-> SitRollback[Rollback]
     end
 
     SitDeployLog --> CatTab[CAT tab]
@@ -143,8 +132,8 @@ flowchart TD
     classDef tab fill:#2d6cdf,stroke:#1b3f8a,color:#fff;
     classDef env fill:#5c3d99,stroke:#3d2866,color:#fff;
 
-    class Output,SitReadyWeb,SitReadySvc,SitDbReady,CatReadyWeb,CatReadySvc,CatDbReady,ProdReadyWeb,ProdReadySvc,ProdDbReady,Done ok;
-    class BuildFail fail;
+    class Output,SitSuccess,SitStartRepl,CatReadyWeb,CatReadySvc,CatDbReady,ProdReadyWeb,ProdReadySvc,ProdDbReady,Done ok;
+    class BuildFail,SitBackupFail fail;
     class BuildTab,SitTab,CatTab,ProdTab tab;
     class SIT,CAT,PROD env;
 ```
@@ -165,17 +154,17 @@ flowchart TD
 8. **Output Log** — Live logs in the UI and saved to a log text file.
 9. **Output** — Code artifacts and DB scripts written to the Output Root folder.
 
-## SIT environment
+## SIT
 
-1. **Backup required** — Deployment actions are locked until backup completes.
-2. **Run backup** — Back up all sources to a timestamped backup folder.
-3. **Deploy code by application type**
-   - **Web / API / MVC / ASMX** — Stop App Pool → Copy Files → Apply config override
-     → Status Ready (Rollback available).
-   - **Windows Service / MSI** — Install MSI → Confirm install → Copy Config →
-     Status Ready.
-4. **Deploy DB scripts** — After backup and file copy complete: Backup DB → Apply Schema Scripts.
-5. **Deployment Log** — Records backup, code deploy, DB script deploy, and config override activity.
+1. **Validate paths** — Startup validation of source, destination, and backup paths.
+2. **Backup required** — Only Copy Files is enabled; deployment actions are locked.
+3. **Run backup** — Create timestamped backup folder; copy deployment files and environment config.
+4. **Backup complete** — Status Complete; deploy and rollback actions enabled.
+5. **Copy Files** — Deploy build artifacts to the target folder.
+6. **Validate deployment** — Confirm destination exists, expected files are present, and config override is complete.
+7. **Status = Success** — Application deployment marked successful.
+8. **Backup DB** (user initiated) — `DBRollupScriptBuilder` → Stop Replication → run combined DB script (header, rollup, footer) → Start Replication.
+9. **Log completion** — Record completion status in the deployment log.
 
 ## CAT environment
 
