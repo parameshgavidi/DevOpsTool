@@ -18,11 +18,20 @@ flowchart TD
         AppList --> BuildChoice{Choose action}
         BuildChoice --> BuildOne[Build selected app]
         BuildChoice --> BuildAll[Build All]
-        BuildOne --> BuildCodeDb["Build code and DB scripts<br/>msbuild Release + DB script build"]
-        BuildAll --> BuildCodeDb
-        BuildCodeDb --> BuildLog[Stream progress to Output Log]
+        BuildChoice --> DbRollupBtn[Bundle DB Scripts]
+
+        BuildOne --> Msbuild["Run msbuild<br/>Configuration=Release, DeployOnBuild=true"]
+        BuildAll --> Msbuild
+
+        DbRollupBtn --> DbSource["Choose script source folder<br/>e.g. D:\\db-rollup-scripts"]
+        DbSource --> DbConfig["Read build.dbScriptSource<br/>from appsettings.json"]
+        DbConfig --> DbBuilder["Run DBRollupScriptBuilder.exe<br/>generate combined script file"]
+        DbBuilder --> DbCopy["Copy scripts to<br/>{outputRoot}\\db-scripts\\"]
+
+        Msbuild --> BuildLog[Stream progress to Output Log<br/>live UI + log text file]
+        DbCopy --> BuildLog
         BuildLog --> BuildOk{Build succeeded?}
-        BuildOk -- Yes --> Output["Artifacts written to<br/>Output Root folder<br/>(code + DB scripts)"]
+        BuildOk -- Yes --> Output["Artifacts written to<br/>Output Root folder<br/>(code + db-scripts)"]
     end
 
     BuildTab --> Config
@@ -146,10 +155,15 @@ flowchart TD
 2. **Pull latest** — Pull latest changes from the Code repo and DB repo.
 3. **Build backup** — Back up the previous successful build files and DB scripts to the Build Backup folder.
 4. **Applications list** — Shows configured apps with name, type, status, and action.
-5. **Choose action** — Build a selected app or **Build All**.
-6. **Build code and DB scripts** — Run msbuild (`Configuration=Release`, `DeployOnBuild=true`) and build DB scripts.
-7. **Output Log** — Streams build progress and results.
-8. **Output** — Code and DB script artifacts written to the Output Root folder.
+5. **Choose action** — Build a selected app, **Build All**, or **Bundle DB Scripts**.
+6. **Build code** — Run msbuild (`Configuration=Release`, `DeployOnBuild=true`) for the selected app or all apps.
+7. **DB Rollup Scripts** (Bundle DB Scripts button):
+   - Choose the script source folder directory (e.g. `D:\db-rollup-scripts`).
+   - DB script source path is configured in `appsettings.json` (`build.dbScriptSource`).
+   - Run `DBRollupScriptBuilder.exe` to generate the combined script file.
+   - Copy generated scripts to `{outputRoot}\db-scripts\`.
+8. **Output Log** — Live logs in the UI and saved to a log text file.
+9. **Output** — Code artifacts and DB scripts written to the Output Root folder.
 
 ## SIT environment
 
