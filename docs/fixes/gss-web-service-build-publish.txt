@@ -12,6 +12,10 @@ BuildTab.razor — add AFTER successful build (required)
 Do NOT put robocopy in buildCommand. The tool runs the command as one process
 (msbuild), so "& robocopy ..." is passed to msbuild and the build FAILS.
 
+Before copying new artifacts:
+  If F:\build-output\GSSWebService already exists, move it to
+  F:\build-output\GSSWebService_yyyyMMddHHmm_v1 (v2, v3... if needed).
+
 Skip when copying: packages folder, .sln files, .resx files.
 
 In BuildApplication, after exit == 0 (and before setting Success), add:
@@ -29,6 +33,25 @@ In BuildApplication, after exit == 0 (and before setting Success), add:
 
             if (Directory.Exists(precompiled))
             {
+                // Archive previous successful build, e.g. GSSWebService_202608081454_v1
+                if (Directory.Exists(outputFolder) &&
+                    Directory.EnumerateFileSystemEntries(outputFolder).Any())
+                {
+                    var parent = Path.GetDirectoryName(outputFolder)!;
+                    var appFolderName = Path.GetFileName(outputFolder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                    var stamp = DateTime.Now.ToString("yyyyMMddHHmm");
+                    var version = 1;
+                    string archivePath;
+                    do
+                    {
+                        archivePath = Path.Combine(parent, $"{appFolderName}_{stamp}_v{version}");
+                        version++;
+                    } while (Directory.Exists(archivePath));
+
+                    Directory.Move(outputFolder, archivePath);
+                    LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Previous build archived to {archivePath}\r\n";
+                }
+
                 Directory.CreateDirectory(outputFolder);
 
                 foreach (var dir in Directory.GetDirectories(precompiled, "*", SearchOption.AllDirectories))
@@ -70,5 +93,12 @@ Place this block where you currently have:
         app.Status = exit == 0 ? "Success" : "Failed";
 
 So the flow is:
-        if (exit == 0) { /* copy PrecompiledWeb -> outputFolder */ }
+        if (exit == 0) {
+          /* archive previous outputFolder -> GSSWebService_yyyyMMddHHmm_vN */
+          /* copy PrecompiledWeb -> outputFolder */
+        }
         app.Status = exit == 0 ? "Success" : "Failed";
+
+Example after two builds:
+  F:\build-output\GSSWebService                  <- latest
+  F:\build-output\GSSWebService_202608081454_v1  <- previous
