@@ -1,0 +1,111 @@
+--------------------------------------------------------------------------------
+BuildTab.razor — inside BuildApplication, after RunCommandAsync
+--------------------------------------------------------------------------------
+Use one if (exit == 0) with if / else if per app for now.
+GSS Web Service and GSSWeb both archive + copy the same way; only the
+PrecompiledWeb source folder lookup differs.
+
+        if (exit == 0)
+        {
+            string? precompiled = null;
+
+            if (string.Equals(app.Name, "GSS Web Service", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(app.Type, "AsmxWebService", StringComparison.OrdinalIgnoreCase))
+            {
+                // GSS Web Service (existing — do not change this path logic)
+                precompiled = Path.Combine(workingDir, "PrecompiledWeb", app.OutputSubfolder ?? "GSSWebService");
+                if (!Directory.Exists(precompiled))
+                {
+                    var precompiledRoot = Path.Combine(workingDir, "PrecompiledWeb");
+                    precompiled = Directory.Exists(precompiledRoot)
+                        ? Directory.GetDirectories(precompiledRoot).FirstOrDefault()
+                        : null;
+                }
+            }
+            else if (string.Equals(app.Name, "GSSWeb", StringComparison.OrdinalIgnoreCase)
+                     || string.Equals(app.Type, "AspNetWebForms", StringComparison.OrdinalIgnoreCase))
+            {
+                // Legacy ASP.NET WebForms (GSSWeb)
+                precompiled = Path.Combine(workingDir, "PrecompiledWeb", app.OutputSubfolder ?? "GSSWeb");
+                if (!Directory.Exists(precompiled))
+                    precompiled = Path.Combine(workingDir, "PrecompiledWeb", "gssweb");
+                if (!Directory.Exists(precompiled))
+                {
+                    var precompiledRoot = Path.Combine(workingDir, "PrecompiledWeb");
+                    precompiled = Directory.Exists(precompiledRoot)
+                        ? Directory.GetDirectories(precompiledRoot).FirstOrDefault()
+                        : null;
+                }
+                if (precompiled is null || !Directory.Exists(precompiled))
+                {
+                    var siteFolder = Path.Combine(workingDir, "gssweb");
+                    if (Directory.Exists(siteFolder))
+                        precompiled = siteFolder;
+                }
+            }
+
+            if (!string.IsNullOrEmpty(precompiled) && Directory.Exists(precompiled))
+            {
+                // Archive previous build: {outputSubfolder}_yyyyMMddHHmm_vN
+                if (Directory.Exists(outputFolder) &&
+                    Directory.EnumerateFileSystemEntries(outputFolder).Any())
+                {
+                    var parent = Path.GetDirectoryName(outputFolder)!;
+                    var appFolderName = Path.GetFileName(
+                        outputFolder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                    var stamp = DateTime.Now.ToString("yyyyMMddHHmm");
+                    var version = 1;
+                    string archivePath;
+                    do
+                    {
+                        archivePath = Path.Combine(parent, $"{appFolderName}_{stamp}_v{version}");
+                        version++;
+                    } while (Directory.Exists(archivePath));
+
+                    Directory.Move(outputFolder, archivePath);
+                    LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Previous build archived to {archivePath}\r\n";
+                }
+
+                Directory.CreateDirectory(outputFolder);
+
+                foreach (var dir in Directory.GetDirectories(precompiled, "*", SearchOption.AllDirectories))
+                {
+                    var relative = Path.GetRelativePath(precompiled, dir);
+                    if (relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                            .Any(p => p.Equals("packages", StringComparison.OrdinalIgnoreCase)))
+                        continue;
+
+                    Directory.CreateDirectory(Path.Combine(outputFolder, relative));
+                }
+
+                foreach (var file in Directory.GetFiles(precompiled, "*", SearchOption.AllDirectories))
+                {
+                    var ext = Path.GetExtension(file);
+                    if (ext.Equals(".sln", StringComparison.OrdinalIgnoreCase) ||
+                        ext.Equals(".resx", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var relative = Path.GetRelativePath(precompiled, file);
+                    if (relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                            .Any(p => p.Equals("packages", StringComparison.OrdinalIgnoreCase)))
+                        continue;
+
+                    var dest = Path.Combine(outputFolder, relative);
+                    Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                    File.Copy(file, dest, overwrite: true);
+                }
+
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Published artifacts copied to {outputFolder} (skipped packages, .sln, .resx)\r\n";
+            }
+            else
+            {
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARN] Publish output not found for {app.Name} under {workingDir}\r\n";
+            }
+        }
+
+        app.Status = exit == 0 ? "Success" : "Failed";
+
+--------------------------------------------------------------------------------
+Later: add more apps with another else if (...) { precompiled = ... }
+Archive + copy block stays shared — no need to duplicate it.
+--------------------------------------------------------------------------------
