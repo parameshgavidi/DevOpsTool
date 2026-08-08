@@ -1,0 +1,175 @@
+================================================================================
+BuildTab.razor — FULL combined code
+GSS Web Service (working) + GSSWeb (legacy AspNetWebForms)
+================================================================================
+
+PART A — appsettings.json (both apps)
+--------------------------------------------------------------------------------
+
+{
+  "name": "GSS Web Service",
+  "type": "AsmxWebService",
+  "projectPath": "Web Services\\GSSWebService\\GSSWebService.sln",
+  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
+  "outputSubfolder": "GSSWebService"
+},
+{
+  "name": "GSSWeb",
+  "type": "AspNetWebForms",
+  "projectPath": "WebV3\\gssweb\\gssweb.sln",
+  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
+  "outputSubfolder": "GSSWeb"
+}
+
+
+PART B — RestorePackagesAsync (START of method — BEFORE build)
+--------------------------------------------------------------------------------
+Must be here, NOT inside if (exit == 0).
+
+private async Task<bool> RestorePackagesAsync(Application app, string? projectFile, bool isLegacy, string workingDir, CancellationToken cancellation)
+{
+    // Classic ASP.NET Web Site / WebForms / ASMX — do NOT use dotnet restore
+    if (string.Equals(app.Type, "AspNetWebForms", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(app.Type, "AsmxWebService", StringComparison.OrdinalIgnoreCase))
+    {
+        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Skipping dotnet restore for legacy app {app.Name} ({app.Type})\r\n";
+        return true;
+    }
+
+    string? restoreCommand = null;
+
+    if (!string.IsNullOrEmpty(projectFile))
+    {
+        if (isLegacy && OperatingSystem.IsWindows())
+        {
+            restoreCommand = $"msbuild \"{projectFile}\" /t:Restore /p:Configuration=Release /m";
+        }
+        else
+        {
+            restoreCommand = $"dotnet restore \"{projectFile}\"";
+        }
+    }
+
+    // ... rest of existing RestorePackagesAsync unchanged ...
+}
+
+
+PART C — BuildApplication, AFTER RunCommandAsync (exit code)
+--------------------------------------------------------------------------------
+Replace your existing if (exit == 0) publish-copy block with this full version.
+
+        if (exit == 0)
+        {
+            string? precompiled = null;
+
+            // ---- GSS Web Service (working — keep this) ----
+            if (string.Equals(app.Name, "GSS Web Service", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(app.Type, "AsmxWebService", StringComparison.OrdinalIgnoreCase))
+            {
+                precompiled = Path.Combine(workingDir, "PrecompiledWeb", app.OutputSubfolder ?? "GSSWebService");
+                if (!Directory.Exists(precompiled))
+                {
+                    var precompiledRoot = Path.Combine(workingDir, "PrecompiledWeb");
+                    precompiled = Directory.Exists(precompiledRoot)
+                        ? Directory.GetDirectories(precompiledRoot).FirstOrDefault()
+                        : null;
+                }
+            }
+            // ---- GSSWeb legacy ASP.NET WebForms ----
+            else if (string.Equals(app.Name, "GSSWeb", StringComparison.OrdinalIgnoreCase)
+                     || string.Equals(app.Type, "AspNetWebForms", StringComparison.OrdinalIgnoreCase))
+            {
+                precompiled = Path.Combine(workingDir, "PrecompiledWeb", app.OutputSubfolder ?? "GSSWeb");
+                if (!Directory.Exists(precompiled))
+                    precompiled = Path.Combine(workingDir, "PrecompiledWeb", "gssweb");
+                if (!Directory.Exists(precompiled))
+                {
+                    var precompiledRoot = Path.Combine(workingDir, "PrecompiledWeb");
+                    precompiled = Directory.Exists(precompiledRoot)
+                        ? Directory.GetDirectories(precompiledRoot).FirstOrDefault()
+                        : null;
+                }
+                if (precompiled is null || !Directory.Exists(precompiled))
+                {
+                    var siteFolder = Path.Combine(workingDir, "gssweb");
+                    if (Directory.Exists(siteFolder))
+                        precompiled = siteFolder;
+                }
+            }
+
+            if (!string.IsNullOrEmpty(precompiled) && Directory.Exists(precompiled))
+            {
+                // Archive previous build:
+                //   F:\build-output\GSSWebService_yyyyMMddHHmm_v1
+                //   F:\build-output\GSSWeb_yyyyMMddHHmm_v1
+                if (Directory.Exists(outputFolder) &&
+                    Directory.EnumerateFileSystemEntries(outputFolder).Any())
+                {
+                    var parent = Path.GetDirectoryName(outputFolder)!;
+                    var appFolderName = Path.GetFileName(
+                        outputFolder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                    var stamp = DateTime.Now.ToString("yyyyMMddHHmm");
+                    var version = 1;
+                    string archivePath;
+                    do
+                    {
+                        archivePath = Path.Combine(parent, $"{appFolderName}_{stamp}_v{version}");
+                        version++;
+                    } while (Directory.Exists(archivePath));
+
+                    Directory.Move(outputFolder, archivePath);
+                    LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Previous build archived to {archivePath}\r\n";
+                }
+
+                Directory.CreateDirectory(outputFolder);
+
+                foreach (var dir in Directory.GetDirectories(precompiled, "*", SearchOption.AllDirectories))
+                {
+                    var relative = Path.GetRelativePath(precompiled, dir);
+                    if (relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                            .Any(p => p.Equals("packages", StringComparison.OrdinalIgnoreCase)))
+                        continue;
+
+                    Directory.CreateDirectory(Path.Combine(outputFolder, relative));
+                }
+
+                foreach (var file in Directory.GetFiles(precompiled, "*", SearchOption.AllDirectories))
+                {
+                    var ext = Path.GetExtension(file);
+                    if (ext.Equals(".sln", StringComparison.OrdinalIgnoreCase) ||
+                        ext.Equals(".resx", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var relative = Path.GetRelativePath(precompiled, file);
+                    if (relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                            .Any(p => p.Equals("packages", StringComparison.OrdinalIgnoreCase)))
+                        continue;
+
+                    var dest = Path.Combine(outputFolder, relative);
+                    Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                    File.Copy(file, dest, overwrite: true);
+                }
+
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Published artifacts copied to {outputFolder} (skipped packages, .sln, .resx)\r\n";
+            }
+            else
+            {
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARN] Publish output not found for {app.Name} under {workingDir}\r\n";
+            }
+        }
+
+        app.Status = exit == 0 ? "Success" : "Failed";
+
+
+PART D — checklist
+--------------------------------------------------------------------------------
+[ ] PART B is in RestorePackagesAsync (not inside exit == 0)
+[ ] PART C replaces the post-build copy block in BuildApplication
+[ ] GSS Web Service still builds to F:\build-output\GSSWebService
+[ ] GSSWeb builds to F:\build-output\GSSWeb
+[ ] Previous builds archived as {name}_yyyyMMddHHmm_vN
+[ ] No return true inside BuildApplication / if (exit == 0)
+
+================================================================================
+END
+================================================================================
