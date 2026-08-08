@@ -2,6 +2,6 @@
   "name": "GSS Web Service",
   "type": "AsmxWebService",
   "projectPath": "Web Services\\GSSWebService\\GSSWebService.sln",
-  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release & if errorlevel 1 exit /b 1 & mkdir \"{outputSubfolder}\" 2>nul & robocopy . \"{outputSubfolder}\" /E /XD .vs obj .git /XF *.sln *.suo *.user *.vdproj & if %ERRORLEVEL% LEQ 7 exit /b 0",
+  "buildCommand": "cmd /c \"msbuild \\\"{projectFile}\\\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile & if errorlevel 1 exit /b 1 & mkdir \\\"{outputSubfolder}\\\" 2>nul & robocopy \\\"PrecompiledWeb\\GSSWebService\\\" \\\"{outputSubfolder}\\\" /E & if %ERRORLEVEL% LEQ 7 exit /b 0\"",
   "outputSubfolder": "GSSWebService"
 }
