@@ -12,6 +12,8 @@ BuildTab.razor — add AFTER successful build (required)
 Do NOT put robocopy in buildCommand. The tool runs the command as one process
 (msbuild), so "& robocopy ..." is passed to msbuild and the build FAILS.
 
+Skip when copying: packages folder, .sln files, .resx files.
+
 In BuildApplication, after exit == 0 (and before setting Success), add:
 
         if (exit == 0)
@@ -19,7 +21,6 @@ In BuildApplication, after exit == 0 (and before setting Success), add:
             var precompiled = Path.Combine(workingDir, "PrecompiledWeb", app.OutputSubfolder ?? "GSSWebService");
             if (!Directory.Exists(precompiled))
             {
-                // fallback: first folder under PrecompiledWeb
                 var precompiledRoot = Path.Combine(workingDir, "PrecompiledWeb");
                 precompiled = Directory.Exists(precompiledRoot)
                     ? Directory.GetDirectories(precompiledRoot).FirstOrDefault() ?? precompiled
@@ -29,17 +30,35 @@ In BuildApplication, after exit == 0 (and before setting Success), add:
             if (Directory.Exists(precompiled))
             {
                 Directory.CreateDirectory(outputFolder);
+
                 foreach (var dir in Directory.GetDirectories(precompiled, "*", SearchOption.AllDirectories))
                 {
-                    Directory.CreateDirectory(dir.Replace(precompiled, outputFolder));
+                    var relative = Path.GetRelativePath(precompiled, dir);
+                    if (relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                            .Any(p => p.Equals("packages", StringComparison.OrdinalIgnoreCase)))
+                        continue;
+
+                    Directory.CreateDirectory(Path.Combine(outputFolder, relative));
                 }
+
                 foreach (var file in Directory.GetFiles(precompiled, "*", SearchOption.AllDirectories))
                 {
-                    var dest = file.Replace(precompiled, outputFolder);
+                    var ext = Path.GetExtension(file);
+                    if (ext.Equals(".sln", StringComparison.OrdinalIgnoreCase) ||
+                        ext.Equals(".resx", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var relative = Path.GetRelativePath(precompiled, file);
+                    if (relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                            .Any(p => p.Equals("packages", StringComparison.OrdinalIgnoreCase)))
+                        continue;
+
+                    var dest = Path.Combine(outputFolder, relative);
                     Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
                     File.Copy(file, dest, overwrite: true);
                 }
-                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Published artifacts copied to {outputFolder}\r\n";
+
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Published artifacts copied to {outputFolder} (skipped packages, .sln, .resx)\r\n";
             }
             else
             {
