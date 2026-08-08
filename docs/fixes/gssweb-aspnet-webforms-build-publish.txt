@@ -7,13 +7,51 @@
 }
 
 --------------------------------------------------------------------------------
-NOTES (GSSWeb only — does not change GSS Web Service)
+WHY BUILD FAILED (MSB4249) — fix this FIRST
 --------------------------------------------------------------------------------
-- Legacy ASP.NET site path (from repo): WebV3\gssweb\gssweb.sln
+Log showed:
+  Command: cmd.exe /c dotnet restore "...\gssweb.sln"
+  MSB4249: Unable to build website project "gsswebv3".
+  The ASP.NET compiler is only available on the .NET Framework version of MSBuild.
+  Restore failed for GSSWeb with exit code 1
+
+Cause:
+  GSSWeb is a classic ASP.NET Web Site. Do NOT use "dotnet restore" / "dotnet build".
+  Use .NET Framework MSBuild only (same family as Visual Studio MSBuild).
+
+--------------------------------------------------------------------------------
+BuildTab.razor — SKIP dotnet restore for AspNetWebForms / website .sln
+--------------------------------------------------------------------------------
+In RestorePackagesAsync (or before it in BuildApplication), skip restore for
+legacy web site apps. Do not call dotnet restore.
+
+Example guard (add near start of RestorePackagesAsync):
+
+        // Classic ASP.NET Web Site / WebForms — dotnet CLI cannot restore/build these
+        if (string.Equals(app.Type, "AspNetWebForms", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(app.Type, "AsmxWebService", StringComparison.OrdinalIgnoreCase))
+        {
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Skipping dotnet restore for legacy app {app.Name} ({app.Type})\r\n";
+            return true;
+        }
+
+Also ensure IsLegacyDotNetFrameworkProject("AspNetWebForms") returns true, and the
+build command uses Framework MSBuild (ResolveMsBuildPath(netFramework: true)), not
+"dotnet build".
+
+appsettings buildCommand should stay as msbuild (Framework), not dotnet:
+
+  msbuild "{projectFile}" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile
+
+If "msbuild" is not on PATH, use full path from VS, e.g.:
+  "C:\Program Files\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe"
+
+--------------------------------------------------------------------------------
+NOTES (GSSWeb only — does not change GSS Web Service post-build copy)
+--------------------------------------------------------------------------------
+- Legacy ASP.NET site path: WebV3\gssweb\gssweb.sln
   Site content folder: WebV3\gssweb\gssweb\  (Bin, App_Code, aspx, etc.)
-- If you already build successfully with src\GSSWeb\GSSWeb.csproj, keep that
-  projectPath; only the post-build copy/archive steps below are required.
-- Same pattern as GSS Web Service:
+- Same publish copy pattern as GSS Web Service AFTER build succeeds:
   1) msbuild + FolderProfile -> PrecompiledWeb\...
   2) archive previous F:\build-output\GSSWeb -> GSSWeb_yyyyMMddHHmm_vN
   3) copy publish output to F:\build-output\GSSWeb
