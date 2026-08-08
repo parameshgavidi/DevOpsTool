@@ -1,97 +1,123 @@
 ================================================================================
-GSS Web Service — Build & Publish Fix (to build-output)
+GSS Web Service — Build & Publish (NO .csproj / Web Site project)
 ================================================================================
+
+YOUR SITUATION
+--------------
+GSS Web Service is a classic ASP.NET Web Site (or website folder under a .sln).
+There is NO .csproj — that is normal. Do NOT invent a .csproj path.
+
+Use the .sln + website folder (or aspnet_compiler / publishproj).
+
 
 WHY IT FAILS TODAY
 ------------------
-1. projectPath points to a .sln file:
-     "Web Services\\GSSWebService\\GSSWebService.sln"
-   DeployOnBuild + PublishProfile work on a .csproj, not reliably on a .sln.
+1. buildCommand uses PublishProfile=FolderProfile without a real publish target
+   folder → publish fails or goes to the wrong place.
 
-2. buildCommand uses PublishProfile=FolderProfile but does NOT set the publish
-   destination to your OutputRoot / build-output folder. If FolderProfile is
-   missing or points elsewhere, publish fails or artifacts go to the wrong place.
+2. Command never uses {outputSubfolder}. BuildTab replaces {outputSubfolder}
+   with the FULL output path from GetAppOutputFolder():
+     {OutputRoot}\GSSWebService
+   or when OutputRoot is empty:
+     .\build-output\GSSWebService
 
-3. buildCommand replaces {projectFile} but never uses {outputSubfolder}.
-   BuildTab.razor already replaces {outputSubfolder} with the FULL output folder
-   from GetAppOutputFolder() = {OutputRoot}\GSSWebService
-   (or .\build-output\GSSWebService when OutputRoot is empty).
-
-4. Comparing to "Test GSS Service": that entry uses a .csproj path. GSS Web
-   Service should do the same.
+3. Pointing tools at a missing .csproj will always fail.
 
 
 --------------------------------------------------------------------------------
-FIX 1 — Corrected appsettings.json entry (replace GSS Web Service block)
+OPTION A (recommended) — Publish from the .sln to build-output
 --------------------------------------------------------------------------------
-Copy this into your build.apps array (adjust .csproj path if your project file
-name differs):
+Use this appsettings.json entry:
 
 {
   "name": "GSS Web Service",
   "type": "AsmxWebService",
-  "projectPath": "Web Services\\GSSWebService\\GSSWebService.csproj",
-  "buildCommand": "msbuild \"{projectFile}\" /t:Rebuild /p:Configuration=Release /p:DeployOnBuild=true /p:WebPublishMethod=FileSystem /p:PublishProvider=FileSystem /p:PublishUrl=\"{outputSubfolder}\\\" /p:DeleteExistingFiles=True /p:SelfContained=false",
+  "projectPath": "Web Services\\GSSWebService\\GSSWebService.sln",
+  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:WebPublishMethod=FileSystem /p:PublishProvider=FileSystem /p:PublishUrl=\"{outputSubfolder}\\\" /p:DeleteExistingFiles=True",
   "outputSubfolder": "GSSWebService"
 }
 
-What this does:
-- Builds the .csproj (not the .sln)
-- Publishes via FileSystem (no FolderProfile required)
-- Writes artifacts to {OutputRoot}\GSSWebService
-  which is typically:  <OutputRoot or .\build-output>\GSSWebService
+Notes:
+- Keep projectPath as the .sln (you do not need a .csproj).
+- {projectFile} = full path to the .sln
+- {outputSubfolder} = full publish folder (build-output\GSSWebService)
 
 
 --------------------------------------------------------------------------------
-FIX 2 — Optional: make default MSBuild path also publish to output folder
+OPTION B — Precompile website folder with aspnet_compiler
 --------------------------------------------------------------------------------
-In BuildTab.razor, inside BuildApplication(), replace the Windows/msbuild
-default command branches so they publish to outputFolder when no custom
-buildCommand is set.
+If MSBuild publish on the .sln fails (common for Web Site projects), use the
+website physical folder path in projectPath and compile with aspnet_compiler.
 
-FIND (approx lines 274–283):
+1. Find the website folder (same folder that contains .asmx / App_Code / bin),
+   e.g.  Web Services\GSSWebService
 
-            if (OperatingSystem.IsWindows() && isLegacy)
-            {
-                var msbuildPath = BuildService.ResolveMsBuildPath(netFramework: true);
-                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Using .NET Framework MSBuild: {msbuildPath ?? "not found"}\r\n";
-                command = $"\"msbuild\" \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true";
-            }
-            else if (OperatingSystem.IsWindows())
-            {
-                command = $"\"msbuild\" \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true";
-            }
+2. Use this appsettings entry:
 
-REPLACE WITH:
+{
+  "name": "GSS Web Service",
+  "type": "AsmxWebService",
+  "projectPath": "Web Services\\GSSWebService",
+  "buildCommand": "aspnet_compiler -v / -p \"{projectFile}\" -f \"{outputSubfolder}\"",
+  "outputSubfolder": "GSSWebService"
+}
 
-            if (OperatingSystem.IsWindows() && isLegacy)
-            {
-                var msbuildPath = BuildService.ResolveMsBuildPath(netFramework: true);
-                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Using .NET Framework MSBuild: {msbuildPath ?? "not found"}\r\n";
-                var msbuildExe = string.IsNullOrWhiteSpace(msbuildPath) ? "msbuild" : msbuildPath;
-                command =
-                    $"\"{msbuildExe}\" \"{projectFile}\" /t:Rebuild " +
-                    $"/p:Configuration=Release /p:DeployOnBuild=true " +
-                    $"/p:WebPublishMethod=FileSystem /p:PublishProvider=FileSystem " +
-                    $"/p:PublishUrl=\"{outputFolder}\\\" /p:DeleteExistingFiles=True";
-            }
-            else if (OperatingSystem.IsWindows())
-            {
-                command =
-                    $"\"msbuild\" \"{projectFile}\" /t:Rebuild " +
-                    $"/p:Configuration=Release /p:DeployOnBuild=true " +
-                    $"/p:WebPublishMethod=FileSystem /p:PublishProvider=FileSystem " +
-                    $"/p:PublishUrl=\"{outputFolder}\\\" /p:DeleteExistingFiles=True";
-            }
+aspnet_compiler is usually here (Developer Command Prompt / VS Build Tools):
+  C:\Windows\Microsoft.NET\Framework64\v4.0.30319\aspnet_compiler.exe
+
+If PATH does not include it, use the full path in buildCommand:
+
+{
+  "name": "GSS Web Service",
+  "type": "AsmxWebService",
+  "projectPath": "Web Services\\GSSWebService",
+  "buildCommand": "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\aspnet_compiler.exe -v / -p \"{projectFile}\" -f \"{outputSubfolder}\"",
+  "outputSubfolder": "GSSWebService"
+}
+
+Result: published/precompiled site under build-output\GSSWebService
 
 
 --------------------------------------------------------------------------------
-FIX 3 — Ensure GetProjectFilePath prefers .csproj over .sln
+OPTION C — Create a .publishproj once (then use like a project file)
 --------------------------------------------------------------------------------
-If GetProjectFilePath() currently returns whatever is in ProjectPath (including
-.sln), add a small guard so .sln is resolved to a .csproj when possible.
+In Visual Studio:
+1. Open GSSWebService.sln
+2. Right-click the website → Publish
+3. Target: Folder → choose any temp folder
+4. VS creates something like:
+     Web Services\GSSWebService\GSSWebService.Publish.xml
+   or a .publishproj under the site
 
-ADD / UPDATE helper (BuildTab.razor @code):
+Then set projectPath to that publishproj / use Folder publish with PublishUrl
+set to {outputSubfolder}.
+
+
+--------------------------------------------------------------------------------
+OPTION D — Simple file copy (only if no compile step is needed)
+--------------------------------------------------------------------------------
+If the site is already buildable as static ASMX + bin DLLs and you only need
+to stage files:
+
+{
+  "name": "GSS Web Service",
+  "type": "AsmxWebService",
+  "projectPath": "Web Services\\GSSWebService",
+  "buildCommand": "robocopy \"{projectFile}\" \"{outputSubfolder}\" /E /XD .vs obj /NFL /NDL /NJH /NJS /nc /ns /np & if %ERRORLEVEL% LEQ 7 exit /b 0",
+  "outputSubfolder": "GSSWebService"
+}
+
+(Use only when your team accepts copy-only staging; prefer A or B for a real
+build/publish.)
+
+
+--------------------------------------------------------------------------------
+BuildTab.razor — small helper so .sln / folder paths both work
+--------------------------------------------------------------------------------
+Keep GetProjectFilePath returning the configured path (sln OR folder).
+Do NOT force a .csproj lookup when none exists.
+
+Suggested GetProjectFilePath:
 
     private string? GetProjectFilePath(Application app)
     {
@@ -102,53 +128,50 @@ ADD / UPDATE helper (BuildTab.razor @code):
             ? app.ProjectPath
             : Path.Combine(RepoRoot, app.ProjectPath);
 
-        // Prefer .csproj — DeployOnBuild / publish need a project, not a solution
-        if (fullPath.EndsWith(".sln", StringComparison.OrdinalIgnoreCase))
-        {
-            var dir = Path.GetDirectoryName(fullPath);
-            if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
-            {
-                var csproj = Directory.GetFiles(dir, "*.csproj").FirstOrDefault();
-                if (csproj is not null)
-                {
-                    LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Resolved .sln to project: {csproj}\r\n";
-                    return csproj;
-                }
-            }
-        }
-
         return fullPath;
     }
 
-
---------------------------------------------------------------------------------
-MANUAL TEST (from Developer Command Prompt for VS)
---------------------------------------------------------------------------------
-Replace paths to match your machine:
-
-  set REPO=D:\path\to\code-repo
-  set OUT=D:\path\to\build-output\GSSWebService
-
-  msbuild "%REPO%\Web Services\GSSWebService\GSSWebService.csproj" ^
-    /t:Rebuild ^
-    /p:Configuration=Release ^
-    /p:DeployOnBuild=true ^
-    /p:WebPublishMethod=FileSystem ^
-    /p:PublishProvider=FileSystem ^
-    /p:PublishUrl="%OUT%\" ^
-    /p:DeleteExistingFiles=True
-
-Expected: %OUT% contains published web files (bin, *.asmx, web.config, etc.)
+Ensure BuildApplication still replaces:
+  {projectFile}     → projectFile (sln path OR website folder)
+  {outputSubfolder} → outputFolder (full path under build-output)
 
 
 --------------------------------------------------------------------------------
+MANUAL TEST (Developer Command Prompt for VS)
+--------------------------------------------------------------------------------
+Option A (.sln):
+
+  set SLN=D:\repo\Web Services\GSSWebService\GSSWebService.sln
+  set OUT=D:\build-output\GSSWebService
+
+  msbuild "%SLN%" /p:Configuration=Release /p:DeployOnBuild=true ^
+    /p:WebPublishMethod=FileSystem /p:PublishProvider=FileSystem ^
+    /p:PublishUrl="%OUT%\" /p:DeleteExistingFiles=True
+
+Option B (website folder, no csproj):
+
+  set SITE=D:\repo\Web Services\GSSWebService
+  set OUT=D:\build-output\GSSWebService
+
+  aspnet_compiler -v / -p "%SITE%" -f "%OUT%"
+
+Expected: %OUT% contains .asmx, bin\, web.config, etc.
+
+
+--------------------------------------------------------------------------------
+WHAT TO DO NOW (pick one)
+-------------------------
+1. Try OPTION A first (keep .sln, set PublishUrl to {outputSubfolder}).
+2. If A fails with website/publish errors → use OPTION B (aspnet_compiler).
+3. Do not change projectPath to a .csproj that does not exist.
+
+
 CHECKLIST
---------------------------------------------------------------------------------
-[ ] Change projectPath from .sln to .csproj (or apply Fix 3)
-[ ] Use FileSystem PublishUrl with {outputSubfolder} (Fix 1)
-[ ] Set Output Root in BUILD tab UI (or leave blank → .\build-output)
-[ ] Run from a machine with MSBuild / Visual Studio Build Tools installed
-[ ] Confirm package restore succeeds before the build command runs
+---------
+[ ] Confirm there is no .csproj (Web Site project) — OK
+[ ] Keep projectPath as .sln (Option A) OR website folder (Option B)
+[ ] Set buildCommand PublishUrl / aspnet_compiler -f to {outputSubfolder}
+[ ] Set BUILD tab Output Root (or leave blank → .\build-output)
 [ ] After build, open:  <OutputRoot>\GSSWebService
 
 
