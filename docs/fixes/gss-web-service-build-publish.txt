@@ -2,6 +2,54 @@
   "name": "GSS Web Service",
   "type": "AsmxWebService",
   "projectPath": "Web Services\\GSSWebService\\GSSWebService.sln",
-  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile & if errorlevel 1 exit /b 1 & mkdir \"{outputSubfolder}\" 2>nul & robocopy \"PrecompiledWeb\\GSSWebService\" \"{outputSubfolder}\" /E & if errorlevel 8 exit /b 1 & exit /b 0",
+  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
   "outputSubfolder": "GSSWebService"
 }
+
+--------------------------------------------------------------------------------
+BuildTab.razor — add AFTER successful build (required)
+--------------------------------------------------------------------------------
+Do NOT put robocopy in buildCommand. The tool runs the command as one process
+(msbuild), so "& robocopy ..." is passed to msbuild and the build FAILS.
+
+In BuildApplication, after exit == 0 (and before setting Success), add:
+
+        if (exit == 0)
+        {
+            var precompiled = Path.Combine(workingDir, "PrecompiledWeb", app.OutputSubfolder ?? "GSSWebService");
+            if (!Directory.Exists(precompiled))
+            {
+                // fallback: first folder under PrecompiledWeb
+                var precompiledRoot = Path.Combine(workingDir, "PrecompiledWeb");
+                precompiled = Directory.Exists(precompiledRoot)
+                    ? Directory.GetDirectories(precompiledRoot).FirstOrDefault() ?? precompiled
+                    : precompiled;
+            }
+
+            if (Directory.Exists(precompiled))
+            {
+                Directory.CreateDirectory(outputFolder);
+                foreach (var dir in Directory.GetDirectories(precompiled, "*", SearchOption.AllDirectories))
+                {
+                    Directory.CreateDirectory(dir.Replace(precompiled, outputFolder));
+                }
+                foreach (var file in Directory.GetFiles(precompiled, "*", SearchOption.AllDirectories))
+                {
+                    var dest = file.Replace(precompiled, outputFolder);
+                    Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                    File.Copy(file, dest, overwrite: true);
+                }
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Published artifacts copied to {outputFolder}\r\n";
+            }
+            else
+            {
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARN] PrecompiledWeb output not found under {workingDir}\r\n";
+            }
+        }
+
+Place this block where you currently have:
+        app.Status = exit == 0 ? "Success" : "Failed";
+
+So the flow is:
+        if (exit == 0) { /* copy PrecompiledWeb -> outputFolder */ }
+        app.Status = exit == 0 ? "Success" : "Failed";
