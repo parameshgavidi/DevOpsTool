@@ -1,50 +1,86 @@
 ================================================================================
 Bundle Scripts button — call DBRollupScriptBuilder.exe and copy to output
+Settings come from appsettings.json (do NOT hardcode paths in C#)
 ================================================================================
 
 FLOW
 ----
 1. User clicks "Bundle Scripts"
-2. Run DBRollupScriptBuilder.exe (working dir = exe folder)
-3. Exe writes scripts to its OutputDirectory (e.g. f:\temp\scripts)
-4. Copy *.sql (and other script files) to our Output Root:
-     F:\build-output\db-scripts\
+2. Run DBRollupScriptBuilder.exe (path from appsettings)
+3. Exe writes scripts to its OutputDirectory (path from appsettings)
+4. Copy script files to {outputRoot}\db-scripts\
 5. Stream stdout/stderr to OUTPUT LOG
-6. On non-zero exit or exception → log ERROR and set failed status
+6. On error → [ERROR] in OUTPUT LOG
 
 
 PART A — appsettings.json (DevOps tool)
 --------------------------------------------------------------------------------
-Add under "build" (paths match your machine):
+Put all paths under "build" (same section as outputRoot / dbScriptSource):
 
-  "dbScriptSource": "F:\\db-rollup-scripts",
-  "dbRollupExePath": "F:\\GSS\\AppDev\\gss-utilities\\DBRollupScriptBuilder\\DBRollupScriptBuilder\\bin\\Debug\\net10.0\\DBRollupScriptBuilder.exe",
-  "dbRollupOutputDirectory": "F:\\temp\\scripts",
-  "outputRoot": "F:\\build-output"
+{
+  "build": {
+    "repoRoot": "F:\\GSS\\AppDev\\gss-root",
+    "outputRoot": "F:\\build-output",
+    "dbScriptSource": "F:\\db-rollup-scripts",
+    "dbRollupExePath": "F:\\GSS\\AppDev\\gss-utilities\\DBRollupScriptBuilder\\DBRollupScriptBuilder\\bin\\Debug\\net10.0\\DBRollupScriptBuilder.exe",
+    "dbRollupOutputDirectory": "F:\\temp\\scripts",
+    "apps": [ ]
+  }
+}
 
-Notes:
-- dbRollupExePath = full path to DBRollupScriptBuilder.exe
-- dbRollupOutputDirectory = same as ApplicationSettings:OutputDirectory in the
-  exe's own appsettings.json (f:\temp\scripts)
-- Scripts are copied to: {outputRoot}\db-scripts\
+Mapping:
+  build:outputRoot               -> OutputRoot
+  build:dbScriptSource           -> DbScriptSource  (Script Source textbox)
+  build:dbRollupExePath          -> DbRollupExePath
+  build:dbRollupOutputDirectory  -> DbRollupOutputDirectory
+
+dbRollupOutputDirectory MUST match the exe's own appsettings
+ApplicationSettings:OutputDirectory (f:\temp\scripts).
 
 
-PART B — Bind Bundle Scripts button
+PART B — Model properties (DeploymentModels / BuildSettings)
 --------------------------------------------------------------------------------
-In BuildTab.razor (or the page with the green Bundle Scripts button):
+Add to the same class that already has OutputRoot / DbScriptSource:
 
-  <button disabled="@_isBundling" @onclick="BundleDbScriptsAsync">
-      Bundle Scripts
-  </button>
+    public string DbRollupExePath { get; set; } = string.Empty;
+    public string DbRollupOutputDirectory { get; set; } = string.Empty;
 
-Add fields:
-
-  private bool _isBundling;
-  // load these from config like other build settings:
-  // DbRollupExePath, DbRollupOutputDirectory, DbScriptSource, OutputRoot
+No hardcoded path defaults in C# — empty until loaded from config.
 
 
-PART C — Full method to add in BuildTab.razor @code
+PART C — Load from IConfiguration in BuildTab.razor
+--------------------------------------------------------------------------------
+Wherever you already load OutputRoot from appsettings (OnInitialized /
+LoadBuildSettings), also load the new fields:
+
+    // Existing:
+    // OutputRoot = buildSettings.OutputRoot;
+    // DbScriptSource = buildSettings.DbScriptSource;
+
+    DbRollupExePath = buildSettings.DbRollupExePath ?? string.Empty;
+    DbRollupOutputDirectory = buildSettings.DbRollupOutputDirectory ?? string.Empty;
+
+Or with IConfiguration:
+
+    DbRollupExePath = Configuration["build:dbRollupExePath"] ?? string.Empty;
+    DbRollupOutputDirectory = Configuration["build:dbRollupOutputDirectory"] ?? string.Empty;
+
+Fields in BuildTab.razor @code (no path literals):
+
+    private bool _isBundling;
+    private string DbRollupExePath { get; set; } = string.Empty;
+    private string DbRollupOutputDirectory { get; set; } = string.Empty;
+    // OutputRoot, DbScriptSource — already exist; keep loading them from appsettings
+
+_isBundling:
+  ENABLE  → _isBundling = true;   at start of BundleDbScriptsAsync
+  DISABLE → _isBundling = false;  in finally
+
+Button:
+  <button disabled="@_isBundling" @onclick="BundleDbScriptsAsync">Bundle Scripts</button>
+
+
+PART D — BundleDbScriptsAsync (uses settings properties only)
 --------------------------------------------------------------------------------
 
     private async Task BundleDbScriptsAsync()
@@ -58,18 +94,28 @@ PART C — Full method to add in BuildTab.razor @code
             var exePath = DbRollupExePath?.Trim();
             if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath))
             {
-                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] DBRollupScriptBuilder.exe not found: {exePath}\r\n";
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] DBRollupScriptBuilder.exe not found: {exePath}. Check build:dbRollupExePath in appsettings.json.\r\n";
                 await InvokeAsync(StateHasChanged);
                 return;
             }
 
             var exeDir = Path.GetDirectoryName(exePath)!;
-            var builderOutputDir = string.IsNullOrWhiteSpace(DbRollupOutputDirectory)
-                ? Path.Combine("F:", "temp", "scripts")
-                : DbRollupOutputDirectory.Trim();
-            var destDir = Path.Combine(
-                string.IsNullOrWhiteSpace(OutputRoot) ? Path.Combine(Directory.GetCurrentDirectory(), "build-output") : OutputRoot.TrimEnd('\\', '/'),
-                "db-scripts");
+            var builderOutputDir = DbRollupOutputDirectory?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(builderOutputDir))
+            {
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] build:dbRollupOutputDirectory is missing in appsettings.json.\r\n";
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(OutputRoot))
+            {
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] build:outputRoot is missing in appsettings.json.\r\n";
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            var destDir = Path.Combine(OutputRoot.TrimEnd('\\', '/'), "db-scripts");
 
             LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Bundling DB scripts...\r\n";
             LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Exe: {exePath}\r\n";
@@ -78,9 +124,7 @@ PART C — Full method to add in BuildTab.razor @code
             LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Copy destination: {destDir}\r\n";
             await InvokeAsync(StateHasChanged);
 
-            // Optional: pass -f / -t if your exe supports them, e.g.:
-            // var args = $"-f GSSv9.1S2 -t GSSv9.2S2";
-            var args = string.Empty;
+            var args = string.Empty; // add -f / -t here later if needed
 
             StartLogFlushTimer();
             var exit = await BuildService.RunCommandAsync(
@@ -158,26 +202,14 @@ PART C — Full method to add in BuildTab.razor @code
     }
 
 
-PART D — DBRollupScriptBuilder.exe own appsettings (reference)
---------------------------------------------------------------------------------
-Located next to the exe (bin\Debug\net10.0\appsettings.json):
-
-  ApplicationSettings:
-    WorkingDirectory: f:\GSS\AppDev\gss-database
-    OutputDirectory:  f:\temp\scripts
-    GitBashFullPath:  f:\Program Files\Git\git-bash.exe
-
-DevOps tool must use the SAME OutputDirectory as dbRollupOutputDirectory
-so copy finds the generated files.
-
-
 PART E — checklist
 --------------------------------------------------------------------------------
-[ ] dbRollupExePath points to ...\bin\Debug\net10.0\DBRollupScriptBuilder.exe
-[ ] dbRollupOutputDirectory = f:\temp\scripts (matches exe appsettings)
-[ ] Bundle Scripts button calls BundleDbScriptsAsync
-[ ] OUTPUT LOG shows exe stdout/stderr and [ERROR] on failure
-[ ] On success, scripts appear under F:\build-output\db-scripts\
+[ ] Paths only in appsettings.json (not hardcoded in BuildTab.razor)
+[ ] Model has DbRollupExePath + DbRollupOutputDirectory
+[ ] BuildTab loads them with OutputRoot / DbScriptSource
+[ ] Bundle Scripts uses those properties
+[ ] finally sets _isBundling = false
+[ ] On success: scripts under {outputRoot}\db-scripts\
 
 ================================================================================
 END
