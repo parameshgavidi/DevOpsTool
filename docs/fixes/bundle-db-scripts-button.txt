@@ -126,6 +126,8 @@ PART D — BundleDbScriptsAsync (uses settings properties only)
 
             var args = string.Empty; // add -f / -t here later if needed
 
+            // BuildService.RunCommandAsync requires 4 args:
+            //   (workingDirectory, command, onOutput, cancellationToken)
             StartLogFlushTimer();
             var exit = await BuildService.RunCommandAsync(
                 exeDir,
@@ -138,7 +140,8 @@ PART D — BundleDbScriptsAsync (uses settings properties only)
                         if (!line.EndsWith('\n') && !line.EndsWith('\r'))
                             _pendingLogBuffer.AppendLine();
                     }
-                });
+                },
+                CancellationToken.None);
 
             FlushPendingLogs();
 
