@@ -29,19 +29,31 @@ Notes:
 - Scripts are copied to: {outputRoot}\db-scripts\
 
 
-PART B — Bind Bundle Scripts button
+PART B — Fields (fixes red squiggle errors) + _isBundling enable/disable
 --------------------------------------------------------------------------------
-In BuildTab.razor (or the page with the green Bundle Scripts button):
+Add these fields in BuildTab.razor @code (or reuse OutputRoot / DbScriptSource
+if you already have them under the same names):
+
+    private bool _isBundling;
+
+    // Load from appsettings.json build section (same place you load OutputRoot)
+    private string DbRollupExePath { get; set; } =
+        @"F:\GSS\AppDev\gss-utilities\DBRollupScriptBuilder\DBRollupScriptBuilder\bin\Debug\net10.0\DBRollupScriptBuilder.exe";
+    private string DbRollupOutputDirectory { get; set; } = @"F:\temp\scripts";
+    // If OutputRoot / DbScriptSource already exist in BuildTab.razor, do NOT redeclare —
+    // use the existing ones. Only add if missing:
+    // private string OutputRoot { get; set; } = @"F:\build-output";
+    // private string DbScriptSource { get; set; } = @"F:\db-rollup-scripts";
+
+_isBundling flag:
+  ENABLE  → start of BundleDbScriptsAsync:   _isBundling = true;
+  DISABLE → finally block (ALWAYS runs):     _isBundling = false;
+
+Button:
 
   <button disabled="@_isBundling" @onclick="BundleDbScriptsAsync">
       Bundle Scripts
   </button>
-
-Add fields:
-
-  private bool _isBundling;
-  // load these from config like other build settings:
-  // DbRollupExePath, DbRollupOutputDirectory, DbScriptSource, OutputRoot
 
 
 PART C — Full method to add in BuildTab.razor @code
@@ -52,7 +64,7 @@ PART C — Full method to add in BuildTab.razor @code
         if (_isBundling)
             return;
 
-        _isBundling = true;
+        _isBundling = true;   // ENABLE (disable button)
         try
         {
             var exePath = DbRollupExePath?.Trim();
@@ -151,6 +163,7 @@ PART C — Full method to add in BuildTab.razor @code
         }
         finally
         {
+            // DISABLE flag here — runs on success, error, or early return from try
             StopLogFlushTimer();
             _isBundling = false;
             await InvokeAsync(StateHasChanged);
