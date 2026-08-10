@@ -113,11 +113,18 @@ Optional UI (next to Script Source):
             }
 
             var destDir = Path.Combine(OutputRoot.TrimEnd('\\', '/'), "db-scripts");
-            var args = $"-f \"{fromBranch}\" -t \"{toBranch}\"";
+
+            // IMPORTANT: BuildService wraps with: cmd.exe /c {command}
+            // Do NOT use:  "C:\path\exe.exe" -f "x" -t "y"
+            // That breaks cmd quoting (entire string treated as one command name).
+            //
+            // Use cmd's escaped form:  ""C:\path\exe.exe" -f "x" -t "y"
+            // (leading extra quote — required by cmd.exe /c)
+            var command = $"\"\"{exePath}\" -f \"{fromBranch}\" -t \"{toBranch}\"\"";
 
             LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Bundling DB scripts...\r\n";
             LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Exe: {exePath}\r\n";
-            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Args: {args}\r\n";
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] From: {fromBranch}  To: {toBranch}\r\n";
             LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Script source: {DbScriptSource}\r\n";
             LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Builder output: {builderOutputDir}\r\n";
             LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Copy destination: {destDir}\r\n";
@@ -126,7 +133,7 @@ Optional UI (next to Script Source):
             StartLogFlushTimer();
             var exit = await BuildService.RunCommandAsync(
                 exeDir,
-                $"\"{exePath}\" {args}",
+                command,
                 line =>
                 {
                     lock (_pendingLogBuffer)
