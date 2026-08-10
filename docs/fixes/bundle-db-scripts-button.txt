@@ -1,21 +1,20 @@
 ================================================================================
-Bundle Scripts button — call DBRollupScriptBuilder.exe and copy to output
-Settings come from appsettings.json (do NOT hardcode paths in C#)
+Bundle Scripts — DBRollupScriptBuilder.exe with required -f / -t
+Settings from appsettings.json (no hardcoded paths)
 ================================================================================
 
 FLOW
 ----
-1. User clicks "Bundle Scripts"
-2. Run DBRollupScriptBuilder.exe (path from appsettings)
-3. Exe writes scripts to its OutputDirectory (path from appsettings)
+1. Click Bundle Scripts
+2. Run: DBRollupScriptBuilder.exe -f <FromBranch> -t <ToBranch>
+3. Exe writes scripts to dbRollupOutputDirectory (e.g. F:\temp\scripts)
 4. Copy script files to {outputRoot}\db-scripts\
-5. Stream stdout/stderr to OUTPUT LOG
-6. On error → [ERROR] in OUTPUT LOG
+5. Errors → OUTPUT LOG
 
 
-PART A — appsettings.json (DevOps tool)
 --------------------------------------------------------------------------------
-Put all paths under "build" (same section as outputRoot / dbScriptSource):
+1) appsettings.json — add under "build"
+--------------------------------------------------------------------------------
 
 {
   "build": {
@@ -24,63 +23,52 @@ Put all paths under "build" (same section as outputRoot / dbScriptSource):
     "dbScriptSource": "F:\\db-rollup-scripts",
     "dbRollupExePath": "F:\\GSS\\AppDev\\gss-utilities\\DBRollupScriptBuilder\\DBRollupScriptBuilder\\bin\\Debug\\net10.0\\DBRollupScriptBuilder.exe",
     "dbRollupOutputDirectory": "F:\\temp\\scripts",
+    "dbRollupFromBranch": "GSSv9.1S2",
+    "dbRollupToBranch": "GSSv9.2S2",
     "apps": [ ]
   }
 }
 
-Mapping:
-  build:outputRoot               -> OutputRoot
-  build:dbScriptSource           -> DbScriptSource  (Script Source textbox)
-  build:dbRollupExePath          -> DbRollupExePath
-  build:dbRollupOutputDirectory  -> DbRollupOutputDirectory
 
-dbRollupOutputDirectory MUST match the exe's own appsettings
-ApplicationSettings:OutputDirectory (f:\temp\scripts).
-
-
-PART B — Model properties (DeploymentModels / BuildSettings)
 --------------------------------------------------------------------------------
-Add to the same class that already has OutputRoot / DbScriptSource:
+2) DeploymentModels / BuildSettings — add properties
+--------------------------------------------------------------------------------
 
     public string DbRollupExePath { get; set; } = string.Empty;
     public string DbRollupOutputDirectory { get; set; } = string.Empty;
+    public string DbRollupFromBranch { get; set; } = string.Empty;
+    public string DbRollupToBranch { get; set; } = string.Empty;
 
-No hardcoded path defaults in C# — empty until loaded from config.
 
-
-PART C — Load from IConfiguration in BuildTab.razor
 --------------------------------------------------------------------------------
-Wherever you already load OutputRoot from appsettings (OnInitialized /
-LoadBuildSettings), also load the new fields:
-
-    // Existing:
-    // OutputRoot = buildSettings.OutputRoot;
-    // DbScriptSource = buildSettings.DbScriptSource;
-
-    DbRollupExePath = buildSettings.DbRollupExePath ?? string.Empty;
-    DbRollupOutputDirectory = buildSettings.DbRollupOutputDirectory ?? string.Empty;
-
-Or with IConfiguration:
-
-    DbRollupExePath = Configuration["build:dbRollupExePath"] ?? string.Empty;
-    DbRollupOutputDirectory = Configuration["build:dbRollupOutputDirectory"] ?? string.Empty;
-
-Fields in BuildTab.razor @code (no path literals):
+3) BuildTab.razor — fields + load from config
+--------------------------------------------------------------------------------
 
     private bool _isBundling;
     private string DbRollupExePath { get; set; } = string.Empty;
     private string DbRollupOutputDirectory { get; set; } = string.Empty;
-    // OutputRoot, DbScriptSource — already exist; keep loading them from appsettings
+    private string DbRollupFromBranch { get; set; } = string.Empty;
+    private string DbRollupToBranch { get; set; } = string.Empty;
+    // OutputRoot, DbScriptSource/ScriptSource — already exist
 
-_isBundling:
-  ENABLE  → _isBundling = true;   at start of BundleDbScriptsAsync
-  DISABLE → _isBundling = false;  in finally
+Load with your other build settings:
 
-Button:
-  <button disabled="@_isBundling" @onclick="BundleDbScriptsAsync">Bundle Scripts</button>
+    DbRollupExePath = buildSettings.DbRollupExePath ?? string.Empty;
+    DbRollupOutputDirectory = buildSettings.DbRollupOutputDirectory ?? string.Empty;
+    DbRollupFromBranch = buildSettings.DbRollupFromBranch ?? string.Empty;
+    DbRollupToBranch = buildSettings.DbRollupToBranch ?? string.Empty;
+
+Optional UI (next to Script Source):
+
+    <label>From Branch</label>
+    <input @bind="DbRollupFromBranch" />
+    <label>To Branch</label>
+    <input @bind="DbRollupToBranch" />
+    <button disabled="@_isBundling" @onclick="BundleDbScriptsAsync">Bundle Scripts</button>
 
 
-PART D — BundleDbScriptsAsync (uses settings properties only)
+--------------------------------------------------------------------------------
+4) REPLACE BundleDbScriptsAsync with this full method
 --------------------------------------------------------------------------------
 
     private async Task BundleDbScriptsAsync()
@@ -95,6 +83,15 @@ PART D — BundleDbScriptsAsync (uses settings properties only)
             if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath))
             {
                 LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] DBRollupScriptBuilder.exe not found: {exePath}. Check build:dbRollupExePath in appsettings.json.\r\n";
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            var fromBranch = DbRollupFromBranch?.Trim() ?? string.Empty;
+            var toBranch = DbRollupToBranch?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(fromBranch) || string.IsNullOrWhiteSpace(toBranch))
+            {
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] From/To branch required. Set build:dbRollupFromBranch and build:dbRollupToBranch in appsettings.json (or UI).\r\n";
                 await InvokeAsync(StateHasChanged);
                 return;
             }
@@ -116,22 +113,20 @@ PART D — BundleDbScriptsAsync (uses settings properties only)
             }
 
             var destDir = Path.Combine(OutputRoot.TrimEnd('\\', '/'), "db-scripts");
+            var args = $"-f \"{fromBranch}\" -t \"{toBranch}\"";
 
             LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Bundling DB scripts...\r\n";
             LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Exe: {exePath}\r\n";
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Args: {args}\r\n";
             LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Script source: {DbScriptSource}\r\n";
             LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Builder output: {builderOutputDir}\r\n";
             LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Copy destination: {destDir}\r\n";
             await InvokeAsync(StateHasChanged);
 
-            var args = string.Empty; // add -f / -t here later if needed
-
-            // BuildService.RunCommandAsync requires 4 args:
-            //   (workingDirectory, command, onOutput, cancellationToken)
             StartLogFlushTimer();
             var exit = await BuildService.RunCommandAsync(
                 exeDir,
-                string.IsNullOrEmpty(args) ? $"\"{exePath}\"" : $"\"{exePath}\" {args}",
+                $"\"{exePath}\" {args}",
                 line =>
                 {
                     lock (_pendingLogBuffer)
@@ -205,14 +200,13 @@ PART D — BundleDbScriptsAsync (uses settings properties only)
     }
 
 
-PART E — checklist
 --------------------------------------------------------------------------------
-[ ] Paths only in appsettings.json (not hardcoded in BuildTab.razor)
-[ ] Model has DbRollupExePath + DbRollupOutputDirectory
-[ ] BuildTab loads them with OutputRoot / DbScriptSource
-[ ] Bundle Scripts uses those properties
-[ ] finally sets _isBundling = false
-[ ] On success: scripts under {outputRoot}\db-scripts\
+5) Expected command in OUTPUT LOG
+--------------------------------------------------------------------------------
+cmd.exe /c "F:\...\DBRollupScriptBuilder.exe" -f "GSSv9.1S2" -t "GSSv9.2S2"
+
+If you still see "Option '--from' is required", From/To were empty.
+
 
 ================================================================================
 END
