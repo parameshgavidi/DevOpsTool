@@ -1,0 +1,184 @@
+================================================================================
+Bundle Scripts button — call DBRollupScriptBuilder.exe and copy to output
+================================================================================
+
+FLOW
+----
+1. User clicks "Bundle Scripts"
+2. Run DBRollupScriptBuilder.exe (working dir = exe folder)
+3. Exe writes scripts to its OutputDirectory (e.g. f:\temp\scripts)
+4. Copy *.sql (and other script files) to our Output Root:
+     F:\build-output\db-scripts\
+5. Stream stdout/stderr to OUTPUT LOG
+6. On non-zero exit or exception → log ERROR and set failed status
+
+
+PART A — appsettings.json (DevOps tool)
+--------------------------------------------------------------------------------
+Add under "build" (paths match your machine):
+
+  "dbScriptSource": "F:\\db-rollup-scripts",
+  "dbRollupExePath": "F:\\GSS\\AppDev\\gss-utilities\\DBRollupScriptBuilder\\DBRollupScriptBuilder\\bin\\Debug\\net10.0\\DBRollupScriptBuilder.exe",
+  "dbRollupOutputDirectory": "F:\\temp\\scripts",
+  "outputRoot": "F:\\build-output"
+
+Notes:
+- dbRollupExePath = full path to DBRollupScriptBuilder.exe
+- dbRollupOutputDirectory = same as ApplicationSettings:OutputDirectory in the
+  exe's own appsettings.json (f:\temp\scripts)
+- Scripts are copied to: {outputRoot}\db-scripts\
+
+
+PART B — Bind Bundle Scripts button
+--------------------------------------------------------------------------------
+In BuildTab.razor (or the page with the green Bundle Scripts button):
+
+  <button disabled="@_isBundling" @onclick="BundleDbScriptsAsync">
+      Bundle Scripts
+  </button>
+
+Add fields:
+
+  private bool _isBundling;
+  // load these from config like other build settings:
+  // DbRollupExePath, DbRollupOutputDirectory, DbScriptSource, OutputRoot
+
+
+PART C — Full method to add in BuildTab.razor @code
+--------------------------------------------------------------------------------
+
+    private async Task BundleDbScriptsAsync()
+    {
+        if (_isBundling)
+            return;
+
+        _isBundling = true;
+        try
+        {
+            var exePath = DbRollupExePath?.Trim();
+            if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath))
+            {
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] DBRollupScriptBuilder.exe not found: {exePath}\r\n";
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            var exeDir = Path.GetDirectoryName(exePath)!;
+            var builderOutputDir = string.IsNullOrWhiteSpace(DbRollupOutputDirectory)
+                ? Path.Combine("F:", "temp", "scripts")
+                : DbRollupOutputDirectory.Trim();
+            var destDir = Path.Combine(
+                string.IsNullOrWhiteSpace(OutputRoot) ? Path.Combine(Directory.GetCurrentDirectory(), "build-output") : OutputRoot.TrimEnd('\\', '/'),
+                "db-scripts");
+
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Bundling DB scripts...\r\n";
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Exe: {exePath}\r\n";
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Script source: {DbScriptSource}\r\n";
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Builder output: {builderOutputDir}\r\n";
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Copy destination: {destDir}\r\n";
+            await InvokeAsync(StateHasChanged);
+
+            // Optional: pass -f / -t if your exe supports them, e.g.:
+            // var args = $"-f GSSv9.1S2 -t GSSv9.2S2";
+            var args = string.Empty;
+
+            StartLogFlushTimer();
+            var exit = await BuildService.RunCommandAsync(
+                exeDir,
+                string.IsNullOrEmpty(args) ? $"\"{exePath}\"" : $"\"{exePath}\" {args}",
+                line =>
+                {
+                    lock (_pendingLogBuffer)
+                    {
+                        _pendingLogBuffer.Append(line);
+                        if (!line.EndsWith('\n') && !line.EndsWith('\r'))
+                            _pendingLogBuffer.AppendLine();
+                    }
+                });
+
+            FlushPendingLogs();
+
+            if (exit != 0)
+            {
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] DBRollupScriptBuilder failed with exit code {exit}\r\n";
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            if (!Directory.Exists(builderOutputDir))
+            {
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] Builder output folder not found: {builderOutputDir}\r\n";
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            var scriptFiles = Directory.GetFiles(builderOutputDir, "*.*", SearchOption.AllDirectories)
+                .Where(f =>
+                {
+                    var ext = Path.GetExtension(f);
+                    return ext.Equals(".sql", StringComparison.OrdinalIgnoreCase)
+                           || ext.Equals(".txt", StringComparison.OrdinalIgnoreCase)
+                           || ext.Equals(".prc", StringComparison.OrdinalIgnoreCase);
+                })
+                .ToList();
+
+            if (scriptFiles.Count == 0)
+            {
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] No script files found in {builderOutputDir}\r\n";
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            Directory.CreateDirectory(destDir);
+            var copied = 0;
+            foreach (var file in scriptFiles)
+            {
+                var relative = Path.GetRelativePath(builderOutputDir, file);
+                var dest = Path.Combine(destDir, relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                File.Copy(file, dest, overwrite: true);
+                copied++;
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Copied {relative}\r\n";
+            }
+
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Bundle Scripts complete — {copied} file(s) copied to {destDir}\r\n";
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] Bundle Scripts failed: {ex.Message}\r\n";
+            await InvokeAsync(StateHasChanged);
+        }
+        finally
+        {
+            StopLogFlushTimer();
+            _isBundling = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+
+PART D — DBRollupScriptBuilder.exe own appsettings (reference)
+--------------------------------------------------------------------------------
+Located next to the exe (bin\Debug\net10.0\appsettings.json):
+
+  ApplicationSettings:
+    WorkingDirectory: f:\GSS\AppDev\gss-database
+    OutputDirectory:  f:\temp\scripts
+    GitBashFullPath:  f:\Program Files\Git\git-bash.exe
+
+DevOps tool must use the SAME OutputDirectory as dbRollupOutputDirectory
+so copy finds the generated files.
+
+
+PART E — checklist
+--------------------------------------------------------------------------------
+[ ] dbRollupExePath points to ...\bin\Debug\net10.0\DBRollupScriptBuilder.exe
+[ ] dbRollupOutputDirectory = f:\temp\scripts (matches exe appsettings)
+[ ] Bundle Scripts button calls BundleDbScriptsAsync
+[ ] OUTPUT LOG shows exe stdout/stderr and [ERROR] on failure
+[ ] On success, scripts appear under F:\build-output\db-scripts\
+
+================================================================================
+END
+================================================================================
