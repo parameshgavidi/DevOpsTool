@@ -24,6 +24,23 @@ PART A — appsettings.json (both apps)
 }
 
 
+PART B0 — CleanPrecompiledOutputAsync (BEFORE msbuild)
+--------------------------------------------------------------------------------
+Required to avoid:
+  ASPNETCOMPILER error ASPRUNTIME: The target directory is not empty...
+
+Call from BuildApplication AFTER GetLatestFromRepoAsync / RestorePackagesAsync,
+BEFORE RunCommandAsync(buildCommand). Full method:
+  docs/fixes/aspnet-precompiledweb-not-empty.txt
+
+        if (!await CleanPrecompiledOutputAsync(app, workingDir))
+        {
+            app.Status = "Failed";
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+
 PART B — RestorePackagesAsync (START of method — BEFORE build)
 --------------------------------------------------------------------------------
 Must be here, NOT inside if (exit == 0).
@@ -166,6 +183,7 @@ Replace your existing if (exit == 0) publish-copy block with this full version.
 PART D — checklist
 --------------------------------------------------------------------------------
 [ ] Each app has project-wise gitLatestCommand (revert local + restore that folder from @{u}); BuildApplication calls GetLatestFromRepoAsync BEFORE restore/build
+[ ] CleanPrecompiledOutputAsync runs BEFORE msbuild (see aspnet-precompiledweb-not-empty.txt)
 [ ] PART B is in RestorePackagesAsync (not inside exit == 0)
 [ ] PART C replaces the post-build copy block in BuildApplication
 [ ] GSS Web Service still builds to F:\build-output\GSSWebService

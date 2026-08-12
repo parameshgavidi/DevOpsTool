@@ -1,0 +1,145 @@
+================================================================================
+ASPRUNTIME — PrecompiledWeb target directory is not empty
+GSS Web Service / GSSWeb (ASP.NET compiler)
+================================================================================
+
+ERROR (from Output Log)
+-----------------------
+ASPNETCOMPILER error ASPRUNTIME:
+  The target directory is not empty, and does not appear to contain a
+  previously compiled application. Please delete it manually, or choose
+  a different target.
+
+Typical path:
+  F:\GSS\AppDev\gss-root\Web Services\GSSWebService\PrecompiledWeb\GSSWebService
+  (workingDir\PrecompiledWeb\<outputSubfolder>)
+
+Also seen (warning only — not the build killer):
+  MSB4078: GSSWebServiceSetup.vdproj is not supported by MSBuild
+  → ignore for now (setup/.vdproj project in the .sln). The ASPRUNTIME error
+    is what fails the build.
+
+
+CAUSE
+-----
+FolderProfile / aspnet_compiler writes into PrecompiledWeb\...
+A previous failed or partial build left files there that are NOT a valid
+precompiled app, so the next build refuses to overwrite.
+
+
+FIX
+---
+Before msbuild, delete that app's PrecompiledWeb output folder.
+Use a separate method (same pattern as GetLatestFromRepoAsync /
+RestorePackagesAsync), then call it from BuildApplication.
+
+
+--------------------------------------------------------------------------------
+1) BuildTab.razor — NEW method CleanPrecompiledOutputAsync
+--------------------------------------------------------------------------------
+
+private Task<bool> CleanPrecompiledOutputAsync(Application app, string workingDir)
+{
+    // Only legacy ASP.NET publish into PrecompiledWeb
+    if (!string.Equals(app.Type, "AsmxWebService", StringComparison.OrdinalIgnoreCase)
+        && !string.Equals(app.Type, "AspNetWebForms", StringComparison.OrdinalIgnoreCase))
+    {
+        return Task.FromResult(true);
+    }
+
+    var precompiledRoot = Path.Combine(workingDir, "PrecompiledWeb");
+    var candidates = new List<string>();
+
+    var byOutput = Path.Combine(precompiledRoot, app.OutputSubfolder ?? string.Empty);
+    if (!string.IsNullOrWhiteSpace(app.OutputSubfolder))
+        candidates.Add(byOutput);
+
+    // GSSWeb sometimes lands in PrecompiledWeb\gssweb
+    if (string.Equals(app.Name, "GSSWeb", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(app.Type, "AspNetWebForms", StringComparison.OrdinalIgnoreCase))
+    {
+        candidates.Add(Path.Combine(precompiledRoot, "gssweb"));
+    }
+
+    // If a previous run left junk directly under PrecompiledWeb, clear the whole root
+    // for this app's workingDir (safe: only under this solution folder).
+    candidates.Add(precompiledRoot);
+
+    foreach (var dir in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
+    {
+        if (!Directory.Exists(dir))
+            continue;
+
+        try
+        {
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Cleaning precompile target: {dir}\r\n";
+            Directory.Delete(dir, recursive: true);
+        }
+        catch (Exception ex)
+        {
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] Failed to clean {dir}: {ex.Message}\r\n";
+            return Task.FromResult(false);
+        }
+    }
+
+    return Task.FromResult(true);
+}
+
+
+--------------------------------------------------------------------------------
+2) BuildApplication — CALL before msbuild
+--------------------------------------------------------------------------------
+Order inside BuildApplication:
+
+        // 1) git latest (project-wise)
+        if (!await GetLatestFromRepoAsync(app, workingDir, cancellation))
+        {
+            app.Status = "Failed";
+            return;
+        }
+
+        // 2) restore (skipped for AsmxWebService / AspNetWebForms)
+        if (!await RestorePackagesAsync(app, projectFile, isLegacy, workingDir, cancellation))
+        {
+            app.Status = "Failed";
+            return;
+        }
+
+        // 3) clean PrecompiledWeb so ASPNETCOMPILER does not hit ASPRUNTIME
+        if (!await CleanPrecompiledOutputAsync(app, workingDir))
+        {
+            app.Status = "Failed";
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        // 4) msbuild / publish
+        // var exit = await BuildService.RunCommandAsync(... buildCommand ...);
+
+
+--------------------------------------------------------------------------------
+3) One-time manual cleanup (if you need to unblock NOW)
+--------------------------------------------------------------------------------
+Delete this folder, then rebuild:
+
+  F:\GSS\AppDev\gss-root\Web Services\GSSWebService\PrecompiledWeb
+
+PowerShell:
+  Remove-Item -Recurse -Force "F:\GSS\AppDev\gss-root\Web Services\GSSWebService\PrecompiledWeb"
+
+Then click Build again for GSS Web Service.
+
+
+--------------------------------------------------------------------------------
+4) Checklist
+--------------------------------------------------------------------------------
+[ ] CleanPrecompiledOutputAsync exists (separate method)
+[ ] BuildApplication calls it AFTER restore, BEFORE msbuild
+[ ] GSS Web Service and GSSWeb both covered (AsmxWebService / AspNetWebForms)
+[ ] ASPRUNTIME no longer appears after a failed previous publish
+[ ] MSB4078 .vdproj warning can remain (optional later: unload setup project from .sln)
+
+
+================================================================================
+END
+================================================================================

@@ -8,6 +8,21 @@
 }
 
 --------------------------------------------------------------------------------
+BEFORE msbuild — clean PrecompiledWeb (required if ASPRUNTIME error)
+--------------------------------------------------------------------------------
+If Output Log shows:
+  ASPNETCOMPILER error ASPRUNTIME: The target directory is not empty...
+
+Delete PrecompiledWeb before build. See:
+  docs/fixes/aspnet-precompiledweb-not-empty.txt
+
+Quick manual fix:
+  Remove-Item -Recurse -Force "F:\GSS\AppDev\gss-root\Web Services\GSSWebService\PrecompiledWeb"
+
+MSB4078 about GSSWebServiceSetup.vdproj is only a warning (setup project).
+
+
+--------------------------------------------------------------------------------
 BuildTab.razor — add AFTER successful build (required)
 --------------------------------------------------------------------------------
 Do NOT put robocopy in buildCommand. The tool runs the command as one process
