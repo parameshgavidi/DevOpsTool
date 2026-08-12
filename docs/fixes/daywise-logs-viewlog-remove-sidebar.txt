@@ -1,0 +1,240 @@
+================================================================================
+Day-wise logs under {root}\logs + View Log + remove left sidebar
+================================================================================
+
+REQUIREMENTS
+------------
+1. Save logs under root directory in a "logs" folder
+2. Append while generating (do not overwrite the day's file)
+3. One log file per day:  logs\yyyy-MM-dd.log
+4. View Log button → load TODAY's file into OUTPUT LOG (@LogOutput)
+5. Remove the left side panel (GssDevOpsAutomationTool / Home sidebar)
+
+
+ROOT PATH
+---------
+Use Code Repo Root (build:repoRoot), e.g.:
+  F:\GSS\AppDev\gss-root\logs\2026-08-12.log
+
+If RepoRoot is empty, fall back to AppContext.BaseDirectory.
+
+
+--------------------------------------------------------------------------------
+1) BuildTab.razor — UI: View Log button (next to Build All)
+--------------------------------------------------------------------------------
+Keep your existing Build All + View Log row. Wire View Log:
+
+    <button class="btn-secondary" @onclick="ViewTodayLogAsync">
+        View Log
+    </button>
+
+OUTPUT LOG section stays as-is (displays @LogOutput):
+
+    <div class="output-log-section">
+        <h3>OUTPUT LOG</h3>
+        <div class="log-container">
+            <pre class="log-content">@LogOutput</pre>
+            <span class="auto-scroll">↓ auto-scroll</span>
+        </div>
+    </div>
+
+
+--------------------------------------------------------------------------------
+2) BuildTab.razor — helpers: day-wise path + append
+--------------------------------------------------------------------------------
+Add these methods (same style as other BuildTab helpers).
+
+    private string GetLogsDirectory()
+    {
+        var root = !string.IsNullOrWhiteSpace(RepoRoot)
+            ? RepoRoot.Trim()
+            : AppContext.BaseDirectory;
+        return Path.Combine(root, "logs");
+    }
+
+    private string GetTodayLogFilePath()
+    {
+        var day = DateTime.Now.ToString("yyyy-MM-dd");
+        return Path.Combine(GetLogsDirectory(), $"{day}.log");
+    }
+
+    /// <summary>
+    /// Append one line/chunk to today's log file AND to on-screen LogOutput.
+    /// Creates {repoRoot}\logs\ if missing. Always appends (never truncates).
+    /// </summary>
+    private void AppendLog(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return;
+
+        // UI
+        LogOutput += text;
+        if (!text.EndsWith('\n') && !text.EndsWith('\r'))
+            LogOutput += "\r\n";
+
+        // Disk — day-wise, append
+        try
+        {
+            var dir = GetLogsDirectory();
+            Directory.CreateDirectory(dir);
+            var path = GetTodayLogFilePath();
+            var line = text.EndsWith('\n') || text.EndsWith('\r') ? text : text + "\r\n";
+            File.AppendAllText(path, line);
+        }
+        catch (Exception ex)
+        {
+            // Keep UI log even if disk write fails
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARN] Failed to write day log: {ex.Message}\r\n";
+        }
+    }
+
+    private async Task AppendLogAsync(string text)
+    {
+        AppendLog(text);
+        await InvokeAsync(StateHasChanged);
+    }
+
+
+--------------------------------------------------------------------------------
+3) REPLACE direct LogOutput += ... with AppendLog(...)
+--------------------------------------------------------------------------------
+Anywhere you currently do:
+
+    LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] ...\r\n";
+
+Change to:
+
+    AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] ...");
+
+Also for streaming command output (RunCommandAsync line callback), append to file:
+
+    line =>
+    {
+        lock (_pendingLogBuffer)
+        {
+            _pendingLogBuffer.Append(line);
+            if (!line.EndsWith('\n') && !line.EndsWith('\r'))
+                _pendingLogBuffer.AppendLine();
+        }
+    }
+
+And when you flush pending buffer to LogOutput, also write that chunk with AppendLog
+(or write file inside FlushPendingLogs):
+
+    private void FlushPendingLogs()
+    {
+        string chunk;
+        lock (_pendingLogBuffer)
+        {
+            if (_pendingLogBuffer.Length == 0)
+                return;
+            chunk = _pendingLogBuffer.ToString();
+            _pendingLogBuffer.Clear();
+        }
+
+        // AppendLog updates LogOutput + day file
+        AppendLog(chunk);
+    }
+
+IMPORTANT: If FlushPendingLogs already does LogOutput += chunk, replace that with
+AppendLog(chunk) so you do not double-append to the UI. AppendLog itself adds to LogOutput.
+
+
+--------------------------------------------------------------------------------
+4) View Log — load TODAY's file into OUTPUT LOG
+--------------------------------------------------------------------------------
+
+    private async Task ViewTodayLogAsync()
+    {
+        var path = GetTodayLogFilePath();
+        try
+        {
+            if (!File.Exists(path))
+            {
+                LogOutput = $"[{DateTime.Now:HH:mm:ss}] [INFO] No log file for today yet: {path}\r\n";
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            // Read entire today's file into OUTPUT LOG
+            LogOutput = await File.ReadAllTextAsync(path);
+            if (string.IsNullOrWhiteSpace(LogOutput))
+                LogOutput = $"[{DateTime.Now:HH:mm:ss}] [INFO] Today's log is empty: {path}\r\n";
+
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            LogOutput = $"[{DateTime.Now:HH:mm:ss}] [ERROR] Failed to read log: {ex.Message}\r\n";
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+
+Example files after a few days:
+  F:\GSS\AppDev\gss-root\logs\2026-08-10.log
+  F:\GSS\AppDev\gss-root\logs\2026-08-11.log
+  F:\GSS\AppDev\gss-root\logs\2026-08-12.log   ← View Log loads this
+
+
+--------------------------------------------------------------------------------
+5) REMOVE left side panel
+--------------------------------------------------------------------------------
+The dark left bar (app title + Home) comes from the shell layout — usually
+MainLayout.razor (or NavMenu.razor), NOT BuildTab.razor.
+
+Option A — simplest: hide/remove the nav column in MainLayout.razor
+
+Before (typical MAUI Blazor / Blazor layout):
+
+    <div class="page">
+        <div class="sidebar">
+            <NavMenu />
+        </div>
+        <main>
+            <article class="content">
+                @Body
+            </article>
+        </main>
+    </div>
+
+After:
+
+    <div class="page">
+        <main>
+            <article class="content px-4">
+                @Body
+            </article>
+        </main>
+    </div>
+
+Option B — CSS hide (if you want a quick toggle):
+
+    /* wwwroot/css/app.css or deployment-tool.css */
+    .sidebar {
+        display: none !important;
+    }
+    .page {
+        grid-template-columns: 1fr; /* if layout used grid */
+    }
+
+Also remove unused NavMenu references if nothing else needs them.
+
+Result: BUILD tab content is full width — no purple/dark Home sidebar.
+
+
+--------------------------------------------------------------------------------
+6) Checklist
+--------------------------------------------------------------------------------
+[ ] logs folder created under Code Repo Root: {repoRoot}\logs\
+[ ] Day file name: yyyy-MM-dd.log
+[ ] AppendLog / FlushPendingLogs appends (File.AppendAllText) — never overwrite day file while building
+[ ] All new log lines go through AppendLog (not bare LogOutput +=)
+[ ] View Log button calls ViewTodayLogAsync and sets LogOutput from today's file
+[ ] Left sidebar removed from MainLayout (or hidden via CSS)
+[ ] OUTPUT LOG still shows @LogOutput
+
+
+================================================================================
+END
+================================================================================
