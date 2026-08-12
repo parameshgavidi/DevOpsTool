@@ -56,6 +56,15 @@ Notes:
 - If @{u} fails (no upstream), set upstream once:  git branch -u origin/<branch>
   Or temporarily use:  --source=origin/<branch>  instead of @{u}.
 
+WARNING — NuGet Install-Package vs git latest:
+  Local "Install-Package ..." changes (packages.config / *.csproj) WILL BE WIPED
+  by git restore on the next build. That is expected.
+  Do NOT put package names in appsettings.
+  Fix: commit + push the package change to the GSS remote branch (so @{u}
+  already has it), OR run nuget restore AFTER GetLatestFromRepoAsync.
+  See: docs/fixes/gssweb-nuget-vs-git-latest.txt
+
+
 
 --------------------------------------------------------------------------------
 2) Application model — add property

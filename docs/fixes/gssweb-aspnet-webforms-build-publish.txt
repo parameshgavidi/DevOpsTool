@@ -8,6 +8,18 @@
 }
 
 --------------------------------------------------------------------------------
+NuGet Install-Package vs gitLatestCommand
+--------------------------------------------------------------------------------
+Local:
+  Install-Package Microsoft.AspNet.WebApi.Client -Version 4.0.20710
+gets WIPED by gitLatestCommand (git restore / clean) on the next build.
+
+Do NOT add that package to appsettings.json.
+Commit + push the package fix to the GSS remote branch, OR nuget restore
+AFTER git latest. See: docs/fixes/gssweb-nuget-vs-git-latest.txt
+
+
+--------------------------------------------------------------------------------
 WHY BUILD FAILED (MSB4249) — fix this FIRST
 --------------------------------------------------------------------------------
 Log showed:

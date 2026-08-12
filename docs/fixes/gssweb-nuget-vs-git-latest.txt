@@ -1,0 +1,122 @@
+================================================================================
+GSSWeb — NuGet Install-Package vs gitLatestCommand (local changes wiped)
+================================================================================
+
+QUESTION
+--------
+Install-Package Microsoft.AspNet.WebApi.Client -Version 4.0.20710
+adds local changes. Our gitLatestCommand removes local changes before build.
+Will the package install survive?
+
+
+ANSWER
+------
+YES — you are right. Local Install-Package will be LOST on the next build.
+
+gitLatestCommand for GSSWeb is:
+
+  git fetch
+  && git clean -fd -- "WebV3\gssweb"
+  && git restore --source=@{u} --staged --worktree -- "WebV3\gssweb"
+
+What that does:
+  - git restore  → resets TRACKED files (packages.config, *.csproj, etc.)
+                   back to upstream. Your Install-Package edits are undone.
+  - git clean -fd → removes UNTRACKED (non-ignored) files under that folder.
+  - packages\ folder is usually gitignored, so clean -fd does NOT delete it
+    (that needs -x). But without the packages.config / project reference
+    from upstream, the install is still effectively gone for the next build.
+
+
+DO NOT put the package in appsettings.json
+------------------------------------------
+appsettings is for tool commands/paths — not NuGet package names.
+"Microsoft.AspNet.WebApi.Client" does not belong there as a package entry.
+
+
+CORRECT OPTIONS (pick one)
+--------------------------
+
+OPTION A — BEST: commit + push the package fix to the GSS remote branch
+  1. In Visual Studio (on the GSS repo), Install-Package as documented:
+       Install-Package Microsoft.AspNet.WebApi.Client -Version 4.0.20710
+     Default project: RefreshUPUXITData
+  2. Commit packages.config / project changes (and any needed packages.config
+     updates) on the release branch.
+  3. Push to origin.
+  4. Then gitLatestCommand restore FROM upstream already includes the package.
+     Local install is no longer required.
+
+OPTION B — re-install / nuget restore AFTER git latest (every build)
+  Keep gitLatestCommand as-is (clean local).
+  AFTER GetLatestFromRepoAsync succeeds, run a nuget restore (or a specific
+  install) for the solution / project — so packages come back every build.
+
+  Example appsettings field (optional, per app):
+
+    "nugetRestoreCommand": "nuget restore \"{projectFile}\""
+
+  Or for the one-off package (only if it is NOT on remote yet — temporary):
+
+    "nugetRestoreCommand": "nuget install Microsoft.AspNet.WebApi.Client -Version 4.0.20710 -OutputDirectory packages"
+
+  Call from BuildApplication AFTER git latest, BEFORE msbuild:
+
+        if (!await GetLatestFromRepoAsync(app, workingDir, cancellation))
+        {
+            app.Status = "Failed";
+            return;
+        }
+
+        // NEW — only if you add nugetRestoreCommand
+        if (!await RunNugetRestoreAsync(app, workingDir, cancellation))
+        {
+            app.Status = "Failed";
+            return;
+        }
+
+        // CleanPrecompiledOutputAsync ...
+        // msbuild ...
+
+  Prefer OPTION A. OPTION B re-downloads every build and is slower.
+
+
+OPTION C — stop reverting (NOT recommended)
+  Remove git restore / git clean from gitLatestCommand.
+  Then local Install-Package survives — but dirty local edits also survive
+  and builds become non-reproducible.
+
+
+RECOMMENDATION
+--------------
+1. Do NOT add the NuGet package name to appsettings as a package list.
+2. Keep gitLatestCommand reverting local changes (correct for clean builds).
+3. Fix the package ON THE REMOTE branch (OPTION A) so restore keeps it.
+4. For Microsoft.Bcl.AsyncInterfaces / other restore issues: after A is done,
+   run nuget restore on the .sln once on the build machine, or add
+   nugetRestoreCommand (OPTION B) that only does "nuget restore".
+
+
+GSSWebV3 NOTE (from project docs)
+---------------------------------
+RefreshUPUXITData → System.Net.Http.Formatting missing:
+  Visual Studio > Tools > NuGet Package Manager > Package Manager Console
+  Default project: RefreshUPUXITData
+  Install-Package Microsoft.AspNet.WebApi.Client -Version 4.0.20710
+
+Then commit + push that change to the GSS branch used by the DevOps tool.
+
+
+--------------------------------------------------------------------------------
+Checklist
+--------------------------------------------------------------------------------
+[ ] Understood: gitLatestCommand wipes local Install-Package changes
+[ ] Package fix committed + pushed to GSS remote (OPTION A) — preferred
+[ ] OR nugetRestoreCommand runs AFTER git latest (OPTION B)
+[ ] Package name NOT added to appsettings as a NuGet package list
+[ ] Rebuild GSSWeb from the tool after remote has the package
+
+
+================================================================================
+END
+================================================================================
