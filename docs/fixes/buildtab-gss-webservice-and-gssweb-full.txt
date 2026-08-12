@@ -165,7 +165,7 @@ Replace your existing if (exit == 0) publish-copy block with this full version.
 
 PART D — checklist
 --------------------------------------------------------------------------------
-[ ] Each app has gitLatestCommand (git pull --ff-only) and it runs BEFORE restore/build
+[ ] Each app has gitLatestCommand; BuildApplication calls GetLatestFromRepoAsync BEFORE restore/build
 [ ] PART B is in RestorePackagesAsync (not inside exit == 0)
 [ ] PART C replaces the post-build copy block in BuildApplication
 [ ] GSS Web Service still builds to F:\build-output\GSSWebService
@@ -173,7 +173,7 @@ PART D — checklist
 [ ] Previous builds archived as {name}_yyyyMMddHHmm_vN
 [ ] No return true inside BuildApplication / if (exit == 0)
 
-See also: docs/fixes/git-latest-before-build.txt (full git-latest step + model property)
+See also: docs/fixes/git-latest-before-build.txt (GetLatestFromRepoAsync method + call site)
 
 ================================================================================
 END
