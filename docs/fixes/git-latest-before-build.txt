@@ -1,6 +1,6 @@
 ================================================================================
 Git Latest before build — per-project gitLatestCommand
-Separate method GetLatestFromRepoAsync, called from BuildApplication
+KEEP local changes + get latest from remote, then build
 ================================================================================
 
 FLOW
@@ -8,33 +8,33 @@ FLOW
 1. Build selected app (or Build All) → BuildApplication
 2. BuildApplication calls GetLatestFromRepoAsync(app, ...)
 3. For THAT app only:
-   a) fetch remote
-   b) revert local changes under the project folder (tracked + untracked)
-   c) restore that project folder from upstream (project-wise — NOT full-repo pull)
-4. On success (true) → RestorePackagesAsync → msbuild / publish
+   a) stash local changes under the project folder (keeps Install-Package etc.)
+   b) fetch remote
+   c) restore that project folder from upstream (get latest)
+   d) stash pop (put local changes back on top of latest)
+4. On success (true) → restore / clean PrecompiledWeb → msbuild / publish
 5. On failure (false) → stop that app build (Status = Failed), log error
 
 
 --------------------------------------------------------------------------------
-1) appsettings.json — project-wise gitLatestCommand on EACH app
+1) appsettings.json — CHANGE gitLatestCommand (keep local)
 --------------------------------------------------------------------------------
-Do NOT use plain "git pull --ff-only" — that updates the entire repo (all projects).
+YES — change the command. Remove git clean / bare git restore that WIPE local.
 
-Each app uses its own project folder path:
-  - GSS Web Service → Web Services\GSSWebService
-  - GSSWeb         → WebV3\gssweb
+OLD (wipes local — do not use if you keep NuGet installs local):
+  git fetch && git clean -fd -- "..." && git restore --source=@{u} ...
 
-Command steps (one string, chained with &&):
-  1. git fetch                         — get remote updates
-  2. git clean -fd -- "<projectDir>"   — remove untracked local files in project
-  3. git restore --source=@{u} ...     — discard local edits + take upstream
-                                         files for THIS project folder only
+NEW (keep local + get latest for that project folder):
+  1. git stash push -m "devops-pre-build" -- "<projectDir>"
+  2. git fetch
+  3. git restore --source=@{u} --staged --worktree -- "<projectDir>"
+  4. git stash pop
 
 {
   "name": "GSS Web Service",
   "type": "AsmxWebService",
   "projectPath": "Web Services\\GSSWebService\\GSSWebService.sln",
-  "gitLatestCommand": "git fetch && git clean -fd -- \"Web Services\\GSSWebService\" && git restore --source=@{u} --staged --worktree -- \"Web Services\\GSSWebService\"",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"Web Services\\GSSWebService\" && git fetch && git restore --source=@{u} --staged --worktree -- \"Web Services\\GSSWebService\" && git stash pop",
   "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
   "outputSubfolder": "GSSWebService"
 },
@@ -42,95 +42,44 @@ Command steps (one string, chained with &&):
   "name": "GSSWeb",
   "type": "AspNetWebForms",
   "projectPath": "WebV3\\gssweb\\gssweb.sln",
-  "gitLatestCommand": "git fetch && git clean -fd -- \"WebV3\\gssweb\" && git restore --source=@{u} --staged --worktree -- \"WebV3\\gssweb\"",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"WebV3\\gssweb\" && git fetch && git restore --source=@{u} --staged --worktree -- \"WebV3\\gssweb\" && git stash pop",
   "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
   "outputSubfolder": "GSSWeb"
 }
 
+Copy-paste for appsettings (GSSWeb):
+
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"WebV3\\gssweb\" && git fetch && git restore --source=@{u} --staged --worktree -- \"WebV3\\gssweb\" && git stash pop"
+
+Copy-paste for appsettings (GSS Web Service):
+
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"Web Services\\GSSWebService\" && git fetch && git restore --source=@{u} --staged --worktree -- \"Web Services\\GSSWebService\" && git stash pop"
+
 Notes:
-- cwd must be Code Repo Root (build:repoRoot, e.g. F:\GSS\AppDev\gss-root) so .git is found.
-- @{u} = current branch upstream (e.g. origin/GSSv9.2S2). Branch must have upstream set.
-- This does NOT change other project folders under the same repo.
-- Local changes under the project folder are discarded (by design) before taking latest.
-- Do NOT put this inside buildCommand — GetLatestFromRepoAsync runs it first.
-- If @{u} fails (no upstream), set upstream once:  git branch -u origin/<branch>
-  Or temporarily use:  --source=origin/<branch>  instead of @{u}.
-
-WARNING — NuGet Install-Package vs git latest:
-  Local "Install-Package ..." changes (packages.config / *.csproj) WILL BE WIPED
-  by git restore on the next build. That is expected.
-  Do NOT put package names in appsettings.
-  Fix: commit + push the package change to the GSS remote branch (so @{u}
-  already has it), OR run nuget restore AFTER GetLatestFromRepoAsync.
-  See: docs/fixes/gssweb-nuget-vs-git-latest.txt
-
+- cwd = Code Repo Root (build:repoRoot).
+- Local Install-Package / packages.config edits are stashed, then re-applied after latest.
+- No push to remote required for those local package fixes.
+- Do NOT use git clean -fd here — that deletes local untracked files.
+- If stash pop conflicts, OUTPUT LOG will show it; resolve in that project folder, then rebuild.
+- If there is nothing to stash, "git stash push" still exits 0 (Git 2.13+ creates no stash / or use
+  tolerating empty stash — if your Git errors on empty stash, prepend:
+  git stash push -m "devops-pre-build" -- "<path>" || ver > nul
+  on Windows cmd empty-stash can still succeed with "No local changes to save").
+- @{u} must be set on the branch.
 
 
 --------------------------------------------------------------------------------
-2) Application model — add property
+2) Application model — property (unchanged)
 --------------------------------------------------------------------------------
 
     public string GitLatestCommand { get; set; } = string.Empty;
 
 
 --------------------------------------------------------------------------------
-3) BuildTab.razor — NEW method GetLatestFromRepoAsync
+3) BuildTab.razor — GetLatestFromRepoAsync (unchanged call pattern)
 --------------------------------------------------------------------------------
-Add this method (same style as RestorePackagesAsync). Returns true on success
-so BuildApplication can abort when false.
+Method stays the same — only the command string in appsettings changes.
 
-private async Task<bool> GetLatestFromRepoAsync(Application app, string workingDir, CancellationToken cancellation)
-{
-    if (string.IsNullOrWhiteSpace(app.GitLatestCommand))
-    {
-        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] No gitLatestCommand for {app.Name} — skipping project git latest\r\n";
-        return true;
-    }
-
-    var gitCmd = app.GitLatestCommand.Trim();
-    // Run from Code Repo Root so git sees .git (project paths in the command are relative to repo root)
-    var gitWorkingDir = string.IsNullOrWhiteSpace(RepoRoot) ? workingDir : RepoRoot.Trim();
-
-    LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Getting latest for {app.Name} (project-wise: revert local + restore from upstream)...\r\n";
-    LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Git: {gitCmd}  (cwd: {gitWorkingDir})\r\n";
-    await InvokeAsync(StateHasChanged);
-
-    var gitExit = await BuildService.RunCommandAsync(
-        gitWorkingDir,
-        gitCmd,
-        line =>
-        {
-            lock (_pendingLogBuffer)
-            {
-                _pendingLogBuffer.Append(line);
-                if (!line.EndsWith('\n') && !line.EndsWith('\r'))
-                    _pendingLogBuffer.AppendLine();
-            }
-        },
-        cancellation);
-
-    FlushPendingLogs();
-
-    if (gitExit != 0)
-    {
-        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] Git latest failed for {app.Name} with exit code {gitExit}\r\n";
-        await InvokeAsync(StateHasChanged);
-        return false;
-    }
-
-    LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Git latest OK for {app.Name}\r\n";
-    await InvokeAsync(StateHasChanged);
-    return true;
-}
-
-
---------------------------------------------------------------------------------
-4) BuildApplication — CALL the method (BEFORE RestorePackagesAsync)
---------------------------------------------------------------------------------
-In BuildApplication, after resolving workingDir / projectFile, BEFORE
-RestorePackagesAsync and BEFORE RunCommandAsync for buildCommand:
-
-        // ---- Git latest (separate method — same pattern as RestorePackagesAsync) ----
         if (!await GetLatestFromRepoAsync(app, workingDir, cancellation))
         {
             app.Status = "Failed";
@@ -138,43 +87,15 @@ RestorePackagesAsync and BEFORE RunCommandAsync for buildCommand:
             return;
         }
 
-        // existing:
-        // if (!await RestorePackagesAsync(app, projectFile, isLegacy, workingDir, cancellation)) { ... }
-        // var exit = await BuildService.RunCommandAsync(... buildCommand ...);
-        // if (exit == 0) { archive + copy PrecompiledWeb ... }
-        // app.Status = exit == 0 ? "Success" : "Failed";
-
 
 --------------------------------------------------------------------------------
-5) Build All
+4) Checklist
 --------------------------------------------------------------------------------
-Build All already loops apps and calls BuildApplication — each app runs its OWN
-project-folder gitLatestCommand (revert + restore that path only).
-
-
---------------------------------------------------------------------------------
-6) Expected OUTPUT LOG
---------------------------------------------------------------------------------
-[HH:mm:ss] [INFO] Getting latest for GSS Web Service (project-wise: revert local + restore from upstream)...
-[HH:mm:ss] [INFO] Git: git fetch && git clean -fd -- "Web Services\GSSWebService" && git restore --source=@{u} --staged --worktree -- "Web Services\GSSWebService"  (cwd: F:\GSS\AppDev\gss-root)
-... git stdout/stderr ...
-[HH:mm:ss] [INFO] Git latest OK for GSS Web Service
-[HH:mm:ss] [INFO] Skipping dotnet restore for legacy app GSS Web Service (AsmxWebService)
-... msbuild ...
-
-
---------------------------------------------------------------------------------
-7) Checklist
---------------------------------------------------------------------------------
-[ ] Each app has its OWN project-folder gitLatestCommand (not plain git pull)
-[ ] Command reverts local changes under that project folder, then restores from @{u}
-[ ] Application.GitLatestCommand property exists and binds from JSON
-[ ] GetLatestFromRepoAsync is a separate method (returns Task<bool>)
-[ ] BuildApplication CALLS GetLatestFromRepoAsync BEFORE RestorePackagesAsync
-[ ] Git runs with cwd = Code Repo Root (repoRoot), not project subfolder
-[ ] Building one app does not update other project folders
-[ ] false from GetLatestFromRepoAsync aborts that app build (does not run msbuild)
-[ ] GSS Web Service and GSSWeb still publish/copy as before
+[ ] appsettings gitLatestCommand updated to stash → fetch → restore → stash pop
+[ ] Removed git clean -fd from gitLatestCommand
+[ ] Local NuGet changes survive a tool build
+[ ] Remote latest for that project folder is still applied
+[ ] No package names added to appsettings
 
 
 ================================================================================

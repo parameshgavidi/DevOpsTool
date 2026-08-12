@@ -2,7 +2,7 @@
   "name": "GSS Web Service",
   "type": "AsmxWebService",
   "projectPath": "Web Services\\GSSWebService\\GSSWebService.sln",
-  "gitLatestCommand": "git fetch && git clean -fd -- \"Web Services\\GSSWebService\" && git restore --source=@{u} --staged --worktree -- \"Web Services\\GSSWebService\"",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"Web Services\\GSSWebService\" && git fetch && git restore --source=@{u} --staged --worktree -- \"Web Services\\GSSWebService\" && git stash pop",
   "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
   "outputSubfolder": "GSSWebService"
 }

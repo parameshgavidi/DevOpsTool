@@ -2,21 +2,19 @@
   "name": "GSSWeb",
   "type": "AspNetWebForms",
   "projectPath": "WebV3\\gssweb\\gssweb.sln",
-  "gitLatestCommand": "git fetch && git clean -fd -- \"WebV3\\gssweb\" && git restore --source=@{u} --staged --worktree -- \"WebV3\\gssweb\"",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"WebV3\\gssweb\" && git fetch && git restore --source=@{u} --staged --worktree -- \"WebV3\\gssweb\" && git stash pop",
   "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
   "outputSubfolder": "GSSWeb"
 }
 
 --------------------------------------------------------------------------------
-NuGet Install-Package vs gitLatestCommand
+NuGet Install-Package vs gitLatestCommand (keep local)
 --------------------------------------------------------------------------------
-Local:
-  Install-Package Microsoft.AspNet.WebApi.Client -Version 4.0.20710
-gets WIPED by gitLatestCommand (git restore / clean) on the next build.
-
-Do NOT add that package to appsettings.json.
-Commit + push the package fix to the GSS remote branch, OR nuget restore
-AFTER git latest. See: docs/fixes/gssweb-nuget-vs-git-latest.txt
+Local Install-Package is OK to keep — change gitLatestCommand to:
+  stash → fetch → restore from @{u} → stash pop
+Do NOT use git clean / bare restore that wipes local.
+Do NOT add the package name to appsettings.
+See: docs/fixes/git-latest-before-build.txt
 
 
 --------------------------------------------------------------------------------
