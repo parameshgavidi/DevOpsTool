@@ -182,7 +182,7 @@ Replace your existing if (exit == 0) publish-copy block with this full version.
 
 PART D — checklist
 --------------------------------------------------------------------------------
-[ ] Each app has project-wise gitLatestCommand (revert local + restore that folder from @{u}); BuildApplication calls GetLatestFromRepoAsync BEFORE restore/build
+[ ] Each app has project-wise gitLatestCommand (stash → fetch → restore @{u} → stash pop — keep local); BuildApplication calls GetLatestFromRepoAsync BEFORE restore/build
 [ ] CleanPrecompiledOutputAsync runs BEFORE msbuild (see aspnet-precompiledweb-not-empty.txt)
 [ ] PART B is in RestorePackagesAsync (not inside exit == 0)
 [ ] PART C replaces the post-build copy block in BuildApplication
