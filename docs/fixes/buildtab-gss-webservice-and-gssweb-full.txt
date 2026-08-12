@@ -10,7 +10,7 @@ PART A — appsettings.json (both apps)
   "name": "GSS Web Service",
   "type": "AsmxWebService",
   "projectPath": "Web Services\\GSSWebService\\GSSWebService.sln",
-  "gitLatestCommand": "git pull --ff-only",
+  "gitLatestCommand": "git fetch && git clean -fd -- \"Web Services\\GSSWebService\" && git restore --source=@{u} --staged --worktree -- \"Web Services\\GSSWebService\"",
   "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
   "outputSubfolder": "GSSWebService"
 },
@@ -18,7 +18,7 @@ PART A — appsettings.json (both apps)
   "name": "GSSWeb",
   "type": "AspNetWebForms",
   "projectPath": "WebV3\\gssweb\\gssweb.sln",
-  "gitLatestCommand": "git pull --ff-only",
+  "gitLatestCommand": "git fetch && git clean -fd -- \"WebV3\\gssweb\" && git restore --source=@{u} --staged --worktree -- \"WebV3\\gssweb\"",
   "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
   "outputSubfolder": "GSSWeb"
 }
@@ -165,7 +165,7 @@ Replace your existing if (exit == 0) publish-copy block with this full version.
 
 PART D — checklist
 --------------------------------------------------------------------------------
-[ ] Each app has gitLatestCommand; BuildApplication calls GetLatestFromRepoAsync BEFORE restore/build
+[ ] Each app has project-wise gitLatestCommand (revert local + restore that folder from @{u}); BuildApplication calls GetLatestFromRepoAsync BEFORE restore/build
 [ ] PART B is in RestorePackagesAsync (not inside exit == 0)
 [ ] PART C replaces the post-build copy block in BuildApplication
 [ ] GSS Web Service still builds to F:\build-output\GSSWebService
