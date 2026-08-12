@@ -1,0 +1,134 @@
+================================================================================
+Git Latest before build — per-project gitLatestCommand
+Pull latest from repo BEFORE restore/msbuild for each app
+================================================================================
+
+FLOW
+----
+1. Build selected app (or Build All)
+2. For each app: run gitLatestCommand in Code Repo Root
+3. On success → restore (if needed) → msbuild / publish
+4. On git failure → stop that app build (Status = Failed), log error
+
+
+--------------------------------------------------------------------------------
+1) appsettings.json — add gitLatestCommand on EACH app
+--------------------------------------------------------------------------------
+
+{
+  "name": "GSS Web Service",
+  "type": "AsmxWebService",
+  "projectPath": "Web Services\\GSSWebService\\GSSWebService.sln",
+  "gitLatestCommand": "git pull --ff-only",
+  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
+  "outputSubfolder": "GSSWebService"
+},
+{
+  "name": "GSSWeb",
+  "type": "AspNetWebForms",
+  "projectPath": "WebV3\\gssweb\\gssweb.sln",
+  "gitLatestCommand": "git pull --ff-only",
+  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
+  "outputSubfolder": "GSSWeb"
+}
+
+Notes:
+- Same command can be used for every project when they share one Code Repo Root
+  (build:repoRoot, e.g. F:\GSS\AppDev\gss-root).
+- Per-app override is allowed (different branch, remote, or repo path later).
+- Do NOT put git pull inside buildCommand — run it as its own step first.
+- Prefer:  git pull --ff-only
+  Avoid force / reset unless you intentionally accept discarding local changes.
+
+
+--------------------------------------------------------------------------------
+2) Application model — add property
+--------------------------------------------------------------------------------
+
+    public string GitLatestCommand { get; set; } = string.Empty;
+
+
+--------------------------------------------------------------------------------
+3) BuildTab.razor — run git latest BEFORE restore/build
+--------------------------------------------------------------------------------
+In BuildApplication, near the start (after resolving workingDir / projectFile,
+BEFORE RestorePackagesAsync and BEFORE RunCommandAsync for buildCommand):
+
+        // ---- Git latest (required before build when configured) ----
+        if (!string.IsNullOrWhiteSpace(app.GitLatestCommand))
+        {
+            var gitCmd = app.GitLatestCommand.Trim();
+            // Run from Code Repo Root so git sees .git (not the project subfolder)
+            var gitWorkingDir = string.IsNullOrWhiteSpace(RepoRoot) ? workingDir : RepoRoot.Trim();
+
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Getting latest for {app.Name}...\r\n";
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Git: {gitCmd}  (cwd: {gitWorkingDir})\r\n";
+            await InvokeAsync(StateHasChanged);
+
+            var gitExit = await BuildService.RunCommandAsync(
+                gitWorkingDir,
+                gitCmd,
+                line =>
+                {
+                    lock (_pendingLogBuffer)
+                    {
+                        _pendingLogBuffer.Append(line);
+                        if (!line.EndsWith('\n') && !line.EndsWith('\r'))
+                            _pendingLogBuffer.AppendLine();
+                    }
+                },
+                cancellation);
+
+            FlushPendingLogs();
+
+            if (gitExit != 0)
+            {
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] Git latest failed for {app.Name} with exit code {gitExit}. Build aborted.\r\n";
+                app.Status = "Failed";
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Git latest OK for {app.Name}\r\n";
+            await InvokeAsync(StateHasChanged);
+        }
+
+Then continue with existing flow:
+        // RestorePackagesAsync(...)
+        // RunCommandAsync(... buildCommand ...)
+        // if (exit == 0) { archive + copy PrecompiledWeb ... }
+        // app.Status = exit == 0 ? "Success" : "Failed";
+
+
+--------------------------------------------------------------------------------
+4) Build All
+--------------------------------------------------------------------------------
+Build All already loops apps and calls BuildApplication — each app runs its own
+gitLatestCommand. No separate change needed if Build All uses BuildApplication.
+
+
+--------------------------------------------------------------------------------
+5) Expected OUTPUT LOG
+--------------------------------------------------------------------------------
+[HH:mm:ss] [INFO] Getting latest for GSS Web Service...
+[HH:mm:ss] [INFO] Git: git pull --ff-only  (cwd: F:\GSS\AppDev\gss-root)
+... git stdout/stderr ...
+[HH:mm:ss] [INFO] Git latest OK for GSS Web Service
+[HH:mm:ss] [INFO] Skipping dotnet restore for legacy app GSS Web Service (AsmxWebService)
+... msbuild ...
+
+
+--------------------------------------------------------------------------------
+6) Checklist
+--------------------------------------------------------------------------------
+[ ] Each app in appsettings has "gitLatestCommand"
+[ ] Application.GitLatestCommand property exists and binds from JSON
+[ ] BuildApplication runs git BEFORE restore/build
+[ ] Git runs with cwd = Code Repo Root (repoRoot), not project subfolder
+[ ] Non-zero git exit aborts that app build (does not run msbuild)
+[ ] GSS Web Service and GSSWeb still publish/copy as before
+
+
+================================================================================
+END
+================================================================================

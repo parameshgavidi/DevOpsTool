@@ -2,6 +2,7 @@
   "name": "GSS Web Service",
   "type": "AsmxWebService",
   "projectPath": "Web Services\\GSSWebService\\GSSWebService.sln",
+  "gitLatestCommand": "git pull --ff-only",
   "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
   "outputSubfolder": "GSSWebService"
 }

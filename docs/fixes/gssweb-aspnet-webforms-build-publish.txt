@@ -2,6 +2,7 @@
   "name": "GSSWeb",
   "type": "AspNetWebForms",
   "projectPath": "WebV3\\gssweb\\gssweb.sln",
+  "gitLatestCommand": "git pull --ff-only",
   "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
   "outputSubfolder": "GSSWeb"
 }
