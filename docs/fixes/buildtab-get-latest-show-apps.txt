@@ -203,16 +203,31 @@ per-app GetLatestFromRepoAsync used inside BuildApplication
 
 
 --------------------------------------------------------------------------------
-5) BuildTab.razor — LoadApplicationsFromConfigAsync
+5) BuildTab.razor — LoadApplicationsFromConfigAsync  (ONE method only)
 --------------------------------------------------------------------------------
-Use the same config source you already use for build settings (IConfiguration
-or a settings service). Reset Status so the grid starts clean.
+WARNING: Paste ONLY this one method. Do NOT paste two copies.
+Do NOT use Configuration.GetSection unless you already @inject IConfiguration.
+Do NOT leave placeholder comments like /* your existing ... */ in the code.
 
-    private async Task LoadApplicationsFromConfigAsync()
+USE THIS (matches how Bundle Scripts / RepoRoot load from buildSettings):
+
+    private Task LoadApplicationsFromConfigAsync()
     {
-        // Example with IConfiguration — adapt to your existing load path:
-        var apps = Configuration.GetSection("build:apps").Get<List<Application>>()
-                   ?? new List<Application>();
+        // Reuse the same BuildSettings you already loaded in OnInitializedAsync
+        // (the object that gave you RepoRoot, OutputRoot, DbRollupExePath, etc.).
+        // If that local variable was named differently, use YOUR field/variable name.
+        //
+        // Common patterns — pick the one that matches your file:
+        //   A) field:   private BuildSettings? _buildSettings;
+        //   B) local reloaded from config service / IOptions
+        //
+        // Example A (field set during init):
+        var apps = (_buildSettings?.Apps ?? Enumerable.Empty<Application>()).ToList();
+
+        // Example B if you reload from the same helper you use for RepoRoot:
+        // var buildSettings = Configuration.GetSection("build").Get<BuildSettings>() ?? new();
+        // var apps = buildSettings.Apps?.ToList() ?? new List<Application>();
+        // (only if you already have @inject IConfiguration Configuration;)
 
         foreach (var app in apps)
         {
@@ -221,28 +236,54 @@ or a settings service). Reset Status so the grid starts clean.
         }
 
         Applications = apps;
-        await Task.CompletedTask;
+        return Task.CompletedTask;
     }
 
-If you already load BuildSettings in OnInitializedAsync:
+If you do NOT have a _buildSettings field yet, add one and set it where you
+already read RepoRoot / OutputRoot:
 
-    private async Task LoadApplicationsFromConfigAsync()
+    private BuildSettings? _buildSettings;
+
+    // inside OnInitializedAsync / load method, AFTER reading build settings:
+    _buildSettings = buildSettings;   // whatever variable you already have
+    RepoRoot = buildSettings.RepoRoot ?? string.Empty;
+    OutputRoot = buildSettings.OutputRoot ?? string.Empty;
+
+Then LoadApplicationsFromConfigAsync uses _buildSettings.Apps as above.
+
+ALTERNATE (only if Applications is ALREADY filled during init from build:apps):
+
+    private Task LoadApplicationsFromConfigAsync()
     {
-        var buildSettings = /* your existing BuildSettings instance / reload */;
-        var apps = buildSettings.Apps?.ToList() ?? new List<Application>();
-        foreach (var app in apps)
+        // Apps were already loaded into Applications during init — just reset status
+        foreach (var app in Applications)
         {
             if (string.IsNullOrWhiteSpace(app.Status))
                 app.Status = "Ready";
         }
-        Applications = apps;
-        await Task.CompletedTask;
+        return Task.CompletedTask;
     }
 
 IMPORTANT:
+- ONE LoadApplicationsFromConfigAsync only — delete any duplicate.
 - Do NOT auto-show the grid in OnInitializedAsync.
 - Keep loading RepoRoot / OutputRoot on init; only the APPLICATIONS section
   waits for Get latest.
+
+
+--------------------------------------------------------------------------------
+5b) FIX the errors in your screenshot
+--------------------------------------------------------------------------------
+Error: Configuration does not exist
+  → You pasted the IConfiguration sample. DELETE that method. Use section 5 above
+    with _buildSettings (or the ALTERNATE if apps are already in Applications).
+
+Error: LoadApplicationsFromConfigAsync already defined / duplicate
+  → You pasted BOTH samples. Keep ONE method; delete the other entirely.
+
+Error: stray "i" after comment  (  */i  or  */i;  )
+  → That came from the old placeholder line. Delete the whole placeholder line.
+    Never leave  /* your existing BuildSettings instance / reload */  in the file.
 
 
 --------------------------------------------------------------------------------
