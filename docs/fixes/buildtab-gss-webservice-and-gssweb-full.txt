@@ -29,7 +29,8 @@ PART B0 — CleanPrecompiledOutputAsync (BEFORE msbuild)
 Required to avoid:
   ASPNETCOMPILER error ASPRUNTIME: The target directory is not empty...
 
-Call from BuildApplication AFTER GetLatestFromRepoAsync / RestorePackagesAsync,
+Call from BuildApplication AFTER RestorePackagesAsync (NOT after GetLatest —
+Get latest is toolbar-only; see docs/fixes/buildtab-no-getlatest-on-build.txt),
 BEFORE RunCommandAsync(buildCommand). Full method:
   docs/fixes/aspnet-precompiledweb-not-empty.txt
 
@@ -182,7 +183,7 @@ Replace your existing if (exit == 0) publish-copy block with this full version.
 
 PART D — checklist
 --------------------------------------------------------------------------------
-[ ] Each app has project-wise gitLatestCommand (stash → fetch → restore @{u} → stash pop — keep local); BuildApplication calls GetLatestFromRepoAsync BEFORE restore/build
+[ ] BuildApplication does NOT call GetLatestFromRepoAsync (Get latest is toolbar-only)
 [ ] CleanPrecompiledOutputAsync runs BEFORE msbuild (see aspnet-precompiledweb-not-empty.txt)
 [ ] PART B is in RestorePackagesAsync (not inside exit == 0)
 [ ] PART C replaces the post-build copy block in BuildApplication
@@ -191,7 +192,7 @@ PART D — checklist
 [ ] Previous builds archived as {name}_yyyyMMddHHmm_vN
 [ ] No return true inside BuildApplication / if (exit == 0)
 
-See also: docs/fixes/git-latest-before-build.txt (GetLatestFromRepoAsync method + call site)
+See also: docs/fixes/buildtab-no-getlatest-on-build.txt (remove GetLatest from Build)
 
 ================================================================================
 END
