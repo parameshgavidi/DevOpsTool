@@ -305,14 +305,17 @@ Error: stray "i" after comment
 
 
 --------------------------------------------------------------------------------
-7) Relation to per-app gitLatestCommand
+7) Get latest vs Build (SEPARATED)
 --------------------------------------------------------------------------------
 | When                         | What runs                                      |
 |------------------------------|------------------------------------------------|
 | OnInitialized                | LoadAppSettings → paths + BuildApps (hidden)   |
 | Click Get latest (this doc)  | Full-repo: git fetch && git pull --ff-only     |
 |                              | then reload BuildApps + show grid              |
-| Click Build / Build All      | Per-app GetLatestFromRepoAsync (project folder)|
+| Click Build / Build All     | Build ONLY — NO GetLatestFromRepoAsync         |
+
+REQUIRED: remove GetLatestFromRepoAsync from BuildApplication.
+See: docs/fixes/buildtab-no-getlatest-on-build.txt
 
 
 --------------------------------------------------------------------------------
@@ -327,6 +330,10 @@ After successful Get latest:
   - OUTPUT LOG shows git pull + "APPLICATIONS ready — N app(s)"
   - Grid visible bound to BuildApps
 
+On Build:
+  - NO "Getting latest for..." lines
+  - Goes straight to restore / msbuild / publish
+
 
 --------------------------------------------------------------------------------
 9) Checklist
@@ -340,7 +347,8 @@ After successful Get latest:
 [ ] Exactly ONE LoadApplicationsFromConfigAsync
 [ ] GetLatestAndShowAppsAsync runs git fetch && git pull --ff-only at RepoRoot
 [ ] On success: reload apps + _showApplications = true
-[ ] Per-app GetLatestFromRepoAsync still used inside BuildApplication
+[ ] BuildApplication does NOT call GetLatestFromRepoAsync
+[ ] See docs/fixes/buildtab-no-getlatest-on-build.txt
 
 
 ================================================================================

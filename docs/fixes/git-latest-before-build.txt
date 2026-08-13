@@ -1,10 +1,21 @@
 ================================================================================
 Git Latest before build — per-project gitLatestCommand
-KEEP local changes + get latest from remote, then build
+*** SUPERSEDED for Build click — Get latest is SEPARATE now ***
 ================================================================================
 
-FLOW
-----
+STATUS (updated)
+----------------
+Do NOT call GetLatestFromRepoAsync from BuildApplication anymore.
+
+Toolbar Get latest (full-repo pull) is separate from Build:
+  → docs/fixes/buildtab-get-latest-show-apps.txt
+  → docs/fixes/buildtab-no-getlatest-on-build.txt
+
+This file is kept only for history / optional reuse of gitLatestCommand strings.
+
+
+OLD FLOW (do not use on Build anymore)
+--------------------------------------
 1. Build selected app (or Build All) → BuildApplication
 2. BuildApplication calls GetLatestFromRepoAsync(app, ...)
 3. For THAT app only:
@@ -76,9 +87,9 @@ Notes:
 
 
 --------------------------------------------------------------------------------
-3) BuildTab.razor — GetLatestFromRepoAsync (unchanged call pattern)
+3) BuildTab.razor — REMOVE call from BuildApplication
 --------------------------------------------------------------------------------
-Method stays the same — only the command string in appsettings changes.
+DELETE this block from BuildApplication (Get latest is toolbar-only now):
 
         if (!await GetLatestFromRepoAsync(app, workingDir, cancellation))
         {
@@ -87,15 +98,16 @@ Method stays the same — only the command string in appsettings changes.
             return;
         }
 
+Full remove guide: docs/fixes/buildtab-no-getlatest-on-build.txt
+
 
 --------------------------------------------------------------------------------
 4) Checklist
 --------------------------------------------------------------------------------
-[ ] appsettings gitLatestCommand updated to stash → fetch → restore → stash pop
-[ ] Removed git clean -fd from gitLatestCommand
-[ ] Local NuGet changes survive a tool build
-[ ] Remote latest for that project folder is still applied
-[ ] No package names added to appsettings
+[ ] GetLatestFromRepoAsync call REMOVED from BuildApplication
+[ ] Get latest only via toolbar GetLatestAndShowAppsAsync
+[ ] Build goes straight to restore / msbuild
+[ ] Optional: gitLatestCommand can remain in appsettings unused, or be removed
 
 
 ================================================================================
