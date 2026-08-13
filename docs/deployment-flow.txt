@@ -4,9 +4,8 @@ flowchart TD
     subgraph BUILD["BUILD"]
         direction TB
         Config["Configure paths<br/>Code Repo Root,<br/>Output Root, Build Backup folder"]
-        Config --> PullLatest["Pull latest changes<br/>from Code repo"]
-        PullLatest --> BuildBackup["Backup previous successful<br/>build files<br/>to Build Backup folder"]
-        BuildBackup --> AppList["Display applications<br/>name, type, status, action"]
+        Config --> GetLatest["Click Get latest<br/>git fetch + pull at Repo Root"]
+        GetLatest --> AppList["Show APPLICATIONS grid<br/>name, type, status, action<br/>from build:apps"]
         AppList --> BuildChoice{Choose action}
         BuildChoice --> BuildOne[Build selected app]
         BuildChoice --> BuildAll[Build All]

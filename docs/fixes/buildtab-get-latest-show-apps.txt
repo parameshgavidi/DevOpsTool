@@ -1,0 +1,326 @@
+================================================================================
+BUILD tab — Get latest button, then show APPLICATIONS grid
+================================================================================
+
+PROBLEM
+-------
+BUILD CONFIGURATION shows Repo Root / Output Root, but there is no Get latest
+button. The APPLICATIONS grid is empty (headers only) and should appear AFTER
+Get latest succeeds — matching the BUILD flow:
+
+  Configure paths → Get latest (pull code) → Display applications → Build
+
+
+FLOW
+----
+1. User sets Repo Root / Output Root (Browse or appsettings)
+2. Click Get latest
+3. Validate Repo Root is a git working tree
+4. git fetch + git pull --ff-only at Code Repo Root
+5. Load apps from build:apps (appsettings) into the Applications list
+6. Show the APPLICATIONS grid (hidden until this step succeeds)
+7. User can then Build / Build All / Bundle Scripts
+
+
+--------------------------------------------------------------------------------
+1) BuildTab.razor — fields
+--------------------------------------------------------------------------------
+
+    private bool _isGettingLatest;
+    private bool _showApplications;   // grid hidden until Get latest succeeds
+    private List<Application> Applications { get; set; } = new();
+    // RepoRoot, OutputRoot, LogOutput, BuildService — already exist
+
+
+--------------------------------------------------------------------------------
+2) BuildTab.razor — UI: Get latest button (under BUILD CONFIGURATION)
+--------------------------------------------------------------------------------
+Place the button BELOW the Repo Root / Output Root fields (same bordered box),
+to the right or on its own row. Match Browse button styling (primary blue).
+
+Inside the BUILD CONFIGURATION section, after the path fields:
+
+    <div class="config-actions">
+        <button class="btn-primary"
+                disabled="@(_isGettingLatest || string.IsNullOrWhiteSpace(RepoRoot))"
+                @onclick="GetLatestAndShowAppsAsync">
+            @(_isGettingLatest ? "Getting latest..." : "Get latest")
+        </button>
+    </div>
+
+Do NOT show Build All / per-app Build until the grid is visible.
+
+
+--------------------------------------------------------------------------------
+3) BuildTab.razor — UI: APPLICATIONS grid (hidden until Get latest)
+--------------------------------------------------------------------------------
+Wrap the whole APPLICATIONS section (header + table). Do not render an empty
+header-only grid on first load.
+
+    @if (_showApplications)
+    {
+        <div class="applications-section">
+            <h3>APPLICATIONS</h3>
+            <table class="apps-grid">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Application Name</th>
+                        <th>Type</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (Applications.Count == 0)
+                    {
+                        <tr>
+                            <td colspan="5">No applications configured in appsettings (build:apps).</td>
+                        </tr>
+                    }
+                    else
+                    {
+                        @for (var i = 0; i < Applications.Count; i++)
+                        {
+                            var app = Applications[i];
+                            var index = i;
+                            <tr>
+                                <td>@(index + 1)</td>
+                                <td>@app.Name</td>
+                                <td>@app.Type</td>
+                                <td>@app.Status</td>
+                                <td>
+                                    <button class="btn-primary"
+                                            disabled="@_isGettingLatest"
+                                            @onclick="() => BuildOneAsync(app)">
+                                        Build
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+
+            <div class="apps-actions">
+                <button class="btn-primary"
+                        disabled="@(Applications.Count == 0 || _isGettingLatest)"
+                        @onclick="BuildAllAsync">
+                    Build All
+                </button>
+                @* existing: Bundle Scripts, View Log, etc. *@
+            </div>
+        </div>
+    }
+
+
+--------------------------------------------------------------------------------
+4) BuildTab.razor — REPLACE/ADD GetLatestAndShowAppsAsync
+--------------------------------------------------------------------------------
+This is the BUILD-tab toolbar action (full-repo pull). It is separate from
+per-app GetLatestFromRepoAsync used inside BuildApplication
+(see docs/fixes/git-latest-before-build.txt).
+
+    private async Task GetLatestAndShowAppsAsync()
+    {
+        if (_isGettingLatest)
+            return;
+
+        _isGettingLatest = true;
+        _showApplications = false;
+        try
+        {
+            var root = RepoRoot?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Repo Root not found: {root}");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            var gitDir = Path.Combine(root, ".git");
+            if (!Directory.Exists(gitDir) && !File.Exists(gitDir))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Not a git repo (missing .git): {root}");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            // Full-repo get latest for the BUILD tab button.
+            // Per-app project-wise latest still runs later inside BuildApplication.
+            var command = "git fetch && git pull --ff-only";
+
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Get latest from Code Repo Root...");
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Git: {command}  (cwd: {root})");
+            await InvokeAsync(StateHasChanged);
+
+            StartLogFlushTimer();
+            var exit = await BuildService.RunCommandAsync(
+                root,
+                command,
+                line =>
+                {
+                    lock (_pendingLogBuffer)
+                    {
+                        _pendingLogBuffer.Append(line);
+                        if (!line.EndsWith('\n') && !line.EndsWith('\r'))
+                            _pendingLogBuffer.AppendLine();
+                    }
+                },
+                CancellationToken.None);
+
+            FlushPendingLogs();
+
+            if (exit != 0)
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Get latest failed with exit code {exit}");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Get latest OK — loading applications...");
+
+            // Reload apps from configuration (build:apps)
+            await LoadApplicationsFromConfigAsync();
+
+            _showApplications = true;
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] APPLICATIONS ready — {Applications.Count} app(s)");
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Get latest failed: {ex.Message}");
+            _showApplications = false;
+            await InvokeAsync(StateHasChanged);
+        }
+        finally
+        {
+            StopLogFlushTimer();
+            _isGettingLatest = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+
+--------------------------------------------------------------------------------
+5) BuildTab.razor — LoadApplicationsFromConfigAsync
+--------------------------------------------------------------------------------
+Use the same config source you already use for build settings (IConfiguration
+or a settings service). Reset Status so the grid starts clean.
+
+    private async Task LoadApplicationsFromConfigAsync()
+    {
+        // Example with IConfiguration — adapt to your existing load path:
+        var apps = Configuration.GetSection("build:apps").Get<List<Application>>()
+                   ?? new List<Application>();
+
+        foreach (var app in apps)
+        {
+            if (string.IsNullOrWhiteSpace(app.Status))
+                app.Status = "Ready";
+        }
+
+        Applications = apps;
+        await Task.CompletedTask;
+    }
+
+If you already load BuildSettings in OnInitializedAsync:
+
+    private async Task LoadApplicationsFromConfigAsync()
+    {
+        var buildSettings = /* your existing BuildSettings instance / reload */;
+        var apps = buildSettings.Apps?.ToList() ?? new List<Application>();
+        foreach (var app in apps)
+        {
+            if (string.IsNullOrWhiteSpace(app.Status))
+                app.Status = "Ready";
+        }
+        Applications = apps;
+        await Task.CompletedTask;
+    }
+
+IMPORTANT:
+- Do NOT auto-show the grid in OnInitializedAsync.
+- Keep loading RepoRoot / OutputRoot on init; only the APPLICATIONS section
+  waits for Get latest.
+
+
+--------------------------------------------------------------------------------
+6) Optional CSS (deployment-tool.css)
+--------------------------------------------------------------------------------
+
+    .config-actions {
+        margin-top: 12px;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+
+    .applications-section {
+        margin-top: 24px;
+    }
+
+    .apps-grid {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .apps-grid th,
+    .apps-grid td {
+        padding: 8px 12px;
+        text-align: left;
+        border-bottom: 1px solid #ddd;
+    }
+
+If the APPLICATIONS header was always visible with an empty table, remove that
+unconditional markup so only the @if (_showApplications) block remains.
+
+
+--------------------------------------------------------------------------------
+7) Relation to per-app gitLatestCommand
+--------------------------------------------------------------------------------
+| When                         | What runs                                      |
+|------------------------------|------------------------------------------------|
+| Click Get latest (this doc)  | Full-repo: git fetch && git pull --ff-only     |
+| Click Build / Build All      | Per-app GetLatestFromRepoAsync (stash/fetch/   |
+|                              | restore/stash pop for that project folder)     |
+
+Both are needed: toolbar Get latest refreshes the clone + reveals the grid;
+per-app gitLatestCommand still runs immediately before each build.
+
+
+--------------------------------------------------------------------------------
+8) Expected UI / OUTPUT LOG
+--------------------------------------------------------------------------------
+Before click:
+  - BUILD CONFIGURATION visible (Repo Root, Output Root, Browse, Get latest)
+  - APPLICATIONS section NOT visible
+
+After successful Get latest:
+  - OUTPUT LOG:
+      [HH:mm:ss] [INFO] Get latest from Code Repo Root...
+      [HH:mm:ss] [INFO] Git: git fetch && git pull --ff-only  (cwd: F:\GSS\AppDev\gss-root)
+      ... git output ...
+      [HH:mm:ss] [INFO] Get latest OK — loading applications...
+      [HH:mm:ss] [INFO] APPLICATIONS ready — 2 app(s)
+  - APPLICATIONS grid visible with rows (e.g. GSS Web Service, GSSWeb)
+
+
+--------------------------------------------------------------------------------
+9) Checklist
+--------------------------------------------------------------------------------
+[ ] Get latest button under BUILD CONFIGURATION
+[ ] Button disabled when RepoRoot empty or while _isGettingLatest
+[ ] APPLICATIONS section wrapped in @if (_showApplications)
+[ ] Grid not shown on first load (no empty header-only table)
+[ ] GetLatestAndShowAppsAsync runs git fetch && git pull --ff-only at RepoRoot
+[ ] On success: LoadApplicationsFromConfigAsync + _showApplications = true
+[ ] On failure: grid stays hidden; error in OUTPUT LOG
+[ ] Apps come from build:apps in appsettings.json
+[ ] Per-app GetLatestFromRepoAsync still used inside BuildApplication
+[ ] AppendLog used if day-wise logs are enabled (see daywise-logs-viewlog-remove-sidebar.txt)
+
+
+================================================================================
+END
+================================================================================

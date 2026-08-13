@@ -12,8 +12,9 @@ flowchart TD
     subgraph BUILD["BUILD"]
         direction TB
         Config["Configure paths<br/>Code Repo, Output Root, Build Backup"]
-        Config --> PullBackup["Pull latest code<br/>+ backup previous build files"]
-        PullBackup --> BuildChoice{Choose action}
+        Config --> GetLatest["Click Get latest<br/>git fetch + pull at Repo Root"]
+        GetLatest --> AppGrid["Show APPLICATIONS grid<br/>from build:apps"]
+        AppGrid --> BuildChoice{Choose action}
         BuildChoice --> BuildCode["Build code<br/>selected app or Build All"]
         BuildChoice --> BundleDb["Bundle DB Scripts<br/>DBRollupScriptBuilder.exe"]
         BuildCode --> BuildLog[Output Log]
@@ -146,7 +147,7 @@ flowchart TD
 ## BUILD
 
 1. **Configure paths** — Code Repo Root, Output Root, Build Backup folder.
-2. **Pull latest + backup** — Pull latest code and back up previous build files.
+2. **Get latest** — Click **Get latest** to `git fetch` + `git pull --ff-only` at Repo Root, then show the APPLICATIONS grid (from `build:apps`). See [`docs/fixes/buildtab-get-latest-show-apps.txt`](fixes/buildtab-get-latest-show-apps.txt).
 3. **Choose action** — Build code (selected app or Build All) **or** Bundle DB Scripts.
 4. **Run build** — msbuild for code, or `DBRollupScriptBuilder.exe` for DB scripts.
 5. **Output Log** — Live UI log and log text file.

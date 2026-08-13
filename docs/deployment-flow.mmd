@@ -6,8 +6,9 @@ flowchart TD
     subgraph BUILD["BUILD"]
         direction TB
         Config["Configure paths<br/>Code Repo, Output Root, Build Backup"]
-        Config --> PullBackup["Pull latest code<br/>+ backup previous build files"]
-        PullBackup --> BuildChoice{Choose action}
+        Config --> GetLatest["Click Get latest<br/>git fetch + pull at Repo Root"]
+        GetLatest --> AppGrid["Show APPLICATIONS grid<br/>from build:apps"]
+        AppGrid --> BuildChoice{Choose action}
         BuildChoice --> BuildCode["Build code<br/>selected app or Build All"]
         BuildChoice --> BundleDb["Bundle DB Scripts<br/>DBRollupScriptBuilder.exe"]
         BuildCode --> BuildLog[Output Log]
