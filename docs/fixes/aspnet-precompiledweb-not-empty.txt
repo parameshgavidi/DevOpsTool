@@ -89,23 +89,18 @@ private Task<bool> CleanPrecompiledOutputAsync(Application app, string workingDi
 --------------------------------------------------------------------------------
 2) BuildApplication — CALL before msbuild
 --------------------------------------------------------------------------------
-Order inside BuildApplication:
+Order inside BuildApplication (NO git latest on Build — toolbar Get latest only):
 
-        // 1) git latest (project-wise)
-        if (!await GetLatestFromRepoAsync(app, workingDir, cancellation))
-        {
-            app.Status = "Failed";
-            return;
-        }
+        // NO GetLatestFromRepoAsync — see docs/fixes/buildtab-no-getlatest-on-build.txt
 
-        // 2) restore (skipped for AsmxWebService / AspNetWebForms)
+        // 1) restore (skipped for AsmxWebService / AspNetWebForms)
         if (!await RestorePackagesAsync(app, projectFile, isLegacy, workingDir, cancellation))
         {
             app.Status = "Failed";
             return;
         }
 
-        // 3) clean PrecompiledWeb so ASPNETCOMPILER does not hit ASPRUNTIME
+        // 2) clean PrecompiledWeb so ASPNETCOMPILER does not hit ASPRUNTIME
         if (!await CleanPrecompiledOutputAsync(app, workingDir))
         {
             app.Status = "Failed";
@@ -113,7 +108,7 @@ Order inside BuildApplication:
             return;
         }
 
-        // 4) msbuild / publish
+        // 3) msbuild / publish
         // var exit = await BuildService.RunCommandAsync(... buildCommand ...);
 
 

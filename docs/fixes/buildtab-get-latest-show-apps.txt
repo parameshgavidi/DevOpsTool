@@ -145,9 +145,9 @@ Remove any unconditional APPLICATIONS header/table that rendered empty on load.
 --------------------------------------------------------------------------------
 4) BuildTab.razor — GetLatestAndShowAppsAsync
 --------------------------------------------------------------------------------
-Full-repo pull for the toolbar button. Separate from per-app
-GetLatestFromRepoAsync used inside BuildApplication
-(see docs/fixes/git-latest-before-build.txt).
+Full-repo pull for the toolbar button ONLY.
+Build does NOT call GetLatestFromRepoAsync anymore
+(see docs/fixes/buildtab-no-getlatest-on-build.txt).
 
     private async Task GetLatestAndShowAppsAsync()
     {
