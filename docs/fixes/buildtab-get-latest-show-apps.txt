@@ -1,44 +1,73 @@
 ================================================================================
 BUILD tab — Get latest button, then show APPLICATIONS grid
+Matches existing OnInitialized + LoadAppSettings() + BuildApps
 ================================================================================
 
 PROBLEM
 -------
 BUILD CONFIGURATION shows Repo Root / Output Root, but there is no Get latest
-button. The APPLICATIONS grid is empty (headers only) and should appear AFTER
-Get latest succeeds — matching the BUILD flow:
+button. The APPLICATIONS grid should appear AFTER Get latest succeeds:
 
   Configure paths → Get latest (pull code) → Display applications → Build
 
 
+YOUR EXISTING INIT (keep this — do not replace with Configuration.GetSection)
+-----------------------------------------------------------------------------
+You already load settings on init like this — KEEP IT:
+
+    protected override void OnInitialized()
+    {
+        var settings = LoadAppSettings();
+        if (settings?.Build is not null)
+        {
+            RepoRoot = settings.Build.RepoRoot ?? RepoRoot;
+            OutputRoot = settings.Build.OutputRoot ?? OutputRoot;
+            ScriptSource = settings.Build.DbScriptSource ?? ScriptSource;
+            DbRollupOutputDirectory = settings.Build.DbRollupOutputDirectory ?? DbRollupOutputDirectory;
+            DbRollupExePath = settings.Build.DbRollupExePath ?? DbRollupExePath;
+            DbRollupFromBranch = settings.Build.DbRollupFromBranch ?? DbRollupFromBranch;
+            DbRollupToBranch = settings.Build.DbRollupToBranch ?? DbRollupToBranch;
+
+            var loadedApps = settings.Build.Applications;
+            if (loadedApps is { Count: > 0 })
+                BuildApps = loadedApps;
+        }
+    }
+
+IMPORTANT for init:
+- Keep loading RepoRoot / OutputRoot / BuildApps here.
+- Do NOT set _showApplications = true here.
+- Grid stays hidden until Get latest succeeds.
+- Use BuildApps (your existing list). Do NOT add a second Applications list.
+
+
 FLOW
 ----
-1. User sets Repo Root / Output Root (Browse or appsettings)
+1. OnInitialized → LoadAppSettings() → paths + BuildApps (grid still hidden)
 2. Click Get latest
-3. Validate Repo Root is a git working tree
-4. git fetch + git pull --ff-only at Code Repo Root
-5. Load apps from build:apps (appsettings) into the Applications list
-6. Show the APPLICATIONS grid (hidden until this step succeeds)
-7. User can then Build / Build All / Bundle Scripts
+3. git fetch + git pull --ff-only at Code Repo Root
+4. Reload apps via LoadAppSettings() into BuildApps
+5. _showApplications = true → APPLICATIONS grid visible
+6. User can Build / Build All / Bundle Scripts
 
 
 --------------------------------------------------------------------------------
-1) BuildTab.razor — fields
+1) BuildTab.razor — fields (ADD these only)
 --------------------------------------------------------------------------------
+Keep your existing BuildApps / LogOutput / _isBundling / etc.
+
+ADD:
 
     private bool _isGettingLatest;
     private bool _showApplications;   // grid hidden until Get latest succeeds
-    private List<Application> Applications { get; set; } = new();
-    // RepoRoot, OutputRoot, LogOutput, BuildService — already exist
+
+DO NOT ADD a new Applications property if BuildApps already exists.
 
 
 --------------------------------------------------------------------------------
 2) BuildTab.razor — UI: Get latest button (under BUILD CONFIGURATION)
 --------------------------------------------------------------------------------
-Place the button BELOW the Repo Root / Output Root fields (same bordered box),
-to the right or on its own row. Match Browse button styling (primary blue).
-
-Inside the BUILD CONFIGURATION section, after the path fields:
+Place BELOW the Repo Root / Output Root fields:
 
     <div class="config-actions">
         <button class="btn-primary"
@@ -48,14 +77,11 @@ Inside the BUILD CONFIGURATION section, after the path fields:
         </button>
     </div>
 
-Do NOT show Build All / per-app Build until the grid is visible.
-
 
 --------------------------------------------------------------------------------
 3) BuildTab.razor — UI: APPLICATIONS grid (hidden until Get latest)
 --------------------------------------------------------------------------------
-Wrap the whole APPLICATIONS section (header + table). Do not render an empty
-header-only grid on first load.
+Wrap your existing APPLICATIONS table. Bind to BuildApps (not Applications).
 
     @if (_showApplications)
     {
@@ -72,17 +98,17 @@ header-only grid on first load.
                     </tr>
                 </thead>
                 <tbody>
-                    @if (Applications.Count == 0)
+                    @if (BuildApps.Count == 0)
                     {
                         <tr>
-                            <td colspan="5">No applications configured in appsettings (build:apps).</td>
+                            <td colspan="5">No applications configured in appsettings (build:applications).</td>
                         </tr>
                     }
                     else
                     {
-                        @for (var i = 0; i < Applications.Count; i++)
+                        @for (var i = 0; i < BuildApps.Count; i++)
                         {
-                            var app = Applications[i];
+                            var app = BuildApps[i];
                             var index = i;
                             <tr>
                                 <td>@(index + 1)</td>
@@ -104,7 +130,7 @@ header-only grid on first load.
 
             <div class="apps-actions">
                 <button class="btn-primary"
-                        disabled="@(Applications.Count == 0 || _isGettingLatest)"
+                        disabled="@(BuildApps.Count == 0 || _isGettingLatest)"
                         @onclick="BuildAllAsync">
                     Build All
                 </button>
@@ -113,12 +139,14 @@ header-only grid on first load.
         </div>
     }
 
+Remove any unconditional APPLICATIONS header/table that rendered empty on load.
+
 
 --------------------------------------------------------------------------------
-4) BuildTab.razor — REPLACE/ADD GetLatestAndShowAppsAsync
+4) BuildTab.razor — GetLatestAndShowAppsAsync
 --------------------------------------------------------------------------------
-This is the BUILD-tab toolbar action (full-repo pull). It is separate from
-per-app GetLatestFromRepoAsync used inside BuildApplication
+Full-repo pull for the toolbar button. Separate from per-app
+GetLatestFromRepoAsync used inside BuildApplication
 (see docs/fixes/git-latest-before-build.txt).
 
     private async Task GetLatestAndShowAppsAsync()
@@ -146,8 +174,6 @@ per-app GetLatestFromRepoAsync used inside BuildApplication
                 return;
             }
 
-            // Full-repo get latest for the BUILD tab button.
-            // Per-app project-wise latest still runs later inside BuildApplication.
             var command = "git fetch && git pull --ff-only";
 
             AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Get latest from Code Repo Root...");
@@ -180,11 +206,11 @@ per-app GetLatestFromRepoAsync used inside BuildApplication
 
             AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Get latest OK — loading applications...");
 
-            // Reload apps from configuration (build:apps)
+            // Reload from the SAME LoadAppSettings() used in OnInitialized
             await LoadApplicationsFromConfigAsync();
 
             _showApplications = true;
-            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] APPLICATIONS ready — {Applications.Count} app(s)");
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] APPLICATIONS ready — {BuildApps.Count} app(s)");
             await InvokeAsync(StateHasChanged);
         }
         catch (Exception ex)
@@ -205,85 +231,49 @@ per-app GetLatestFromRepoAsync used inside BuildApplication
 --------------------------------------------------------------------------------
 5) BuildTab.razor — LoadApplicationsFromConfigAsync  (ONE method only)
 --------------------------------------------------------------------------------
-WARNING: Paste ONLY this one method. Do NOT paste two copies.
-Do NOT use Configuration.GetSection unless you already @inject IConfiguration.
-Do NOT leave placeholder comments like /* your existing ... */ in the code.
-
-USE THIS (matches how Bundle Scripts / RepoRoot load from buildSettings):
+USE THIS — matches your OnInitialized / LoadAppSettings() / BuildApps:
 
     private Task LoadApplicationsFromConfigAsync()
     {
-        // Reuse the same BuildSettings you already loaded in OnInitializedAsync
-        // (the object that gave you RepoRoot, OutputRoot, DbRollupExePath, etc.).
-        // If that local variable was named differently, use YOUR field/variable name.
-        //
-        // Common patterns — pick the one that matches your file:
-        //   A) field:   private BuildSettings? _buildSettings;
-        //   B) local reloaded from config service / IOptions
-        //
-        // Example A (field set during init):
-        var apps = (_buildSettings?.Apps ?? Enumerable.Empty<Application>()).ToList();
+        var settings = LoadAppSettings();
+        var loadedApps = settings?.Build?.Applications;
 
-        // Example B if you reload from the same helper you use for RepoRoot:
-        // var buildSettings = Configuration.GetSection("build").Get<BuildSettings>() ?? new();
-        // var apps = buildSettings.Apps?.ToList() ?? new List<Application>();
-        // (only if you already have @inject IConfiguration Configuration;)
+        if (loadedApps is { Count: > 0 })
+            BuildApps = loadedApps;
+        else
+            BuildApps = new List<Application>();
 
-        foreach (var app in apps)
+        foreach (var app in BuildApps)
         {
             if (string.IsNullOrWhiteSpace(app.Status))
                 app.Status = "Ready";
         }
 
-        Applications = apps;
         return Task.CompletedTask;
     }
 
-If you do NOT have a _buildSettings field yet, add one and set it where you
-already read RepoRoot / OutputRoot:
-
-    private BuildSettings? _buildSettings;
-
-    // inside OnInitializedAsync / load method, AFTER reading build settings:
-    _buildSettings = buildSettings;   // whatever variable you already have
-    RepoRoot = buildSettings.RepoRoot ?? string.Empty;
-    OutputRoot = buildSettings.OutputRoot ?? string.Empty;
-
-Then LoadApplicationsFromConfigAsync uses _buildSettings.Apps as above.
-
-ALTERNATE (only if Applications is ALREADY filled during init from build:apps):
-
-    private Task LoadApplicationsFromConfigAsync()
-    {
-        // Apps were already loaded into Applications during init — just reset status
-        foreach (var app in Applications)
-        {
-            if (string.IsNullOrWhiteSpace(app.Status))
-                app.Status = "Ready";
-        }
-        return Task.CompletedTask;
-    }
-
-IMPORTANT:
-- ONE LoadApplicationsFromConfigAsync only — delete any duplicate.
-- Do NOT auto-show the grid in OnInitializedAsync.
-- Keep loading RepoRoot / OutputRoot on init; only the APPLICATIONS section
-  waits for Get latest.
+DELETE any other LoadApplicationsFromConfigAsync that uses:
+  - Configuration.GetSection(...)
+  - _buildSettings
+  - Applications = ...
+  - placeholder comments like /* your existing ... */
 
 
 --------------------------------------------------------------------------------
-5b) FIX the errors in your screenshot
+5b) FIX common paste errors
 --------------------------------------------------------------------------------
 Error: Configuration does not exist
-  → You pasted the IConfiguration sample. DELETE that method. Use section 5 above
-    with _buildSettings (or the ALTERNATE if apps are already in Applications).
+  → Delete that method. Use section 5 (LoadAppSettings + BuildApps).
 
-Error: LoadApplicationsFromConfigAsync already defined / duplicate
-  → You pasted BOTH samples. Keep ONE method; delete the other entirely.
+Error: LoadApplicationsFromConfigAsync already defined
+  → Keep ONE method (section 5). Delete the duplicate.
 
-Error: stray "i" after comment  (  */i  or  */i;  )
-  → That came from the old placeholder line. Delete the whole placeholder line.
-    Never leave  /* your existing BuildSettings instance / reload */  in the file.
+Error: Applications / BuildApps confusion
+  → Your list is BuildApps. Grid and Get latest must use BuildApps.
+  → Remove the extra Applications property if you added it from the old guide.
+
+Error: stray "i" after comment
+  → Delete the placeholder line entirely.
 
 
 --------------------------------------------------------------------------------
@@ -313,53 +303,44 @@ Error: stray "i" after comment  (  */i  or  */i;  )
         border-bottom: 1px solid #ddd;
     }
 
-If the APPLICATIONS header was always visible with an empty table, remove that
-unconditional markup so only the @if (_showApplications) block remains.
-
 
 --------------------------------------------------------------------------------
 7) Relation to per-app gitLatestCommand
 --------------------------------------------------------------------------------
 | When                         | What runs                                      |
 |------------------------------|------------------------------------------------|
+| OnInitialized                | LoadAppSettings → paths + BuildApps (hidden)   |
 | Click Get latest (this doc)  | Full-repo: git fetch && git pull --ff-only     |
-| Click Build / Build All      | Per-app GetLatestFromRepoAsync (stash/fetch/   |
-|                              | restore/stash pop for that project folder)     |
-
-Both are needed: toolbar Get latest refreshes the clone + reveals the grid;
-per-app gitLatestCommand still runs immediately before each build.
+|                              | then reload BuildApps + show grid              |
+| Click Build / Build All      | Per-app GetLatestFromRepoAsync (project folder)|
 
 
 --------------------------------------------------------------------------------
 8) Expected UI / OUTPUT LOG
 --------------------------------------------------------------------------------
-Before click:
-  - BUILD CONFIGURATION visible (Repo Root, Output Root, Browse, Get latest)
-  - APPLICATIONS section NOT visible
+On load:
+  - Paths filled from LoadAppSettings()
+  - BuildApps loaded in memory
+  - APPLICATIONS grid NOT visible (_showApplications = false)
 
 After successful Get latest:
-  - OUTPUT LOG:
-      [HH:mm:ss] [INFO] Get latest from Code Repo Root...
-      [HH:mm:ss] [INFO] Git: git fetch && git pull --ff-only  (cwd: F:\GSS\AppDev\gss-root)
-      ... git output ...
-      [HH:mm:ss] [INFO] Get latest OK — loading applications...
-      [HH:mm:ss] [INFO] APPLICATIONS ready — 2 app(s)
-  - APPLICATIONS grid visible with rows (e.g. GSS Web Service, GSSWeb)
+  - OUTPUT LOG shows git pull + "APPLICATIONS ready — N app(s)"
+  - Grid visible bound to BuildApps
 
 
 --------------------------------------------------------------------------------
 9) Checklist
 --------------------------------------------------------------------------------
+[ ] OnInitialized still calls LoadAppSettings() (paths + BuildApps)
+[ ] OnInitialized does NOT set _showApplications = true
+[ ] Use BuildApps only (no second Applications list)
 [ ] Get latest button under BUILD CONFIGURATION
-[ ] Button disabled when RepoRoot empty or while _isGettingLatest
 [ ] APPLICATIONS section wrapped in @if (_showApplications)
-[ ] Grid not shown on first load (no empty header-only table)
+[ ] LoadApplicationsFromConfigAsync uses LoadAppSettings() + BuildApps
+[ ] Exactly ONE LoadApplicationsFromConfigAsync
 [ ] GetLatestAndShowAppsAsync runs git fetch && git pull --ff-only at RepoRoot
-[ ] On success: LoadApplicationsFromConfigAsync + _showApplications = true
-[ ] On failure: grid stays hidden; error in OUTPUT LOG
-[ ] Apps come from build:apps in appsettings.json
+[ ] On success: reload apps + _showApplications = true
 [ ] Per-app GetLatestFromRepoAsync still used inside BuildApplication
-[ ] AppendLog used if day-wise logs are enabled (see daywise-logs-viewlog-remove-sidebar.txt)
 
 
 ================================================================================
