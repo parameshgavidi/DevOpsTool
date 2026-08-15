@@ -1,0 +1,125 @@
+================================================================================
+SEPARATE Get latest from Build
+No GetLatestFromRepoAsync when clicking Build / Build All
+================================================================================
+
+REQUIREMENT
+-----------
+Get latest and Build are SEPARATE actions now:
+
+  1. Click Get latest  → pull code + show APPLICATIONS grid
+  2. Click Build       → build only (NO git latest)
+
+Do NOT call GetLatestFromRepoAsync inside BuildApplication anymore.
+
+
+--------------------------------------------------------------------------------
+1) BuildTab.razor — REMOVE this block from BuildApplication
+--------------------------------------------------------------------------------
+Find and DELETE (or comment out) this entire block near the start of
+BuildApplication, BEFORE RestorePackagesAsync / CleanPrecompiled / msbuild:
+
+        // ---- REMOVE: no git latest on Build ----
+        if (!await GetLatestFromRepoAsync(app, workingDir, cancellation))
+        {
+            app.Status = "Failed";
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+Also remove any similar one-liner:
+
+        await GetLatestFromRepoAsync(app, workingDir, cancellation);
+
+
+--------------------------------------------------------------------------------
+2) BuildApplication — updated order (AFTER remove)
+--------------------------------------------------------------------------------
+After resolving workingDir / projectFile, go straight to restore / clean / build:
+
+    private async Task BuildApplication(Application app, CancellationToken cancellation)
+    {
+        // ... existing setup: Status = Building, workingDir, projectFile, etc. ...
+
+        // NO GetLatestFromRepoAsync here — user already clicked Get latest separately
+
+        if (!await RestorePackagesAsync(app, projectFile, isLegacy, workingDir, cancellation))
+        {
+            app.Status = "Failed";
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        if (!await CleanPrecompiledOutputAsync(app, workingDir))
+        {
+            app.Status = "Failed";
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        // existing: RunCommandAsync(buildCommand) → archive/copy on exit == 0
+        // existing: app.Status = exit == 0 ? "Success" : "Failed";
+    }
+
+Adjust method names to match yours (RestorePackagesAsync / CleanPrecompiledOutputAsync
+may already be present). The only required change is: no git latest call.
+
+
+--------------------------------------------------------------------------------
+3) Get latest — toolbar button ONLY
+--------------------------------------------------------------------------------
+Keep GetLatestAndShowAppsAsync on the Get latest button
+(see docs/fixes/buildtab-get-latest-show-apps.txt):
+
+    var command = "git fetch && git pull --ff-only";
+
+That is the ONLY place that runs git pull for this flow.
+
+Optional: you may leave GetLatestFromRepoAsync method in the file unused,
+or delete the method entirely if nothing else calls it.
+
+
+--------------------------------------------------------------------------------
+4) appsettings.json — gitLatestCommand
+--------------------------------------------------------------------------------
+Per-app "gitLatestCommand" is NO LONGER used by Build.
+
+You can:
+  A) Leave the property in JSON (harmless if code never reads it on Build), or
+  B) Remove "gitLatestCommand" from each app once Build no longer calls it
+
+Toolbar Get latest does NOT read gitLatestCommand — it uses the hardcoded
+full-repo pull in GetLatestAndShowAppsAsync.
+
+
+--------------------------------------------------------------------------------
+5) Flow (new)
+--------------------------------------------------------------------------------
+  OnInitialized
+      → LoadAppSettings() → paths + BuildApps (grid hidden)
+
+  Click Get latest
+      → git fetch && git pull --ff-only at RepoRoot
+      → reload BuildApps
+      → show APPLICATIONS grid
+
+  Click Build / Build All
+      → RestorePackagesAsync (if any)
+      → CleanPrecompiledOutputAsync (if any)
+      → msbuild / publish / copy
+      → NO git
+
+
+--------------------------------------------------------------------------------
+6) Checklist
+--------------------------------------------------------------------------------
+[ ] Removed GetLatestFromRepoAsync call from BuildApplication
+[ ] Build / Build All does not run git fetch/pull/restore
+[ ] Get latest button still runs GetLatestAndShowAppsAsync
+[ ] Grid still shown only after Get latest
+[ ] OUTPUT LOG on Build starts with restore/msbuild — not "Getting latest for..."
+
+
+================================================================================
+END
+================================================================================
