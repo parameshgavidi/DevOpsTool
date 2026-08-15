@@ -45,10 +45,11 @@ FLOW
 ----
 1. OnInitialized → LoadAppSettings() → paths + BuildApps (grid still hidden)
 2. Click Get latest
-3. git fetch + git pull --ff-only at Code Repo Root
-4. Reload apps via LoadAppSettings() into BuildApps
-5. _showApplications = true → APPLICATIONS grid visible
-6. User can Build / Build All / Bundle Scripts
+3. Validate Repo Root is a git working tree
+4. Load ALL applications from appsettings into BuildApps
+5. For EACH app → GetLatestFromRepoAsync (uses app.GitLatestCommand from appsettings)
+6. _showApplications = true → APPLICATIONS grid visible
+7. User can Build / Build All / Bundle Scripts (Build does NOT run git latest)
 
 
 --------------------------------------------------------------------------------
