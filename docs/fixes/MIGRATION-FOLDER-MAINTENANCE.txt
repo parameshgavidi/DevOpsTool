@@ -1,0 +1,238 @@
+================================================================================
+Migration folder maintenance — match existing \\EAGNMNSS595\Migration\GSS
+ONE FILE — how BUILD output must be copied into the release share
+================================================================================
+
+EXISTING STRUCTURE (do not invent a new layout)
+-----------------------------------------------
+Network share root:
+
+  \\EAGNMNSS595\Migration\GSS\
+
+Top level = Release version folders (examples from current share):
+
+  7.9
+  7.91
+  7.92
+  8.0
+  8.01
+  8.1
+  8.2
+  8.3
+  8.4
+  8.5
+  8.5.1
+  8.6
+  8.7
+  8.8
+  ... next release → create new folder e.g. 8.9 or 9.0
+
+Inside a release folder (example: 8.0):
+
+  ALM 491\                              (optional ALM work item folders)
+  GSS Release 8.0 Deployment\           (deployment package folder)
+  GSS Release 8.0 Deployment Label...\  (label/update package)
+  Sprint 1\
+  Sprint 2\                             → contains server_application, server_database, server_web
+  Sprint 3\
+  Config Changes.txt                    (optional notes)
+  *.zip                                 (zipped copies of deployment folders)
+
+Inside another release (example: 8.3):
+
+  GSS8.3\
+  GSS8.3.zip
+  Sprint 1\
+  Sprint 2\
+  Roll Back of Address Book (v2)\       (ad-hoc rollback / hotfix folders OK)
+
+Sprint package layout (from Sprint 2 tooltip under 8.0):
+
+  Sprint N\
+    server_application\     ← Win Service MSI / setup.exe
+    server_database\        ← DB rollup / scripts
+    server_web\             ← web publish / site files
+
+
+MAIL REQUIREMENT (manual process this replaces/supports)
+--------------------------------------------------------
+"Copy the setup.exe / .MSI files for each of the GSS projects to
+ the corresponding release folder on \\EAGNMNSS595\Migration\GSS\X.x"
+
+
+TARGET PATH THE TOOL MUST USE
+-----------------------------
+For current release X.x and current sprint N:
+
+  \\EAGNMNSS595\Migration\GSS\{releaseVersion}\Sprint {N}\server_application\
+  \\EAGNMNSS595\Migration\GSS\{releaseVersion}\Sprint {N}\server_database\
+  \\EAGNMNSS595\Migration\GSS\{releaseVersion}\Sprint {N}\server_web\
+
+Examples:
+
+  \\EAGNMNSS595\Migration\GSS\8.8\Sprint 2\server_application\
+  \\EAGNMNSS595\Migration\GSS\8.8\Sprint 2\server_database\
+  \\EAGNMNSS595\Migration\GSS\8.8\Sprint 2\server_web\
+
+
+--------------------------------------------------------------------------------
+1) appsettings.json — add under "build"
+--------------------------------------------------------------------------------
+
+{
+  "build": {
+    "repoRoot": "F:\\GSS\\AppDev\\gss-root",
+    "outputRoot": "F:\\build-output",
+    "migrationShareRoot": "\\\\EAGNMNSS595\\Migration\\GSS",
+    "releaseVersion": "8.8",
+    "sprintNumber": "2",
+    "apps": [ ]
+  }
+}
+
+Notes:
+- migrationShareRoot = existing network root (do not change naming)
+- releaseVersion = folder name under GSS (must match share, e.g. "8.8" or "8.5.1")
+- sprintNumber = creates/uses "Sprint {N}" under that release
+- If a new release starts, set releaseVersion to the NEW folder name (e.g. "8.9")
+  and create that folder on the share (tool can create if missing).
+
+
+--------------------------------------------------------------------------------
+2) BuildSettings / models — properties
+--------------------------------------------------------------------------------
+
+    public string MigrationShareRoot { get; set; } = @"\\EAGNMNSS595\Migration\GSS";
+    public string ReleaseVersion { get; set; } = string.Empty;   // e.g. "8.8"
+    public string SprintNumber { get; set; } = string.Empty;     // e.g. "2"
+
+
+--------------------------------------------------------------------------------
+3) Path helpers in BuildTab.razor
+--------------------------------------------------------------------------------
+
+    private string MigrationShareRoot { get; set; } = @"\\EAGNMNSS595\Migration\GSS";
+    private string ReleaseVersion { get; set; } = string.Empty;
+    private string SprintNumber { get; set; } = string.Empty;
+
+Load with other build settings from LoadAppSettings():
+
+    MigrationShareRoot = settings.Build.MigrationShareRoot ?? MigrationShareRoot;
+    ReleaseVersion = settings.Build.ReleaseVersion ?? ReleaseVersion;
+    SprintNumber = settings.Build.SprintNumber ?? SprintNumber;
+
+    private string GetSprintPackageRoot()
+    {
+        // \\EAGNMNSS595\Migration\GSS\8.8\Sprint 2
+        return Path.Combine(
+            MigrationShareRoot.TrimEnd('\\'),
+            ReleaseVersion.Trim(),
+            $"Sprint {SprintNumber.Trim()}");
+    }
+
+    private string GetServerApplicationDir() =>
+        Path.Combine(GetSprintPackageRoot(), "server_application");
+
+    private string GetServerDatabaseDir() =>
+        Path.Combine(GetSprintPackageRoot(), "server_database");
+
+    private string GetServerWebDir() =>
+        Path.Combine(GetSprintPackageRoot(), "server_web");
+
+    private void EnsureMigrationFolders()
+    {
+        Directory.CreateDirectory(GetServerApplicationDir());
+        Directory.CreateDirectory(GetServerDatabaseDir());
+        Directory.CreateDirectory(GetServerWebDir());
+    }
+
+
+--------------------------------------------------------------------------------
+4) After successful build — copy into migration folders
+--------------------------------------------------------------------------------
+Call AFTER artifacts are in OutputRoot (and after optional _v1 archive of local output).
+
+What goes where:
+
+  Win Service / MSI / setup.exe  →  server_application\
+  DB scripts (db-scripts)        →  server_database\
+  Web publish (GSSWeb, ASMX…)    →  server_web\{appName}\
+
+Example method:
+
+    private async Task CopyBuildToMigrationShareAsync(Application app, string outputFolder)
+    {
+        if (string.IsNullOrWhiteSpace(ReleaseVersion) || string.IsNullOrWhiteSpace(SprintNumber))
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Set build:releaseVersion and build:sprintNumber in appsettings.");
+            return;
+        }
+
+        EnsureMigrationFolders();
+
+        var type = app.Type ?? string.Empty;
+        string dest;
+
+        if (type.Contains("WinService", StringComparison.OrdinalIgnoreCase)
+            || type.Contains("Msi", StringComparison.OrdinalIgnoreCase))
+        {
+            dest = GetServerApplicationDir();
+            // Copy setup.exe / .msi from outputFolder → dest
+        }
+        else
+        {
+            // Web / ASMX / MVC → server_web\{outputSubfolder}
+            dest = Path.Combine(GetServerWebDir(), app.OutputSubfolder ?? app.Name);
+            Directory.CreateDirectory(dest);
+            // Copy published files from outputFolder → dest
+        }
+
+        AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Copied {app.Name} to {dest}");
+        await InvokeAsync(StateHasChanged);
+    }
+
+After Bundle Scripts succeeds, also copy:
+
+    {outputRoot}\db-scripts\  →  GetServerDatabaseDir()
+
+
+--------------------------------------------------------------------------------
+5) Optional UI on BUILD CONFIGURATION
+--------------------------------------------------------------------------------
+
+    <label>Release Version</label>
+    <input @bind="ReleaseVersion" placeholder="8.8" />
+
+    <label>Sprint</label>
+    <input @bind="SprintNumber" placeholder="2" />
+
+    <div>Package path: @GetSprintPackageRoot()</div>
+
+
+--------------------------------------------------------------------------------
+6) Rules — keep same as existing maintenance
+--------------------------------------------------------------------------------
+[ ] Always use \\EAGNMNSS595\Migration\GSS\{release}\ as top folder
+[ ] Use Sprint N under the release (Sprint 1, Sprint 2, …)
+[ ] Under each Sprint keep: server_application, server_database, server_web
+[ ] Do NOT flatten everything into F:\build-output only — also publish to the share
+[ ] New release → new top folder (8.9, 9.0, …) matching naming style already on the share
+[ ] ALM / Rollback / zip folders may still be created manually when needed
+[ ] Local _v1 archive under OutputRoot is SEPARATE from this migration share layout
+
+
+--------------------------------------------------------------------------------
+7) Checklist
+--------------------------------------------------------------------------------
+[ ] appsettings has migrationShareRoot, releaseVersion, sprintNumber
+[ ] EnsureMigrationFolders creates Sprint N + 3 server_* folders
+[ ] MSI/setup.exe → server_application
+[ ] DB scripts → server_database
+[ ] Web publish → server_web\{app}
+[ ] Path visible in UI / OUTPUT LOG after copy
+[ ] Matches existing share: \\EAGNMNSS595\Migration\GSS\
+
+
+================================================================================
+END
+================================================================================
