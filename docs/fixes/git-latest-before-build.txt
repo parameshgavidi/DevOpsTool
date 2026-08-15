@@ -7,11 +7,12 @@ STATUS (updated)
 ----------------
 Do NOT call GetLatestFromRepoAsync from BuildApplication anymore.
 
-Toolbar Get latest (full-repo pull) is separate from Build:
-  → docs/fixes/buildtab-get-latest-show-apps.txt
-  → docs/fixes/buildtab-no-getlatest-on-build.txt
+Toolbar Get latest DOES call GetLatestFromRepoAsync for EACH app
+(using that app's gitLatestCommand from appsettings):
+  → docs/fixes/buildtab-get-latest-show-apps.txt  (GetLatestAndShowAppsAsync)
+  → docs/fixes/buildtab-no-getlatest-on-build.txt (remove from Build)
 
-This file is kept only for history / optional reuse of gitLatestCommand strings.
+Keep gitLatestCommand on each app in appsettings — required for Get latest.
 
 
 OLD FLOW (do not use on Build anymore)
@@ -105,9 +106,10 @@ Full remove guide: docs/fixes/buildtab-no-getlatest-on-build.txt
 4) Checklist
 --------------------------------------------------------------------------------
 [ ] GetLatestFromRepoAsync call REMOVED from BuildApplication
-[ ] Get latest only via toolbar GetLatestAndShowAppsAsync
+[ ] Get latest (toolbar) loads all apps and calls GetLatestFromRepoAsync per app
+[ ] Each app has gitLatestCommand in appsettings (used by GetLatestFromRepoAsync)
 [ ] Build goes straight to restore / msbuild
-[ ] Optional: gitLatestCommand can remain in appsettings unused, or be removed
+[ ] NO hardcoded "git fetch && git pull --ff-only" in GetLatestAndShowAppsAsync
 
 
 ================================================================================

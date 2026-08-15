@@ -66,30 +66,33 @@ may already be present). The only required change is: no git latest call.
 
 
 --------------------------------------------------------------------------------
-3) Get latest — toolbar button ONLY
+3) Get latest — toolbar button ONLY (uses appsettings + GetLatestFromRepoAsync)
 --------------------------------------------------------------------------------
-Keep GetLatestAndShowAppsAsync on the Get latest button
-(see docs/fixes/buildtab-get-latest-show-apps.txt):
+REPLACE any hardcoded pull in GetLatestAndShowAppsAsync.
 
-    var command = "git fetch && git pull --ff-only";
+Correct flow (full code in docs/fixes/buildtab-get-latest-show-apps.txt):
 
-That is the ONLY place that runs git pull for this flow.
+    await LoadApplicationsFromConfigAsync();          // load ALL apps from appsettings
+    foreach (var app in BuildApps)
+    {
+        await GetLatestFromRepoAsync(app, root, ...); // uses app.GitLatestCommand
+    }
+    _showApplications = true;
 
-Optional: you may leave GetLatestFromRepoAsync method in the file unused,
-or delete the method entirely if nothing else calls it.
+KEEP the GetLatestFromRepoAsync method — it is called from Get latest, not from Build.
 
 
 --------------------------------------------------------------------------------
-4) appsettings.json — gitLatestCommand
+4) appsettings.json — gitLatestCommand (USED by Get latest)
 --------------------------------------------------------------------------------
-Per-app "gitLatestCommand" is NO LONGER used by Build.
+Per-app "gitLatestCommand" IS used when you click Get latest.
+It is NOT used when you click Build.
 
-You can:
-  A) Leave the property in JSON (harmless if code never reads it on Build), or
-  B) Remove "gitLatestCommand" from each app once Build no longer calls it
+Each app needs its own command, e.g.:
 
-Toolbar Get latest does NOT read gitLatestCommand — it uses the hardcoded
-full-repo pull in GetLatestAndShowAppsAsync.
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"Web Services\\GSSWebService\" && git fetch && git restore --source=@{u} --staged --worktree -- \"Web Services\\GSSWebService\" && git stash pop"
+
+Do NOT remove gitLatestCommand from appsettings.
 
 
 --------------------------------------------------------------------------------
@@ -99,8 +102,8 @@ full-repo pull in GetLatestAndShowAppsAsync.
       → LoadAppSettings() → paths + BuildApps (grid hidden)
 
   Click Get latest
-      → git fetch && git pull --ff-only at RepoRoot
-      → reload BuildApps
+      → Load all apps from appsettings into BuildApps
+      → For each app: GetLatestFromRepoAsync (app.GitLatestCommand)
       → show APPLICATIONS grid
 
   Click Build / Build All
@@ -115,7 +118,8 @@ full-repo pull in GetLatestAndShowAppsAsync.
 --------------------------------------------------------------------------------
 [ ] Removed GetLatestFromRepoAsync call from BuildApplication
 [ ] Build / Build All does not run git fetch/pull/restore
-[ ] Get latest button still runs GetLatestAndShowAppsAsync
+[ ] Get latest loads all apps then calls GetLatestFromRepoAsync per app
+[ ] Commands come from appsettings gitLatestCommand (not hardcoded pull)
 [ ] Grid still shown only after Get latest
 [ ] OUTPUT LOG on Build starts with restore/msbuild — not "Getting latest for..."
 
