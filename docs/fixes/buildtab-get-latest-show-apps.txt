@@ -45,10 +45,11 @@ FLOW
 ----
 1. OnInitialized → LoadAppSettings() → paths + BuildApps (grid still hidden)
 2. Click Get latest
-3. git fetch + git pull --ff-only at Code Repo Root
-4. Reload apps via LoadAppSettings() into BuildApps
-5. _showApplications = true → APPLICATIONS grid visible
-6. User can Build / Build All / Bundle Scripts
+3. Validate Repo Root is a git working tree
+4. Load ALL applications from appsettings into BuildApps
+5. For EACH app → GetLatestFromRepoAsync (uses app.GitLatestCommand from appsettings)
+6. _showApplications = true → APPLICATIONS grid visible
+7. User can Build / Build All / Bundle Scripts (Build does NOT run git latest)
 
 
 --------------------------------------------------------------------------------
@@ -145,8 +146,15 @@ Remove any unconditional APPLICATIONS header/table that rendered empty on load.
 --------------------------------------------------------------------------------
 4) BuildTab.razor — GetLatestAndShowAppsAsync
 --------------------------------------------------------------------------------
-Full-repo pull for the toolbar button ONLY.
-Build does NOT call GetLatestFromRepoAsync anymore
+NO hardcoded "git fetch && git pull --ff-only".
+
+Flow on Get latest click:
+  1. Validate RepoRoot
+  2. Load ALL applications from appsettings (LoadAppSettings → BuildApps)
+  3. For EACH app, call GetLatestFromRepoAsync (uses app.GitLatestCommand)
+  4. Show APPLICATIONS grid
+
+Build does NOT call GetLatestFromRepoAsync
 (see docs/fixes/buildtab-no-getlatest-on-build.txt).
 
     private async Task GetLatestAndShowAppsAsync()
@@ -174,42 +182,51 @@ Build does NOT call GetLatestFromRepoAsync anymore
                 return;
             }
 
-            var command = "git fetch && git pull --ff-only";
+            // 1) Load ALL apps from appsettings (same as OnInitialized)
+            await LoadApplicationsFromConfigAsync();
 
-            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Get latest from Code Repo Root...");
-            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Git: {command}  (cwd: {root})");
-            await InvokeAsync(StateHasChanged);
-
-            StartLogFlushTimer();
-            var exit = await BuildService.RunCommandAsync(
-                root,
-                command,
-                line =>
-                {
-                    lock (_pendingLogBuffer)
-                    {
-                        _pendingLogBuffer.Append(line);
-                        if (!line.EndsWith('\n') && !line.EndsWith('\r'))
-                            _pendingLogBuffer.AppendLine();
-                    }
-                },
-                CancellationToken.None);
-
-            FlushPendingLogs();
-
-            if (exit != 0)
+            if (BuildApps.Count == 0)
             {
-                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Get latest failed with exit code {exit}");
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] No applications in appsettings (build:applications)");
                 await InvokeAsync(StateHasChanged);
                 return;
             }
 
-            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Get latest OK — loading applications...");
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Get latest for {BuildApps.Count} app(s) using gitLatestCommand from appsettings...");
+            await InvokeAsync(StateHasChanged);
 
-            // Reload from the SAME LoadAppSettings() used in OnInitialized
-            await LoadApplicationsFromConfigAsync();
+            StartLogFlushTimer();
 
+            var okCount = 0;
+            var failCount = 0;
+
+            // 2) Call GetLatestFromRepoAsync for EACH app (reads app.GitLatestCommand)
+            foreach (var app in BuildApps)
+            {
+                app.Status = "Getting latest...";
+                await InvokeAsync(StateHasChanged);
+
+                // workingDir = RepoRoot (GetLatestFromRepoAsync uses RepoRoot for git cwd)
+                var ok = await GetLatestFromRepoAsync(app, root, CancellationToken.None);
+                if (ok)
+                {
+                    app.Status = "Ready";
+                    okCount++;
+                }
+                else
+                {
+                    app.Status = "Failed";
+                    failCount++;
+                }
+
+                await InvokeAsync(StateHasChanged);
+            }
+
+            FlushPendingLogs();
+
+            // 3) Show grid (even if some apps failed — Status column shows which)
             _showApplications = true;
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Get latest complete — OK: {okCount}, Failed: {failCount}");
             AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] APPLICATIONS ready — {BuildApps.Count} app(s)");
             await InvokeAsync(StateHasChanged);
         }
@@ -226,6 +243,63 @@ Build does NOT call GetLatestFromRepoAsync anymore
             await InvokeAsync(StateHasChanged);
         }
     }
+
+
+--------------------------------------------------------------------------------
+4b) Keep GetLatestFromRepoAsync — reads gitLatestCommand from appsettings
+--------------------------------------------------------------------------------
+Do NOT delete this method. Toolbar Get latest calls it per app.
+It must use app.GitLatestCommand (from appsettings), NOT a hardcoded pull.
+
+    private async Task<bool> GetLatestFromRepoAsync(Application app, string workingDir, CancellationToken cancellation)
+    {
+        if (string.IsNullOrWhiteSpace(app.GitLatestCommand))
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] No gitLatestCommand for {app.Name} — skipping");
+            return true;
+        }
+
+        var gitCmd = app.GitLatestCommand.Trim();
+        // Run from Code Repo Root so git sees .git (paths in command are relative to repo root)
+        var gitWorkingDir = string.IsNullOrWhiteSpace(RepoRoot) ? workingDir : RepoRoot.Trim();
+
+        AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Getting latest for {app.Name}...");
+        AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Git: {gitCmd}  (cwd: {gitWorkingDir})");
+        await InvokeAsync(StateHasChanged);
+
+        var gitExit = await BuildService.RunCommandAsync(
+            gitWorkingDir,
+            gitCmd,
+            line =>
+            {
+                lock (_pendingLogBuffer)
+                {
+                    _pendingLogBuffer.Append(line);
+                    if (!line.EndsWith('\n') && !line.EndsWith('\r'))
+                        _pendingLogBuffer.AppendLine();
+                }
+            },
+            cancellation);
+
+        FlushPendingLogs();
+
+        if (gitExit != 0)
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Git latest failed for {app.Name} with exit code {gitExit}");
+            await InvokeAsync(StateHasChanged);
+            return false;
+        }
+
+        AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Git latest OK for {app.Name}");
+        await InvokeAsync(StateHasChanged);
+        return true;
+    }
+
+appsettings example (per app — REQUIRED for Get latest):
+
+    "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"Web Services\\GSSWebService\" && git fetch && git restore --source=@{u} --staged --worktree -- \"Web Services\\GSSWebService\" && git stash pop"
+
+See also: docs/fixes/git-latest-before-build.txt for stash/keep-local command strings.
 
 
 --------------------------------------------------------------------------------
@@ -310,8 +384,10 @@ Error: stray "i" after comment
 | When                         | What runs                                      |
 |------------------------------|------------------------------------------------|
 | OnInitialized                | LoadAppSettings → paths + BuildApps (hidden)   |
-| Click Get latest (this doc)  | Full-repo: git fetch && git pull --ff-only     |
-|                              | then reload BuildApps + show grid              |
+| Click Get latest (this doc)  | Load all apps from appsettings                 |
+|                              | For EACH app: GetLatestFromRepoAsync           |
+|                              | (uses that app's gitLatestCommand)             |
+|                              | then show APPLICATIONS grid                    |
 | Click Build / Build All     | Build ONLY — NO GetLatestFromRepoAsync         |
 
 REQUIRED: remove GetLatestFromRepoAsync from BuildApplication.
@@ -327,7 +403,13 @@ On load:
   - APPLICATIONS grid NOT visible (_showApplications = false)
 
 After successful Get latest:
-  - OUTPUT LOG shows git pull + "APPLICATIONS ready — N app(s)"
+  - OUTPUT LOG (per app):
+      [HH:mm:ss] [INFO] Get latest for 2 app(s) using gitLatestCommand from appsettings...
+      [HH:mm:ss] [INFO] Getting latest for GSS Web Service...
+      [HH:mm:ss] [INFO] Git: git stash push ... && git fetch && git restore ...  (cwd: F:\GSS\AppDev\gss-root)
+      [HH:mm:ss] [INFO] Git latest OK for GSS Web Service
+      ... same for GSSWeb ...
+      [HH:mm:ss] [INFO] Get latest complete — OK: 2, Failed: 0
   - Grid visible bound to BuildApps
 
 On Build:
@@ -345,8 +427,10 @@ On Build:
 [ ] APPLICATIONS section wrapped in @if (_showApplications)
 [ ] LoadApplicationsFromConfigAsync uses LoadAppSettings() + BuildApps
 [ ] Exactly ONE LoadApplicationsFromConfigAsync
-[ ] GetLatestAndShowAppsAsync runs git fetch && git pull --ff-only at RepoRoot
-[ ] On success: reload apps + _showApplications = true
+[ ] GetLatestAndShowAppsAsync loads all apps THEN calls GetLatestFromRepoAsync per app
+[ ] NO hardcoded "git fetch && git pull --ff-only" in GetLatestAndShowAppsAsync
+[ ] GetLatestFromRepoAsync uses app.GitLatestCommand from appsettings
+[ ] Each app in appsettings has gitLatestCommand
 [ ] BuildApplication does NOT call GetLatestFromRepoAsync
 [ ] See docs/fixes/buildtab-no-getlatest-on-build.txt
 
