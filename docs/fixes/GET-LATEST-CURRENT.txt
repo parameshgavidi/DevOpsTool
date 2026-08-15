@@ -1,0 +1,313 @@
+================================================================================
+USE THIS FILE ONLY — Get latest (toolbar) + Build (no git)
+One clear copy-paste for BuildTab.razor
+================================================================================
+
+WHAT TO DO
+----------
+1. Click Get latest  → load all apps from appsettings
+                     → for EACH app call GetLatestFromRepoAsync
+                     → (uses that app's gitLatestCommand from appsettings)
+                     → show APPLICATIONS grid
+
+2. Click Build       → build only. NO git. NO GetLatestFromRepoAsync.
+
+
+--------------------------------------------------------------------------------
+A) Fields to ADD (keep your existing BuildApps / RepoRoot / etc.)
+--------------------------------------------------------------------------------
+
+    private bool _isGettingLatest;
+    private bool _showApplications;   // false until Get latest finishes
+
+
+--------------------------------------------------------------------------------
+B) OnInitialized — KEEP your existing LoadAppSettings (do not change much)
+--------------------------------------------------------------------------------
+Keep loading paths + BuildApps. Do NOT set _showApplications = true.
+
+    protected override void OnInitialized()
+    {
+        var settings = LoadAppSettings();
+        if (settings?.Build is not null)
+        {
+            RepoRoot = settings.Build.RepoRoot ?? RepoRoot;
+            OutputRoot = settings.Build.OutputRoot ?? OutputRoot;
+            ScriptSource = settings.Build.DbScriptSource ?? ScriptSource;
+            DbRollupOutputDirectory = settings.Build.DbRollupOutputDirectory ?? DbRollupOutputDirectory;
+            DbRollupExePath = settings.Build.DbRollupExePath ?? DbRollupExePath;
+            DbRollupFromBranch = settings.Build.DbRollupFromBranch ?? DbRollupFromBranch;
+            DbRollupToBranch = settings.Build.DbRollupToBranch ?? DbRollupToBranch;
+
+            var loadedApps = settings.Build.Applications;
+            if (loadedApps is { Count: > 0 })
+                BuildApps = loadedApps;
+        }
+        // _showApplications stays false
+    }
+
+
+--------------------------------------------------------------------------------
+C) Get latest button (under BUILD CONFIGURATION)
+--------------------------------------------------------------------------------
+
+    <div class="config-actions">
+        <button class="btn-primary"
+                disabled="@(_isGettingLatest || string.IsNullOrWhiteSpace(RepoRoot))"
+                @onclick="GetLatestAndShowAppsAsync">
+            @(_isGettingLatest ? "Getting latest..." : "Get latest")
+        </button>
+    </div>
+
+
+--------------------------------------------------------------------------------
+D) APPLICATIONS grid — show ONLY after Get latest
+--------------------------------------------------------------------------------
+Bind to BuildApps. Wrap in @if (_showApplications).
+
+    @if (_showApplications)
+    {
+        <div class="applications-section">
+            <h3>APPLICATIONS</h3>
+            <table class="apps-grid">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Application Name</th>
+                        <th>Type</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @for (var i = 0; i < BuildApps.Count; i++)
+                    {
+                        var app = BuildApps[i];
+                        var index = i;
+                        <tr>
+                            <td>@(index + 1)</td>
+                            <td>@app.Name</td>
+                            <td>@app.Type</td>
+                            <td>@app.Status</td>
+                            <td>
+                                <button class="btn-primary" @onclick="() => BuildOneAsync(app)">
+                                    Build
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            <button class="btn-primary" @onclick="BuildAllAsync">Build All</button>
+        </div>
+    }
+
+
+--------------------------------------------------------------------------------
+E) LoadApplicationsFromConfigAsync — ONE method
+--------------------------------------------------------------------------------
+
+    private Task LoadApplicationsFromConfigAsync()
+    {
+        var settings = LoadAppSettings();
+        var loadedApps = settings?.Build?.Applications;
+
+        if (loadedApps is { Count: > 0 })
+            BuildApps = loadedApps;
+        else
+            BuildApps = new List<Application>();
+
+        foreach (var app in BuildApps)
+        {
+            if (string.IsNullOrWhiteSpace(app.Status))
+                app.Status = "Ready";
+        }
+
+        return Task.CompletedTask;
+    }
+
+
+--------------------------------------------------------------------------------
+F) GetLatestFromRepoAsync — KEEP THIS (reads appsettings gitLatestCommand)
+--------------------------------------------------------------------------------
+Used by Get latest button. NOT used by Build.
+
+    private async Task<bool> GetLatestFromRepoAsync(Application app, string workingDir, CancellationToken cancellation)
+    {
+        if (string.IsNullOrWhiteSpace(app.GitLatestCommand))
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] No gitLatestCommand for {app.Name} — skipping");
+            return true;
+        }
+
+        var gitCmd = app.GitLatestCommand.Trim();
+        var gitWorkingDir = string.IsNullOrWhiteSpace(RepoRoot) ? workingDir : RepoRoot.Trim();
+
+        AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Getting latest for {app.Name}...");
+        AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Git: {gitCmd}  (cwd: {gitWorkingDir})");
+        await InvokeAsync(StateHasChanged);
+
+        var gitExit = await BuildService.RunCommandAsync(
+            gitWorkingDir,
+            gitCmd,
+            line =>
+            {
+                lock (_pendingLogBuffer)
+                {
+                    _pendingLogBuffer.Append(line);
+                    if (!line.EndsWith('\n') && !line.EndsWith('\r'))
+                        _pendingLogBuffer.AppendLine();
+                }
+            },
+            cancellation);
+
+        FlushPendingLogs();
+
+        if (gitExit != 0)
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Git latest failed for {app.Name} with exit code {gitExit}");
+            await InvokeAsync(StateHasChanged);
+            return false;
+        }
+
+        AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Git latest OK for {app.Name}");
+        await InvokeAsync(StateHasChanged);
+        return true;
+    }
+
+
+--------------------------------------------------------------------------------
+G) GetLatestAndShowAppsAsync — REPLACE your old method with THIS
+--------------------------------------------------------------------------------
+NO hardcoded "git fetch && git pull --ff-only".
+Loads all apps, then calls GetLatestFromRepoAsync for each.
+
+    private async Task GetLatestAndShowAppsAsync()
+    {
+        if (_isGettingLatest)
+            return;
+
+        _isGettingLatest = true;
+        _showApplications = false;
+        try
+        {
+            var root = RepoRoot?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Repo Root not found: {root}");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            var gitDir = Path.Combine(root, ".git");
+            if (!Directory.Exists(gitDir) && !File.Exists(gitDir))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Not a git repo (missing .git): {root}");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            // 1) Load ALL apps from appsettings
+            await LoadApplicationsFromConfigAsync();
+
+            if (BuildApps.Count == 0)
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] No applications in appsettings (build:applications)");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Get latest for {BuildApps.Count} app(s) using gitLatestCommand from appsettings...");
+            await InvokeAsync(StateHasChanged);
+
+            StartLogFlushTimer();
+
+            var okCount = 0;
+            var failCount = 0;
+
+            // 2) Call GetLatestFromRepoAsync for EACH app
+            foreach (var app in BuildApps)
+            {
+                app.Status = "Getting latest...";
+                await InvokeAsync(StateHasChanged);
+
+                var ok = await GetLatestFromRepoAsync(app, root, CancellationToken.None);
+                if (ok)
+                {
+                    app.Status = "Ready";
+                    okCount++;
+                }
+                else
+                {
+                    app.Status = "Failed";
+                    failCount++;
+                }
+
+                await InvokeAsync(StateHasChanged);
+            }
+
+            FlushPendingLogs();
+
+            // 3) Show grid
+            _showApplications = true;
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Get latest complete — OK: {okCount}, Failed: {failCount}");
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Get latest failed: {ex.Message}");
+            _showApplications = false;
+            await InvokeAsync(StateHasChanged);
+        }
+        finally
+        {
+            StopLogFlushTimer();
+            _isGettingLatest = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+
+--------------------------------------------------------------------------------
+H) BuildApplication — REMOVE GetLatestFromRepoAsync call
+--------------------------------------------------------------------------------
+DELETE this from Build / Build All path:
+
+        if (!await GetLatestFromRepoAsync(app, workingDir, cancellation))
+        {
+            app.Status = "Failed";
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+Build goes straight to restore → clean PrecompiledWeb → msbuild.
+
+
+--------------------------------------------------------------------------------
+I) appsettings.json — each app MUST have gitLatestCommand
+--------------------------------------------------------------------------------
+
+{
+  "name": "GSS Web Service",
+  "type": "AsmxWebService",
+  "projectPath": "Web Services\\GSSWebService\\GSSWebService.sln",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"Web Services\\GSSWebService\" && git fetch && git restore --source=@{u} --staged --worktree -- \"Web Services\\GSSWebService\" && git stash pop",
+  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
+  "outputSubfolder": "GSSWebService"
+}
+
+
+--------------------------------------------------------------------------------
+J) Checklist
+--------------------------------------------------------------------------------
+[ ] Get latest button calls GetLatestAndShowAppsAsync
+[ ] GetLatestAndShowAppsAsync loads all apps then loops GetLatestFromRepoAsync
+[ ] GetLatestFromRepoAsync uses app.GitLatestCommand (appsettings) — NOT hardcoded pull
+[ ] Grid uses BuildApps and @if (_showApplications)
+[ ] BuildApplication does NOT call GetLatestFromRepoAsync
+[ ] Each app in appsettings has gitLatestCommand
+
+
+================================================================================
+END — use only this file
+================================================================================
