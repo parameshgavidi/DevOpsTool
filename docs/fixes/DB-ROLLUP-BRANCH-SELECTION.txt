@@ -1,165 +1,137 @@
 ================================================================================
-DB Rollup From/To Branch — UI selection like Repo Root
-USE THIS FILE — replace appsettings-only branches with selectable fields
+DB ROLLUP SCRIPTS — add From/To Branch to EXISTING UI
+Matches your current BuildTab.razor section (Script Source + Browse + Bundle)
 ================================================================================
 
-REQUIREMENT
+YOUR EXISTING UI (keep this — do not replace the whole section)
+---------------------------------------------------------------
+
+    <div class="section">
+        <h3>DB ROLLUP SCRIPTS</h3>
+        <div class="form-group">
+            <label>Script Source</label>
+            <div class="input-with-button">
+                <input type="text" class="form-control" @bind="ScriptSource" readonly />
+                <button class="btn btn-secondary" @onclick="BrowseScripts">Browse</button>
+            </div>
+        </div>
+        <button class="btn btn-success" @onclick="BundleDbScriptsAsync" disabled="@_isBundling">
+            Bundle Scripts
+        </button>
+    </div>
+
+
+WHAT TO ADD
 -----------
-Before: dbRollupFromBranch / dbRollupToBranch only from appsettings (hidden).
-Now:    show them on BUILD CONFIGURATION like Repo Root / Output Root —
-        editable fields the user can change before Bundle Scripts.
-
-Repo Root pattern (match this layout):
-
-  [ Label ]  [ ________ text input ________ ]  [ Browse ]
-
-From/To Branch pattern:
-
-  [ From Branch ]  [ ________ input / select ________ ]
-  [ To Branch   ]  [ ________ input / select ________ ]
-
-
-FLOW
-----
-1. OnInitialized loads defaults from appsettings (same as RepoRoot)
-2. UI shows From Branch + To Branch (user can change)
-3. Optional: click Refresh Branches → load git branch list into dropdowns
-4. Bundle Scripts uses the CURRENT UI values (DbRollupFromBranch / DbRollupToBranch)
-   — NOT a fresh read that ignores the UI
+Add From Branch + To Branch BETWEEN Script Source and Bundle Scripts,
+same form-group / form-control style as Script Source.
 
 
 --------------------------------------------------------------------------------
-1) appsettings.json — keep as DEFAULTS only
+1) REPLACE the DB ROLLUP SCRIPTS markup with this
 --------------------------------------------------------------------------------
-Still store defaults here. UI overrides them at runtime.
 
-{
-  "build": {
-    "repoRoot": "F:\\GSS\\AppDev\\gss-root",
-    "outputRoot": "F:\\build-output",
-    "dbScriptSource": "F:\\db-rollup-scripts",
-    "dbRepoRoot": "F:\\GSS\\AppDev\\gss-database",
-    "dbRollupExePath": "F:\\GSS\\AppDev\\gss-utilities\\DBRollupScriptBuilder\\DBRollupScriptBuilder\\bin\\Debug\\net10.0\\DBRollupScriptBuilder.exe",
-    "dbRollupOutputDirectory": "F:\\temp\\scripts",
-    "dbRollupFromBranch": "GSSv9.1S2",
-    "dbRollupToBranch": "GSSv9.2S2"
-  }
-}
+    <div class="section">
+        <h3>DB ROLLUP SCRIPTS</h3>
 
-dbRepoRoot = local git clone of gss-database (used to list branches).
-If you already use ScriptSource / dbScriptSource as that repo, reuse it.
+        <div class="form-group">
+            <label>Script Source</label>
+            <div class="input-with-button">
+                <input type="text" class="form-control" @bind="ScriptSource" readonly />
+                <button class="btn btn-secondary" @onclick="BrowseScripts">Browse</button>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>From Branch</label>
+            @if (DbBranchOptions.Count > 0)
+            {
+                <select class="form-control" @bind="DbRollupFromBranch">
+                    @foreach (var b in DbBranchOptions)
+                    {
+                        <option value="@b">@b</option>
+                    }
+                </select>
+            }
+            else
+            {
+                <input type="text" class="form-control" @bind="DbRollupFromBranch"
+                       placeholder="e.g. GSSv9.1S2" />
+            }
+        </div>
+
+        <div class="form-group">
+            <label>To Branch</label>
+            @if (DbBranchOptions.Count > 0)
+            {
+                <select class="form-control" @bind="DbRollupToBranch">
+                    @foreach (var b in DbBranchOptions)
+                    {
+                        <option value="@b">@b</option>
+                    }
+                </select>
+            }
+            else
+            {
+                <input type="text" class="form-control" @bind="DbRollupToBranch"
+                       placeholder="e.g. GSSv9.2S2" />
+            }
+        </div>
+
+        <div class="input-with-button" style="gap: 8px;">
+            <button class="btn btn-secondary"
+                    disabled="@_isLoadingBranches"
+                    @onclick="LoadDbBranchesAsync">
+                @(_isLoadingBranches ? "Loading..." : "Refresh Branches")
+            </button>
+            <button class="btn btn-success"
+                    @onclick="BundleDbScriptsAsync"
+                    disabled="@_isBundling">
+                Bundle Scripts
+            </button>
+        </div>
+    </div>
+
+
+Layout result:
+
+  DB ROLLUP SCRIPTS
+  Script Source   [ path........................ ] [ Browse ]
+  From Branch     [ GSSv9.1S2          ▼ / text ]
+  To Branch       [ GSSv9.2S2          ▼ / text ]
+                  [ Refresh Branches ] [ Bundle Scripts ]
 
 
 --------------------------------------------------------------------------------
-2) BuildTab.razor — fields
+2) Fields — ADD these (keep ScriptSource / _isBundling)
 --------------------------------------------------------------------------------
-Keep existing:
 
-    private string DbRollupFromBranch { get; set; } = string.Empty;
-    private string DbRollupToBranch { get; set; } = string.Empty;
-    private string DbRollupExePath { get; set; } = string.Empty;
-    private string DbRollupOutputDirectory { get; set; } = string.Empty;
-
-ADD for selection UI:
-
-    private string DbRepoRoot { get; set; } = string.Empty;   // gss-database root
     private List<string> DbBranchOptions { get; set; } = new();
     private bool _isLoadingBranches;
 
+    // already exist — keep:
+    // ScriptSource, DbRollupFromBranch, DbRollupToBranch, DbRollupExePath, ...
 
-Load in OnInitialized with RepoRoot (from LoadAppSettings):
 
-    RepoRoot = settings.Build.RepoRoot ?? RepoRoot;
-    OutputRoot = settings.Build.OutputRoot ?? OutputRoot;
-    // ...
-    DbRepoRoot = settings.Build.DbRepoRoot
-                 ?? settings.Build.DbScriptSource
-                 ?? DbRepoRoot;
+--------------------------------------------------------------------------------
+3) OnInitialized — load defaults from appsettings (same as Script Source)
+--------------------------------------------------------------------------------
+You already set ScriptSource from settings. Also set:
+
+    ScriptSource = settings.Build.DbScriptSource ?? ScriptSource;
     DbRollupFromBranch = settings.Build.DbRollupFromBranch ?? DbRollupFromBranch;
     DbRollupToBranch = settings.Build.DbRollupToBranch ?? DbRollupToBranch;
-    DbRollupExePath = settings.Build.DbRollupExePath ?? DbRollupExePath;
-    DbRollupOutputDirectory = settings.Build.DbRollupOutputDirectory ?? DbRollupOutputDirectory;
+
+appsettings defaults (user can change in UI):
+
+    "dbRollupFromBranch": "GSSv9.1S2",
+    "dbRollupToBranch": "GSSv9.2S2"
 
 
 --------------------------------------------------------------------------------
-3) BUILD CONFIGURATION UI — same style as Repo Root
+4) LoadDbBranchesAsync — fill dropdowns from Script Source (gss-database)
 --------------------------------------------------------------------------------
-Place under Repo Root / Output Root (or next to Bundle Scripts).
-
-OPTION A — text inputs like Repo Root (simplest, match Browse layout):
-
-    <div class="config-row">
-        <label>From Branch</label>
-        <input class="path-input" @bind="DbRollupFromBranch" placeholder="e.g. GSSv9.1S2" />
-    </div>
-    <div class="config-row">
-        <label>To Branch</label>
-        <input class="path-input" @bind="DbRollupToBranch" placeholder="e.g. GSSv9.2S2" />
-    </div>
-    <div class="config-actions">
-        <button class="btn-secondary"
-                disabled="@_isLoadingBranches"
-                @onclick="LoadDbBranchesAsync">
-            @(_isLoadingBranches ? "Loading branches..." : "Refresh Branches")
-        </button>
-        <button class="btn-primary"
-                disabled="@_isBundling"
-                @onclick="BundleDbScriptsAsync">
-            Bundle Scripts
-        </button>
-    </div>
-
-OPTION B — dropdown selection (after Refresh Branches loads list):
-
-    <div class="config-row">
-        <label>From Branch</label>
-        @if (DbBranchOptions.Count > 0)
-        {
-            <select class="path-input" @bind="DbRollupFromBranch">
-                @foreach (var b in DbBranchOptions)
-                {
-                    <option value="@b">@b</option>
-                }
-            </select>
-        }
-        else
-        {
-            <input class="path-input" @bind="DbRollupFromBranch" placeholder="e.g. GSSv9.1S2" />
-        }
-    </div>
-    <div class="config-row">
-        <label>To Branch</label>
-        @if (DbBranchOptions.Count > 0)
-        {
-            <select class="path-input" @bind="DbRollupToBranch">
-                @foreach (var b in DbBranchOptions)
-                {
-                    <option value="@b">@b</option>
-                }
-            </select>
-        }
-        else
-        {
-            <input class="path-input" @bind="DbRollupToBranch" placeholder="e.g. GSSv9.2S2" />
-        }
-    </div>
-    <div class="config-actions">
-        <button class="btn-secondary" disabled="@_isLoadingBranches" @onclick="LoadDbBranchesAsync">
-            @(_isLoadingBranches ? "Loading branches..." : "Refresh Branches")
-        </button>
-        <button class="btn-primary" disabled="@_isBundling" @onclick="BundleDbScriptsAsync">
-            Bundle Scripts
-        </button>
-    </div>
-
-Use the same CSS classes as Repo Root / Output Root rows so it looks consistent.
-
-
---------------------------------------------------------------------------------
-4) LoadDbBranchesAsync — list branches from gss-database (optional but recommended)
---------------------------------------------------------------------------------
-Runs: git branch -r   (or git for-each-ref) under DbRepoRoot.
-Fills DbBranchOptions so dropdowns work like a selectable list.
+Script Source IS your DB repo path (same Browse field). Use ScriptSource as cwd.
 
     private async Task LoadDbBranchesAsync()
     {
@@ -169,15 +141,14 @@ Fills DbBranchOptions so dropdowns work like a selectable list.
         _isLoadingBranches = true;
         try
         {
-            var root = DbRepoRoot?.Trim() ?? string.Empty;
+            var root = ScriptSource?.Trim() ?? string.Empty;
             if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
             {
-                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] DB repo root not found: {root}. Set build:dbRepoRoot (gss-database).");
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Script Source not found: {root}. Browse to gss-database first.");
                 await InvokeAsync(StateHasChanged);
                 return;
             }
 
-            // List remote branches; strip "origin/" prefix for -f / -t values
             var command = "git branch -r --format=\"%(refname:short)\"";
             var lines = new List<string>();
 
@@ -194,7 +165,6 @@ Fills DbBranchOptions so dropdowns work like a selectable list.
                         return;
                     if (t.Contains("HEAD", StringComparison.OrdinalIgnoreCase))
                         return;
-                    // origin/GSSv9.2S2 → GSSv9.2S2
                     if (t.StartsWith("origin/", StringComparison.OrdinalIgnoreCase))
                         t = t.Substring("origin/".Length);
                     if (!lines.Contains(t, StringComparer.OrdinalIgnoreCase))
@@ -211,9 +181,7 @@ Fills DbBranchOptions so dropdowns work like a selectable list.
 
             lines.Sort(StringComparer.OrdinalIgnoreCase);
             DbBranchOptions = lines;
-
-            // Keep current From/To if still in list; otherwise leave user-typed values
-            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Loaded {DbBranchOptions.Count} branch(es). Select From/To Branch, then Bundle Scripts.");
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Loaded {DbBranchOptions.Count} branch(es). Select From/To, then Bundle Scripts.");
             await InvokeAsync(StateHasChanged);
         }
         catch (Exception ex)
@@ -230,43 +198,28 @@ Fills DbBranchOptions so dropdowns work like a selectable list.
 
 
 --------------------------------------------------------------------------------
-5) BundleDbScriptsAsync — use UI-bound values (already correct if you @bind)
+5) BundleDbScriptsAsync — use UI-bound From/To (already your fields)
 --------------------------------------------------------------------------------
-Do NOT re-read only from appsettings inside BundleDbScriptsAsync.
-Use the bound fields:
+Keep your existing BundleDbScriptsAsync. Ensure it uses:
 
     var fromBranch = DbRollupFromBranch?.Trim() ?? string.Empty;
     var toBranch = DbRollupToBranch?.Trim() ?? string.Empty;
 
-    if (string.IsNullOrWhiteSpace(fromBranch) || string.IsNullOrWhiteSpace(toBranch))
-    {
-        AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Select From Branch and To Branch (like Repo Root fields).");
-        await InvokeAsync(StateHasChanged);
-        return;
-    }
+NOT a hardcoded string and NOT only a silent re-read that ignores the UI.
 
-    // existing: run DBRollupScriptBuilder.exe -f fromBranch -t toBranch
-    // see docs/fixes/bundle-db-scripts-button.txt for full method / cmd quoting
+If empty → log error and return (user must select/type From + To).
 
 
 --------------------------------------------------------------------------------
-6) Models — add DbRepoRoot if missing
+6) Checklist
 --------------------------------------------------------------------------------
-
-    public string DbRepoRoot { get; set; } = string.Empty;
-    // DbRollupFromBranch / DbRollupToBranch — already exist
-
-
---------------------------------------------------------------------------------
-7) Checklist
---------------------------------------------------------------------------------
-[ ] From Branch + To Branch visible on BUILD CONFIGURATION (like Repo Root inputs)
-[ ] Defaults still load from appsettings on init
-[ ] User can change From/To before Bundle Scripts
-[ ] Bundle Scripts uses UI values (DbRollupFromBranch / DbRollupToBranch)
-[ ] Optional: Refresh Branches loads list from gss-database (dbRepoRoot)
-[ ] Optional: dropdowns after Refresh Branches
-[ ] No hardcoded GSSv9.1S2 / GSSv9.2S2 in C# code
+[ ] Existing Script Source + Browse kept
+[ ] From Branch + To Branch added above Bundle Scripts
+[ ] Defaults load from appsettings into DbRollupFromBranch / DbRollupToBranch
+[ ] Refresh Branches lists git branches from Script Source folder
+[ ] After refresh, fields become <select> dropdowns
+[ ] Bundle Scripts still calls BundleDbScriptsAsync with UI From/To values
+[ ] Same CSS: form-group, form-control, btn btn-secondary, btn btn-success
 
 
 ================================================================================
