@@ -65,6 +65,35 @@ A) Create FolderProfile.pubxml
    Rebuild from the DevOps tool after this exists.
 
 
+--------------------------------------------------------------------------------
+TEAM NOTE — commit FolderProfile.pubxml to git (preferred)
+--------------------------------------------------------------------------------
+FolderProfile.pubxml is NOT currently committed in the GSS repo.
+
+Ask the team to commit this file to the branch used by the DevOps tool:
+
+  WebToClientBridge\WebToClientBridge\Properties\PublishProfiles\FolderProfile.pubxml
+
+Why commit (best way):
+  - Required for DeployOnBuild + PublishProfile=FolderProfile on every build machine
+  - Survives Get latest / clean checkouts — no one-off local file
+  - Same publish settings for all agents / teammates
+
+Local-only (temporary OK):
+  - You may create the file on your build PC now to unblock yourself
+  - stash-based gitLatestCommand can keep local edits for a while
+  - Fragile: lost if folder is cleaned, another machine builds, or someone
+    else runs the tool without the file
+
+Recommended message to team:
+  "Please commit Properties\PublishProfiles\FolderProfile.pubxml for
+   WebToClientBridge so msbuild DeployOnBuild / PublishProfile=FolderProfile
+   works on all build machines. File is missing from git today and causes
+   ValidatePublishProfileSettings to fail."
+
+Practical path: create locally to unblock → team commits same file → permanent.
+
+
 B) Point projectPath at the .csproj (skip .vdproj / MSB4078)
    Prefer building the web project only — Setup .vdproj is not supported by MSBuild.
 
