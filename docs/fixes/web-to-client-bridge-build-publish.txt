@@ -1,0 +1,75 @@
+================================================================================
+WebToClientBridge / Web2ClientBridge — appsettings build + gitLatest
+================================================================================
+*** Separate ext file for this app only ***
+
+Based on folder:
+  F:\GSS\AppDev\gss-root\WebToClientBridge\
+
+Contents (solution root):
+  packages\
+  Web2ClientBridge.Setup\
+  WebToClientBridge\          (ASP.NET MVC project — .csproj, Web.config, Views)
+  WebToClientBridge.sln
+
+Paste this into appsettings.json for the "Web2ClientBridge" entry.
+gitLatestCommand was missing; add it so Get latest works for this app.
+
+
+{
+  "name": "Web2ClientBridge",
+  "type": "AspNetMvc",
+  "projectPath": "WebToClientBridge\\WebToClientBridge.sln",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"WebToClientBridge\" && git fetch && git restore --source=@{u} --staged --worktree -- \"WebToClientBridge\" && (git stash pop || ver > nul)",
+  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
+  "outputSubfolder": "Web2ClientBridge"
+}
+
+
+--------------------------------------------------------------------------------
+Copy-paste fields only
+--------------------------------------------------------------------------------
+
+gitLatestCommand (empty-stash safe):
+
+  git stash push -m "devops-pre-build" -- "WebToClientBridge" && git fetch && git restore --source=@{u} --staged --worktree -- "WebToClientBridge" && (git stash pop || ver > nul)
+
+buildCommand:
+
+  msbuild "{projectFile}" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile
+
+
+--------------------------------------------------------------------------------
+Notes
+--------------------------------------------------------------------------------
+- cwd = Code Repo Root (build:repoRoot) — e.g. F:\GSS\AppDev\gss-root
+- Disk folder / .sln name = WebToClientBridge
+- App name / outputSubfolder in tool = Web2ClientBridge (keep as-is)
+- projectPath points at WebToClientBridge.sln (not the nested .csproj alone)
+- Always pass "{projectFile}" to msbuild (resolved from projectPath)
+- FolderProfile must exist on the web project for DeployOnBuild publish
+- gitLatest path is the whole WebToClientBridge folder (project + Setup + packages)
+- Pattern: stash → fetch → restore from @{u} → stash pop (tolerate empty stash)
+- Do NOT use git clean -fd if you keep local Install-Package changes
+- Get latest is toolbar-only; Build does not run gitLatestCommand
+  See: docs/fixes/buildtab-no-getlatest-on-build.txt
+- AspNetMvc → use MSBuild (not dotnet publish)
+- If restore runs via BuildTab, use MSBuild restore for this type — not
+  "dotnet restore" on classic Framework MVC if that fails on your machine
+
+
+--------------------------------------------------------------------------------
+Checklist
+--------------------------------------------------------------------------------
+[ ] appsettings "Web2ClientBridge" has gitLatestCommand (path: WebToClientBridge)
+[ ] gitLatestCommand ends with (git stash pop || ver > nul)
+[ ] projectPath is WebToClientBridge\WebToClientBridge.sln
+[ ] buildCommand uses msbuild "{projectFile}" + FolderProfile
+[ ] outputSubfolder is Web2ClientBridge
+[ ] Get latest with clean tree → exit 0
+[ ] Build Web2ClientBridge runs msbuild and exits 0
+
+
+================================================================================
+END
+================================================================================
