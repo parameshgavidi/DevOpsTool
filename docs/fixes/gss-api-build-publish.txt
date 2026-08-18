@@ -1,0 +1,58 @@
+================================================================================
+GSS API — appsettings buildCommand + gitLatestCommand
+================================================================================
+
+Paste this into appsettings.json for the "GSS API" entry.
+gitLatestCommand was missing; add it so Get latest works for this app.
+
+
+{
+  "name": "GSS API",
+  "type": "DotNetCoreApi",
+  "projectPath": "Web Services\\GSSAPI\\GSSAPI\\GSSAPI.csproj",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"Web Services\\GSSAPI\" && git fetch && git restore --source=@{u} --staged --worktree -- \"Web Services\\GSSAPI\" && git stash pop",
+  "buildCommand": "dotnet publish \"{projectFile}\" -c Release -o {outputSubfolder}",
+  "outputSubfolder": "GSSAPI"
+}
+
+
+--------------------------------------------------------------------------------
+Copy-paste fields only
+--------------------------------------------------------------------------------
+
+gitLatestCommand:
+
+  git stash push -m "devops-pre-build" -- "Web Services\GSSAPI" && git fetch && git restore --source=@{u} --staged --worktree -- "Web Services\GSSAPI" && git stash pop
+
+buildCommand:
+
+  dotnet publish "{projectFile}" -c Release -o {outputSubfolder}
+
+
+--------------------------------------------------------------------------------
+Notes
+--------------------------------------------------------------------------------
+- cwd = Code Repo Root (build:repoRoot) — same as GSS Web Service / GSSWeb.
+- gitLatest path is the GSSAPI folder under Web Services (not only the .csproj).
+- Pattern matches other apps: stash → fetch → restore from @{u} → stash pop
+  (keeps local changes; does NOT use git clean -fd).
+- {projectFile} = resolved projectPath (GSSAPI.csproj).
+- {outputSubfolder} = GSSAPI (publish output folder name).
+- Get latest is toolbar-only; Build does not run gitLatestCommand.
+  See: docs/fixes/buildtab-no-getlatest-on-build.txt
+- DotNetCoreApi uses dotnet publish (not msbuild / PrecompiledWeb).
+
+
+--------------------------------------------------------------------------------
+Checklist
+--------------------------------------------------------------------------------
+[ ] appsettings "GSS API" has gitLatestCommand (path: Web Services\GSSAPI)
+[ ] appsettings "GSS API" has buildCommand: dotnet publish "{projectFile}" -c Release -o {outputSubfolder}
+[ ] outputSubfolder is GSSAPI
+[ ] Get latest includes GSS API (uses gitLatestCommand)
+[ ] Build GSS API runs dotnet publish and exits 0
+
+
+================================================================================
+END
+================================================================================
