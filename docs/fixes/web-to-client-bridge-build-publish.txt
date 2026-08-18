@@ -8,18 +8,75 @@ Based on folder:
 
 Contents (solution root):
   packages\
-  Web2ClientBridge.Setup\
-  WebToClientBridge\          (ASP.NET MVC project — .csproj, Web.config, Views)
+  Web2ClientBridge.Setup\       (.vdproj — NOT built by msbuild)
+  WebToClientBridge\            (ASP.NET MVC — .csproj, Web.config, Views)
   WebToClientBridge.sln
 
-Paste this into appsettings.json for the "Web2ClientBridge" entry.
-gitLatestCommand was missing; add it so Get latest works for this app.
 
+--------------------------------------------------------------------------------
+FIX: Build failed — FolderProfile.pubxml missing
+--------------------------------------------------------------------------------
+OUTPUT LOG errors:
+
+  The value for PublishProfile is set to 'FolderProfile', expected to find the
+  file at:
+    ...\WebToClientBridge\WebToClientBridge\Properties\PublishProfiles\FolderProfile.pubxml
+  but it could not be found.
+
+  PublishProfile(FolderProfile) is set. But the $(WebPublishMethod) does not
+  have a valid value. Current Value is "".
+
+  ValidatePublishProfileSettings target failed
+
+Also (warning only — ignore for web publish):
+  MSB4078: The project file "Web2ClientBridge.Setup.vdproj" is not supported
+  by MSBuild and cannot be built.
+
+Cause:
+  buildCommand used /p:PublishProfile=FolderProfile but that .pubxml does not
+  exist on disk. Web publish validation then fails (WebPublishMethod empty).
+
+
+--------------------------------------------------------------------------------
+RECOMMENDED FIX (do both A + B)
+--------------------------------------------------------------------------------
+
+A) Create FolderProfile.pubxml
+   Path (must match exactly):
+     WebToClientBridge\WebToClientBridge\Properties\PublishProfiles\FolderProfile.pubxml
+
+   File contents:
+
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <WebPublishMethod>FileSystem</WebPublishMethod>
+    <PublishProvider>FileSystem</PublishProvider>
+    <LastUsedBuildConfiguration>Release</LastUsedBuildConfiguration>
+    <LastUsedPlatform>Any CPU</LastUsedPlatform>
+    <LaunchSiteAfterPublish>False</LaunchSiteAfterPublish>
+    <ExcludeApp_Data>False</ExcludeApp_Data>
+    <publishUrl>bin\Release\Publish</publishUrl>
+    <DeleteExistingFiles>True</DeleteExistingFiles>
+  </PropertyGroup>
+</Project>
+
+   Create folders Properties\PublishProfiles if missing, then save the file.
+   Rebuild from the DevOps tool after this exists.
+
+
+B) Point projectPath at the .csproj (skip .vdproj / MSB4078)
+   Prefer building the web project only — Setup .vdproj is not supported by MSBuild.
+
+
+--------------------------------------------------------------------------------
+appsettings.json — USE THIS
+--------------------------------------------------------------------------------
 
 {
   "name": "Web2ClientBridge",
   "type": "AspNetMvc",
-  "projectPath": "WebToClientBridge\\WebToClientBridge.sln",
+  "projectPath": "WebToClientBridge\\WebToClientBridge\\WebToClientBridge.csproj",
   "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"WebToClientBridge\" && git fetch && git restore --source=@{u} --staged --worktree -- \"WebToClientBridge\" && (git stash pop || ver > nul)",
   "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
   "outputSubfolder": "Web2ClientBridge"
@@ -30,44 +87,55 @@ gitLatestCommand was missing; add it so Get latest works for this app.
 Copy-paste fields only
 --------------------------------------------------------------------------------
 
+projectPath:
+
+  WebToClientBridge\WebToClientBridge\WebToClientBridge.csproj
+
 gitLatestCommand (empty-stash safe):
 
   git stash push -m "devops-pre-build" -- "WebToClientBridge" && git fetch && git restore --source=@{u} --staged --worktree -- "WebToClientBridge" && (git stash pop || ver > nul)
 
-buildCommand:
+buildCommand (requires FolderProfile.pubxml from FIX A):
 
   msbuild "{projectFile}" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile
 
 
 --------------------------------------------------------------------------------
+ALTERNATE — no .pubxml file (appsettings-only)
+--------------------------------------------------------------------------------
+If you cannot add FolderProfile.pubxml, replace buildCommand with inline
+FileSystem publish (sets WebPublishMethod so ValidatePublishProfileSettings passes):
+
+  msbuild "{projectFile}" /p:Configuration=Release /p:DeployOnBuild=true /p:WebPublishMethod=FileSystem /p:PublishProvider=FileSystem /p:publishUrl=bin\Release\Publish /p:DeleteExistingFiles=True
+
+Still use projectPath = .csproj (not .sln).
+Do NOT pass /p:PublishProfile=FolderProfile with this alternate.
+
+
+--------------------------------------------------------------------------------
 Notes
 --------------------------------------------------------------------------------
-- cwd = Code Repo Root (build:repoRoot) — e.g. F:\GSS\AppDev\gss-root
-- Disk folder / .sln name = WebToClientBridge
-- App name / outputSubfolder in tool = Web2ClientBridge (keep as-is)
-- projectPath points at WebToClientBridge.sln (not the nested .csproj alone)
-- Always pass "{projectFile}" to msbuild (resolved from projectPath)
-- FolderProfile must exist on the web project for DeployOnBuild publish
-- gitLatest path is the whole WebToClientBridge folder (project + Setup + packages)
-- Pattern: stash → fetch → restore from @{u} → stash pop (tolerate empty stash)
-- Do NOT use git clean -fd if you keep local Install-Package changes
+- cwd = Code Repo Root — e.g. F:\GSS\AppDev\gss-root
+- Disk folder = WebToClientBridge; tool name/output = Web2ClientBridge
+- MSB4078 on Web2ClientBridge.Setup.vdproj is expected if you build the .sln;
+  building the .csproj avoids it
+- Published files land under:
+    WebToClientBridge\WebToClientBridge\bin\Release\Publish\
+  (then copy/archive to build-output\Web2ClientBridge per BuildTab logic)
 - Get latest is toolbar-only; Build does not run gitLatestCommand
-  See: docs/fixes/buildtab-no-getlatest-on-build.txt
-- AspNetMvc → use MSBuild (not dotnet publish)
-- If restore runs via BuildTab, use MSBuild restore for this type — not
-  "dotnet restore" on classic Framework MVC if that fails on your machine
+- AspNetMvc → MSBuild only (not dotnet publish)
 
 
 --------------------------------------------------------------------------------
 Checklist
 --------------------------------------------------------------------------------
-[ ] appsettings "Web2ClientBridge" has gitLatestCommand (path: WebToClientBridge)
-[ ] gitLatestCommand ends with (git stash pop || ver > nul)
-[ ] projectPath is WebToClientBridge\WebToClientBridge.sln
-[ ] buildCommand uses msbuild "{projectFile}" + FolderProfile
-[ ] outputSubfolder is Web2ClientBridge
-[ ] Get latest with clean tree → exit 0
-[ ] Build Web2ClientBridge runs msbuild and exits 0
+[ ] FolderProfile.pubxml exists under Properties\PublishProfiles
+    OR alternate buildCommand with WebPublishMethod=FileSystem is used
+[ ] projectPath is WebToClientBridge\WebToClientBridge\WebToClientBridge.csproj
+[ ] buildCommand no longer fails ValidatePublishProfileSettings
+[ ] MSB4078 Setup.vdproj not blocking (csproj build)
+[ ] Get latest OK with empty stash
+[ ] Build Web2ClientBridge exits 0
 
 
 ================================================================================
