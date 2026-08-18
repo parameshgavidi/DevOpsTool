@@ -16,14 +16,13 @@ Contents (solution root):
   .gitignore
 
 Paste this into appsettings.json for the "GSS API" entry.
-gitLatestCommand was missing; add it so Get latest works for this app.
 
 
 {
   "name": "GSS API",
   "type": "DotNetCoreApi",
   "projectPath": "Web Services\\GSSApi\\GSSApi.sln",
-  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"Web Services\\GSSApi\" && git fetch && git restore --source=@{u} --staged --worktree -- \"Web Services\\GSSApi\" && git stash pop",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"Web Services\\GSSApi\" && git fetch && git restore --source=@{u} --staged --worktree -- \"Web Services\\GSSApi\" && (git stash pop || ver > nul)",
   "buildCommand": "dotnet publish \"{projectFile}\" -c Release -o {outputSubfolder}",
   "outputSubfolder": "GSSApi"
 }
@@ -33,9 +32,9 @@ gitLatestCommand was missing; add it so Get latest works for this app.
 Copy-paste fields only
 --------------------------------------------------------------------------------
 
-gitLatestCommand:
+gitLatestCommand (USE THIS — empty-stash safe):
 
-  git stash push -m "devops-pre-build" -- "Web Services\GSSApi" && git fetch && git restore --source=@{u} --staged --worktree -- "Web Services\GSSApi" && git stash pop
+  git stash push -m "devops-pre-build" -- "Web Services\GSSApi" && git fetch && git restore --source=@{u} --staged --worktree -- "Web Services\GSSApi" && (git stash pop || ver > nul)
 
 buildCommand:
 
@@ -43,31 +42,60 @@ buildCommand:
 
 
 --------------------------------------------------------------------------------
+FIX: Get latest failed exit code 1 (No stash entries found)
+--------------------------------------------------------------------------------
+Symptom in OUTPUT LOG:
+  No local changes to save
+  No stash entries found.
+  [ERROR] Git latest failed for GSS API with exit code 1
+  Get latest complete — OK: 0, Failed: 1
+
+Cause:
+  No local edits under Web Services\GSSApi → stash push creates NO stash
+  (message: "No local changes to save", exit 0).
+  Later "git stash pop" then fails with "No stash entries found" (exit 1).
+  Because the command uses &&, the whole gitLatestCommand fails.
+
+Fix:
+  End with: (git stash pop || ver > nul)
+  so empty stash is OK on Windows cmd. Real fetch/restore failures still fail
+  (they run before stash pop).
+
+OLD (fails when clean working tree):
+  ... && git stash pop
+
+NEW:
+  ... && (git stash pop || ver > nul)
+
+
+--------------------------------------------------------------------------------
 Notes
 --------------------------------------------------------------------------------
-- cwd = Code Repo Root (build:repoRoot) — same as GSS Web Service / GSSWeb.
+- cwd = Code Repo Root (build:repoRoot) — e.g. F:\GSS\AppDev\gss-root
 - Folder name is GSSApi (not GSSAPI) — match casing on disk.
 - projectPath points at GSSApi.sln (solution root under Web Services\GSSApi).
 - If publish must target only the web host project instead of the .sln, use:
     "projectPath": "Web Services\\GSSApi\\GSSApi\\GSSApi.csproj"
 - gitLatest path is the whole GSSApi folder (includes Contracts/Entities/Services/Shared).
-- Pattern matches other apps: stash → fetch → restore from @{u} → stash pop
-  (keeps local changes; does NOT use git clean -fd).
+- Pattern: stash → fetch → restore from @{u} → stash pop (tolerate empty stash)
+  (keeps local changes when present; does NOT use git clean -fd).
 - {projectFile} = resolved projectPath (GSSApi.sln or GSSApi.csproj).
 - {outputSubfolder} = GSSApi (publish output folder name).
 - Get latest is toolbar-only; Build does not run gitLatestCommand.
   See: docs/fixes/buildtab-no-getlatest-on-build.txt
 - DotNetCoreApi uses dotnet publish (not msbuild / PrecompiledWeb).
+- @{u} must be set on the current branch (upstream tracking).
 
 
 --------------------------------------------------------------------------------
 Checklist
 --------------------------------------------------------------------------------
-[ ] appsettings "GSS API" has gitLatestCommand (path: Web Services\GSSApi)
+[ ] appsettings "GSS API" gitLatestCommand ends with (git stash pop || ver > nul)
 [ ] appsettings "GSS API" projectPath is Web Services\GSSApi\GSSApi.sln
 [ ] appsettings "GSS API" has buildCommand: dotnet publish "{projectFile}" -c Release -o {outputSubfolder}
 [ ] outputSubfolder is GSSApi
-[ ] Get latest includes GSS API (uses gitLatestCommand)
+[ ] Get latest with NO local changes → exit 0 (not "No stash entries found")
+[ ] Get latest with local changes → stash pop re-applies them
 [ ] Build GSS API runs dotnet publish and exits 0
 
 
