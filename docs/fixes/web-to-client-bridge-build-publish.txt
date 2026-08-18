@@ -158,6 +158,7 @@ Notes
 --------------------------------------------------------------------------------
 Checklist
 --------------------------------------------------------------------------------
+[ ] Asked team to commit FolderProfile.pubxml to GSS git (preferred / permanent)
 [ ] FolderProfile.pubxml exists under Properties\PublishProfiles
     OR alternate buildCommand with WebPublishMethod=FileSystem is used
 [ ] projectPath is WebToClientBridge\WebToClientBridge\WebToClientBridge.csproj
