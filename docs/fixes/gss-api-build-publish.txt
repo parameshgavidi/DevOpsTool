@@ -2,6 +2,19 @@
 GSS API — appsettings buildCommand + gitLatestCommand
 ================================================================================
 
+Based on folder:
+  F:\GSS\AppDev\gss-root\Web Services\GSSApi\
+
+Contents (solution root):
+  GSSApi\              (main API project)
+  GSSApi.Contracts\
+  GSSApi.Entities\
+  GSSApi.Services\
+  GSSApi.Shared\
+  packages\
+  GSSApi.sln
+  .gitignore
+
 Paste this into appsettings.json for the "GSS API" entry.
 gitLatestCommand was missing; add it so Get latest works for this app.
 
@@ -9,10 +22,10 @@ gitLatestCommand was missing; add it so Get latest works for this app.
 {
   "name": "GSS API",
   "type": "DotNetCoreApi",
-  "projectPath": "Web Services\\GSSAPI\\GSSAPI\\GSSAPI.csproj",
-  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"Web Services\\GSSAPI\" && git fetch && git restore --source=@{u} --staged --worktree -- \"Web Services\\GSSAPI\" && git stash pop",
+  "projectPath": "Web Services\\GSSApi\\GSSApi.sln",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"Web Services\\GSSApi\" && git fetch && git restore --source=@{u} --staged --worktree -- \"Web Services\\GSSApi\" && git stash pop",
   "buildCommand": "dotnet publish \"{projectFile}\" -c Release -o {outputSubfolder}",
-  "outputSubfolder": "GSSAPI"
+  "outputSubfolder": "GSSApi"
 }
 
 
@@ -22,7 +35,7 @@ Copy-paste fields only
 
 gitLatestCommand:
 
-  git stash push -m "devops-pre-build" -- "Web Services\GSSAPI" && git fetch && git restore --source=@{u} --staged --worktree -- "Web Services\GSSAPI" && git stash pop
+  git stash push -m "devops-pre-build" -- "Web Services\GSSApi" && git fetch && git restore --source=@{u} --staged --worktree -- "Web Services\GSSApi" && git stash pop
 
 buildCommand:
 
@@ -33,11 +46,15 @@ buildCommand:
 Notes
 --------------------------------------------------------------------------------
 - cwd = Code Repo Root (build:repoRoot) — same as GSS Web Service / GSSWeb.
-- gitLatest path is the GSSAPI folder under Web Services (not only the .csproj).
+- Folder name is GSSApi (not GSSAPI) — match casing on disk.
+- projectPath points at GSSApi.sln (solution root under Web Services\GSSApi).
+- If publish must target only the web host project instead of the .sln, use:
+    "projectPath": "Web Services\\GSSApi\\GSSApi\\GSSApi.csproj"
+- gitLatest path is the whole GSSApi folder (includes Contracts/Entities/Services/Shared).
 - Pattern matches other apps: stash → fetch → restore from @{u} → stash pop
   (keeps local changes; does NOT use git clean -fd).
-- {projectFile} = resolved projectPath (GSSAPI.csproj).
-- {outputSubfolder} = GSSAPI (publish output folder name).
+- {projectFile} = resolved projectPath (GSSApi.sln or GSSApi.csproj).
+- {outputSubfolder} = GSSApi (publish output folder name).
 - Get latest is toolbar-only; Build does not run gitLatestCommand.
   See: docs/fixes/buildtab-no-getlatest-on-build.txt
 - DotNetCoreApi uses dotnet publish (not msbuild / PrecompiledWeb).
@@ -46,9 +63,10 @@ Notes
 --------------------------------------------------------------------------------
 Checklist
 --------------------------------------------------------------------------------
-[ ] appsettings "GSS API" has gitLatestCommand (path: Web Services\GSSAPI)
+[ ] appsettings "GSS API" has gitLatestCommand (path: Web Services\GSSApi)
+[ ] appsettings "GSS API" projectPath is Web Services\GSSApi\GSSApi.sln
 [ ] appsettings "GSS API" has buildCommand: dotnet publish "{projectFile}" -c Release -o {outputSubfolder}
-[ ] outputSubfolder is GSSAPI
+[ ] outputSubfolder is GSSApi
 [ ] Get latest includes GSS API (uses gitLatestCommand)
 [ ] Build GSS API runs dotnet publish and exits 0
 
