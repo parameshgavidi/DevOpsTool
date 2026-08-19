@@ -1,0 +1,187 @@
+================================================================================
+REQUIRED CHANGES ONLY — Fix From/To branch dropdowns not loading
+You already have LoadDbBranchesAsync + DbBranchOptions UI — do NOT recreate
+================================================================================
+
+WHY DROPDOWNS SHOW "No branches loaded"
+---------------------------------------
+BuildService runs commands as:  cmd.exe /c {command}
+
+Your appsettings command today:
+
+    "dbRollupPullBranchesCommand": "git branch --format='%(refname:short)'"
+
+Problems under cmd.exe /c:
+
+  1) Single quotes are LITERAL in cmd (not shell quotes).
+     Git format becomes '%(refname:short)' → output is 'main' (quotes included)
+     or the %(refname:short) / \" escaping breaks the process start
+     (same class of bug as docs/fixes/bundle-db-scripts-button.txt cmd quoting).
+
+  2) Plain "git branch" lists LOCAL branches only.
+     Release names like GSSv8.7S3 / GSSv8.9S2 are usually remotes → empty/useless list.
+
+  3) Working directory MUST be the Git repo (build:repoRoot = gss-root).
+     Running in the tool folder fails with: fatal: not a git repository
+
+Terminal proof (your session):
+  FAIL — wrong cwd / bad \"%(refname:short)\" escaping
+  OK   — cd /d F:\GSS\AppDev\gss-root && git branch ...
+
+
+================================================================================
+CHANGE 1 — appsettings.json (ONLY this key under "build")
+================================================================================
+REPLACE the command. No --format. Use remotes. cmd-safe.
+
+    "dbRollupPullBranchesCommand": "git branch -r"
+
+Keep repoRoot as the Git root (example):
+
+    "repoRoot": "F:\\GSS\\AppDev\\gss-root"
+
+
+================================================================================
+CHANGE 2 — BuildSettings / model (ONLY if property missing)
+================================================================================
+If DbRollupPullBranchesCommand is not on BuildSettings yet, ADD:
+
+    public string DbRollupPullBranchesCommand { get; set; } = string.Empty;
+
+
+================================================================================
+CHANGE 3 — BuildTab.razor — REPLACE LoadDbBranchesAsync only
+================================================================================
+Keep your existing fields / dropdown UI / Refresh button.
+REPLACE the method body with this (RepoRoot + appsettings command + cmd-safe parse):
+
+    private async Task LoadDbBranchesAsync()
+    {
+        if (_isLoadingBranches)
+            return;
+
+        _isLoadingBranches = true;
+        try
+        {
+            var root = RepoRoot?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Repo Root not found: {root}. Select a valid Git repository root first.");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            var settings = LoadAppSettings();
+            var command = settings?.Build?.DbRollupPullBranchesCommand?.Trim();
+            if (string.IsNullOrWhiteSpace(command))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] build:dbRollupPullBranchesCommand is missing in appsettings.json.");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            var lines = new List<string>();
+
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Loading DB branches from {root}...");
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Command: {command}");
+            await InvokeAsync(StateHasChanged);
+
+            var exit = await BuildService.RunCommandAsync(
+                root,
+                command,
+                line =>
+                {
+                    var t = (line ?? string.Empty).Trim();
+                    if (string.IsNullOrWhiteSpace(t))
+                        return;
+
+                    // git branch / git branch -r markers
+                    if (t.StartsWith("*"))
+                        t = t.TrimStart('*').Trim();
+
+                    // strip accidental quotes from old --format='...' commands
+                    if (t.Length >= 2 && t[0] == '\'' && t[^1] == '\'')
+                        t = t.Substring(1, t.Length - 2).Trim();
+                    if (t.Length >= 2 && t[0] == '"' && t[^1] == '"')
+                        t = t.Substring(1, t.Length - 2).Trim();
+
+                    if (string.IsNullOrWhiteSpace(t))
+                        return;
+                    if (t.Contains("HEAD", StringComparison.OrdinalIgnoreCase))
+                        return;
+                    if (t.StartsWith("origin/", StringComparison.OrdinalIgnoreCase))
+                        t = t.Substring("origin/".Length);
+
+                    if (!lines.Contains(t, StringComparer.OrdinalIgnoreCase))
+                        lines.Add(t);
+                },
+                CancellationToken.None);
+
+            if (exit != 0)
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Failed to list branches (exit {exit}). Check Repo Root is a Git repo and command is cmd-safe (no --format quotes).");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            lines.Sort(StringComparer.OrdinalIgnoreCase);
+            DbBranchOptions = lines;
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Loaded {DbBranchOptions.Count} branch(es). Select From/To, then Bundle Scripts.");
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Load branches failed: {ex.Message}");
+            await InvokeAsync(StateHasChanged);
+        }
+        finally
+        {
+            _isLoadingBranches = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+
+================================================================================
+CHANGE 4 — Auto-load once after init (OPTIONAL but recommended)
+================================================================================
+If dropdowns stay empty until you click Refresh, call once after first render
+(keep your existing OnInitialized LoadAppSettings — do not move path loading here):
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+            return;
+
+        if (DbBranchOptions.Count == 0
+            && !string.IsNullOrWhiteSpace(RepoRoot)
+            && Directory.Exists(RepoRoot))
+        {
+            await LoadDbBranchesAsync();
+        }
+    }
+
+
+================================================================================
+DO NOT CHANGE
+================================================================================
+[ ] From/To <select> markup / DbRollupFromBranch / DbRollupToBranch bindings
+[ ] BundleDbScriptsAsync (still uses selected From/To)
+[ ] Script Source / BrowseScripts
+[ ] Do NOT put --format='%(refname:short)' or \"%(refname:short)\" back in appsettings
+[ ] Do NOT run the git command against Script Source (db-rollup-scripts) — use Repo Root
+
+
+================================================================================
+CHECKLIST
+================================================================================
+[ ] appsettings: dbRollupPullBranchesCommand = git branch -r
+[ ] LoadDbBranchesAsync uses RepoRoot (gss-root), not tool folder / Script Source
+[ ] Parser strips *, quotes, origin/
+[ ] Success path calls StateHasChanged (dropdown enables)
+[ ] Click Refresh Branches (or auto-load) → From/To fill with remotes
+
+
+================================================================================
+END
+================================================================================
