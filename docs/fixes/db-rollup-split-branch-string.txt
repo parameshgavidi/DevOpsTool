@@ -1,0 +1,125 @@
+================================================================================
+SMALL FIX — From Branch shows ONE long string instead of separate branches
+================================================================================
+
+WHAT YOU SEE
+------------
+From Branch dropdown has a single selected item like:
+
+    GSS8.7' 'origin/GSSv7.7' 'origin/GSSv7.8' 'origin/GSSv7.8PU1' ...
+
+That is ONE DbBranchOptions entry (the whole git stdout), not many options.
+
+
+WHY
+---
+BuildService runs:  cmd.exe /c git branch -r --format='%(refname:short)'
+
+Under cmd.exe, single quotes are literal. Git prints one blob / line:
+
+    'origin/GSS8.7' 'origin/GSSv7.7' 'origin/GSSv7.8' ...
+
+Your current callback roughly does:
+
+    var t = line.Trim().Trim('\'', '"');          // removes ONLY outer quotes
+    if (t.StartsWith("origin/")) t = t.Substring(...);  // strips ONLY the first origin/
+
+Result becomes exactly what you see:
+
+    GSS8.7' 'origin/GSSv7.7' 'origin/GSSv7.8' ...
+
+Then lines.Add(t) once → one dropdown item.
+
+
+================================================================================
+FIX — REPLACE only the line-callback body inside LoadDbBranchesAsync
+================================================================================
+Keep RunCommandAsync / RepoRoot / appsettings command as-is for now.
+REPLACE the callback that builds `lines` with this:
+
+                line =>
+                {
+                    foreach (var token in SplitQuotedBranches(line))
+                    {
+                        var t = token.Trim().Trim('\'', '"').Trim();
+                        if (string.IsNullOrWhiteSpace(t))
+                            continue;
+                        if (t.StartsWith(">>>", StringComparison.Ordinal))
+                            continue;
+                        if (t.Contains("HEAD", StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        if (string.Equals(t, "origin", StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        if (t.StartsWith("origin/", StringComparison.OrdinalIgnoreCase))
+                            t = t.Substring("origin/".Length).Trim();
+                        if (string.IsNullOrWhiteSpace(t))
+                            continue;
+                        if (!lines.Contains(t, StringComparer.OrdinalIgnoreCase))
+                            lines.Add(t);
+                    }
+                },
+
+
+ADD this helper next to LoadDbBranchesAsync (same @code block):
+
+    // Turns:  'origin/A' 'origin/B' 'origin/C'
+    // into:   origin/A , origin/B , origin/C   (separate tokens)
+    private static IEnumerable<string> SplitQuotedBranches(string? line)
+    {
+        var s = (line ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(s))
+            yield break;
+
+        // Normal git branch -r: one name per line, no quotes → keep as-is
+        if (!s.Contains('\'') && !s.Contains('"'))
+        {
+            yield return s;
+            yield break;
+        }
+
+        // Quoted blob (your bug): split on spaces, each piece is one branch
+        foreach (var part in s.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var p = part.Trim().Trim('\'', '"').Trim();
+            if (!string.IsNullOrWhiteSpace(p))
+                yield return p;
+        }
+    }
+
+
+After this, DbBranchOptions becomes:
+
+    GSS8.7
+    GSSv7.7
+    GSSv7.8
+    GSSv7.8PU1
+    ...
+
+each as its own <option>.
+
+
+================================================================================
+ALSO RECOMMENDED (one line in appsettings.json)
+================================================================================
+Stop using --format under cmd.exe. Under "build":
+
+    "dbRollupPullBranchesCommand": "git branch -r"
+
+And in LoadDbBranchesAsync read that key (do not hardcode the command).
+With plain `git branch -r`, output is one branch per line and splitting is easier.
+The helper above still works for both.
+
+
+================================================================================
+CHECKLIST
+================================================================================
+[ ] Replaced line-callback to foreach SplitQuotedBranches(line)
+[ ] Added SplitQuotedBranches helper
+[ ] Rebuild / run tool → Refresh Branches
+[ ] From Branch shows many separate names (not one long quoted string)
+[ ] To Branch same list
+
+
+================================================================================
+END
+================================================================================
