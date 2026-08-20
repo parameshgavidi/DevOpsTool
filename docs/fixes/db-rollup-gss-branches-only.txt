@@ -1,0 +1,100 @@
+================================================================================
+SMALL FIX — From/To Branch dropdown: keep ONLY branches that start with GSS
+================================================================================
+
+WHAT YOU SEE
+------------
+Dropdown includes junk + real branches:
+
+    --format='%(refname:short)
+    -r
+    /c
+    branch
+    cmd.exe
+    Command:
+    git
+    GSS8.7
+    GSSv7.7
+    GSSv7.8
+    ...
+    GSSv8.7S3
+    GSSv8.9S2
+
+You only want names that start with GSS.
+
+
+WHY
+---
+BuildService echoes the command (cmd.exe /c git branch -r --format=...)
+into the same line callback as git output. After SplitQuotedBranches, those
+command tokens become fake "branches". Real remotes like GSSv8.7S3 are fine;
+filter junk by requiring the GSS prefix.
+
+
+================================================================================
+FIX — one extra continue in the LoadDbBranchesAsync line callback
+================================================================================
+After you strip origin/ and before lines.Add(t), ADD:
+
+                        // Keep only GSS* release branches (drops cmd.exe / git / -r / etc.)
+                        if (!t.StartsWith("GSS", StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+Full callback body (paste over your current one):
+
+                line =>
+                {
+                    foreach (var token in SplitQuotedBranches(line))
+                    {
+                        var t = token.Trim().Trim('\'', '"').Trim();
+                        if (string.IsNullOrWhiteSpace(t))
+                            continue;
+                        if (t.StartsWith(">>>", StringComparison.Ordinal))
+                            continue;
+                        if (t.Contains("HEAD", StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        if (string.Equals(t, "origin", StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        if (t.StartsWith("origin/", StringComparison.OrdinalIgnoreCase))
+                            t = t.Substring("origin/".Length).Trim();
+                        if (string.IsNullOrWhiteSpace(t))
+                            continue;
+
+                        // ONLY GSS branches
+                        if (!t.StartsWith("GSS", StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        if (!lines.Contains(t, StringComparer.OrdinalIgnoreCase))
+                            lines.Add(t);
+                    }
+                },
+
+If you do not have SplitQuotedBranches yet, use docs/fixes/db-rollup-split-branch-string.txt first,
+then add the GSS StartsWith check.
+
+
+RESULT
+------
+From/To lists only:
+
+    GSS8.7
+    GSSv7.7
+    GSSv7.8
+    ...
+    GSSv8.7S3
+    GSSv8.9S2
+
+No cmd.exe / git / -r / --format / Command: entries.
+
+
+================================================================================
+CHECKLIST
+================================================================================
+[ ] Added: if (!t.StartsWith("GSS", ...)) continue;
+[ ] Rebuild / Refresh Branches
+[ ] Dropdown shows only GSS* names
+
+
+================================================================================
+END
+================================================================================
