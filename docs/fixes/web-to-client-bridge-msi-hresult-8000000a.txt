@@ -1,0 +1,179 @@
+================================================================================
+NEW FILE — Web2ClientBridge MSI: HRESULT 8000000A (pre-build validation)
+docs/fixes/web-to-client-bridge-msi-hresult-8000000a.txt
+================================================================================
+USE THIS FILE for the current error. Older MSI guides are done for HELP/cmd.
+
+
+--------------------------------------------------------------------------------
+YOUR CURRENT LOG (PROGRESS — devenv is running now)
+--------------------------------------------------------------------------------
+  1> WebToClientBridge -> ...\bin\gssWebV2.dll
+  ------ Starting pre-build validation for project 'Web2ClientBridge.Setup' ------
+  ERROR: An error occurred while validating. HRESULT = '8000000A'
+  2>------ Build started: Project: Web2ClientBridge.Setup, Configuration: Release ------
+  ========== Build: 1 succeeded, 1 failed, ... ==========
+  [ERROR] Setup build failed for Web2ClientBridge with exit code 1
+
+Explorer still has no .msi under F:\build-output\Web2ClientBridge\
+
+
+--------------------------------------------------------------------------------
+WHAT THIS MEANS
+--------------------------------------------------------------------------------
+- NOT the old cmd HELP (/useenv) problem anymore — Process/devenv works.
+- Classic .vdproj command-line bug: Visual Studio Installer Projects refuse
+  out-of-process / command-line validation unless EnableOutOfProcBuild = 0.
+- Web project built OK; only Web2ClientBridge.Setup failed validation.
+
+
+--------------------------------------------------------------------------------
+STEP 1 — Close Visual Studio (required)
+--------------------------------------------------------------------------------
+Close ALL Visual Studio / devenv windows before fixing registry or rebuilding.
+Command-line Setup build often fails if the IDE has the .sln open.
+
+
+--------------------------------------------------------------------------------
+STEP 2 — Run DisableOutOfProcBuild.exe (PREFERRED)
+--------------------------------------------------------------------------------
+Installer Projects ships a helper. For YOUR machine (VS 18 Professional):
+
+  F:\Program Files\Microsoft Visual Studio\18\Professional\Common7\IDE\CommonExtensions\Microsoft\VSI\DisableOutOfProcBuild\DisableOutOfProcBuild.exe
+
+If that path is missing, search:
+
+  dir /s /b "F:\Program Files\Microsoft Visual Studio\18\DisableOutOfProcBuild.exe"
+
+IMPORTANT: run it FROM its own folder (cwd must be that folder):
+
+  cd /d "F:\Program Files\Microsoft Visual Studio\18\Professional\Common7\IDE\CommonExtensions\Microsoft\VSI\DisableOutOfProcBuild"
+  DisableOutOfProcBuild.exe
+
+Run as the SAME Windows user that runs the DevOps tool.
+
+This sets EnableOutOfProcBuild = 0 for that VS instance.
+
+
+--------------------------------------------------------------------------------
+STEP 3 — Or set registry manually (if exe missing)
+--------------------------------------------------------------------------------
+Open regedit as the DevOps tool user. Create DWORD = 0 named EnableOutOfProcBuild
+under MSBuild for your VS 18 hive. Typical paths (pick the ones that exist):
+
+  HKEY_CURRENT_USER\Software\Microsoft\VisualStudio\18.0\MSBuild
+  HKEY_CURRENT_USER\Software\Microsoft\VisualStudio\18.0_Config\MSBuild
+
+VS may use an instance suffix, e.g.:
+
+  HKEY_CURRENT_USER\Software\Microsoft\VisualStudio\18.0_<InstanceId>_Config\MSBuild
+
+How to find the right key:
+  1. Regedit → HKEY_CURRENT_USER\Software\Microsoft\VisualStudio\
+  2. Find folders starting with 18.0
+  3. Under each, create MSBuild if missing
+  4. New DWORD: EnableOutOfProcBuild = 0
+
+PowerShell (run as same user; adjusts common hives):
+
+  $names = @('18.0','18.0_Config') +
+    (Get-ChildItem HKCU:\Software\Microsoft\VisualStudio -ErrorAction SilentlyContinue |
+     Where-Object { $_.PSChildName -like '18.0*_Config' -or $_.PSChildName -eq '18.0' } |
+     ForEach-Object PSChildName)
+  $names = $names | Select-Object -Unique
+  foreach ($n in $names) {
+    $p = "HKCU:\Software\Microsoft\VisualStudio\$n\MSBuild"
+    New-Item -Path $p -Force | Out-Null
+    New-ItemProperty -Path $p -Name EnableOutOfProcBuild -PropertyType DWord -Value 0 -Force | Out-Null
+    Write-Host "Set $p\EnableOutOfProcBuild = 0"
+  }
+
+
+--------------------------------------------------------------------------------
+STEP 4 — Prove Setup builds from command line
+--------------------------------------------------------------------------------
+Close VS. Open cmd:
+
+  cd /d F:\GSS\AppDev\gss-root\WebToClientBridge
+
+  "F:\Program Files\Microsoft Visual Studio\18\Professional\Common7\IDE\devenv.com" ^
+    "F:\GSS\AppDev\gss-root\WebToClientBridge\WebToClientBridge.sln" ^
+    /build Release /project "Web2ClientBridge.Setup" /projectconfig Release
+
+Expect:
+  - NO HRESULT 8000000A
+  - MSI under:
+      F:\GSS\AppDev\gss-root\WebToClientBridge\Web2ClientBridge.Setup\Release\*.msi
+
+If IDE Build works but command line still 8000000A → STEP 2/3 not applied
+for this user / VS 18 hive.
+
+
+--------------------------------------------------------------------------------
+STEP 5 — Optional: call DisableOutOfProcBuild from BuildTab before devenv
+--------------------------------------------------------------------------------
+In BuildSetupProjectAsync, BEFORE RunProcessCaptureAsync(devenv...), add:
+
+        // Allow .vdproj command-line / devenv builds (HRESULT 8000000A)
+        var vsRoot = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(devenvPath)!, "..", "..", ".."));
+        // devenv is ...\Common7\IDE\devenv.com → vsRoot = VS install root
+        var disableDir = Path.Combine(
+            Path.GetDirectoryName(devenvPath)!,
+            "CommonExtensions", "Microsoft", "VSI", "DisableOutOfProcBuild");
+        var disableExe = Path.Combine(disableDir, "DisableOutOfProcBuild.exe");
+        if (File.Exists(disableExe))
+        {
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Running DisableOutOfProcBuild.exe...\r\n";
+            var disableExit = await RunProcessCaptureAsync(
+                disableExe,
+                "",
+                disableDir,
+                line =>
+                {
+                    lock (_pendingLogBuffer)
+                    {
+                        _pendingLogBuffer.Append(line);
+                        if (!line.EndsWith('\n') && !line.EndsWith('\r'))
+                            _pendingLogBuffer.AppendLine();
+                    }
+                },
+                cancellation);
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] DisableOutOfProcBuild exit {disableExit}\r\n";
+        }
+        else
+        {
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARN] DisableOutOfProcBuild.exe not found at {disableExe}. Set EnableOutOfProcBuild=0 in registry (STEP 3).\r\n";
+        }
+
+Then keep your existing devenv Process build + copy *.msi to outputFolder
+(see docs/fixes/web-to-client-bridge-msi-full-fix.txt STEP 6).
+
+
+--------------------------------------------------------------------------------
+STEP 6 — Retry DevOps Build Web2ClientBridge
+--------------------------------------------------------------------------------
+  1. Apply STEP 2 (or STEP 3) once on the build PC
+  2. Optionally paste STEP 5 into BuildSetupProjectAsync
+  3. Rebuild / restart DevOps tool
+  4. Build Web2ClientBridge
+
+Expect:
+  [INFO] Setup MSI copied to F:\build-output\Web2ClientBridge\....msi
+  [INFO] Finished Web2ClientBridge with exit code 0
+
+
+--------------------------------------------------------------------------------
+Checklist
+--------------------------------------------------------------------------------
+[ ] All Visual Studio windows closed
+[ ] DisableOutOfProcBuild.exe run from its folder (VS 18 Professional)
+    OR EnableOutOfProcBuild DWORD = 0 under HKCU ...\18.0*\MSBuild
+[ ] Manual devenv.com command (STEP 4) builds Setup without 8000000A
+[ ] Release\*.msi exists under Web2ClientBridge.Setup
+[ ] Optional: STEP 5 in BuildTab before devenv
+[ ] Tool Build → F:\build-output\Web2ClientBridge\*.msi
+
+
+================================================================================
+END
+================================================================================
