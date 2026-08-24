@@ -126,29 +126,13 @@ not in BuildTab LogOutput, until you surface errors (optional below).
 
 
 --------------------------------------------------------------------------------
-OPTIONAL — surface email failures in BuildTab LogOutput
+OPTIONAL — surface YOUR failures in BuildTab LogOutput (no GSSEmail edit)
 --------------------------------------------------------------------------------
-In BuildTab.razor, only log success when send did not throw. Today
-SendEmailByNetV2 swallows exceptions, so either:
+You cannot make SendEmailByNetV2 rethrow. You CAN still catch decrypt mistakes
+in BuildTab (FIX A guard). For failures inside GSSEmail, watch Output → Debug.
 
-A) Change GSSEmail.SendEmailByNetV2 catch to rethrow after logging, OR
-B) Temporarily wrap with a probe that fails loudly if SqlClient still missing:
-
-  try
-  {
-      // Force early failure if package missing (optional):
-      // _ = typeof(System.Data.SqlClient.SqlConnection);
-
-      GSS.GSSEmail.SendEmailByNetV2(fromEmail, toEmails, mailSubject, mailBody, connectionString, true);
-      LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Email notification sent to {toEmails}\r\n";
-  }
-  catch (Exception emailEx)
-  {
-      LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARN] Email notification failed: {emailEx.Message}\r\n";
-  }
-
-Note: until GSSEmail rethrows, BuildTab catch still will NOT see SqlClient
-errors — watch Output → Debug, or patch GSSEmail to rethrow.
+Do NOT add typeof(System.Data.SqlClient.SqlConnection) probes that require
+editing GSSEmail — keep PackageReference on the MAUI csproj only.
 
 
 --------------------------------------------------------------------------------

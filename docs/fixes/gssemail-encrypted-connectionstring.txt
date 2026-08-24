@@ -65,16 +65,17 @@ the DB call failed — not proof the row is absent (check again AFTER decrypt).
 FIX A (required) — decrypt GSS connection string BEFORE SendEmailByNetV2
 --------------------------------------------------------------------------------
 
-In BuildTab.razor, in the success-email try block, decrypt with the SAME
-Encryption.Crypto API GSSEmail.cs already uses for Host/Port/UserId/Pwd.
+In BuildTab.razor ONLY — decrypt with the SAME Encryption.Crypto API
+GSSEmail.cs already uses for Host/Port/UserId/Pwd (READ that file; do not edit it).
 
-1. Open GSSEmail.cs and find the decrypt call, e.g.:
+1. Open GSSEmail.cs (read-only) and find the decrypt call, e.g.:
 
      Encryption.Crypto objCrypto = new Encryption.Crypto();
      string host = objCrypto.Decrypt(CredentialList["Host"].ToString());
      //  ↑ copy THIS method name (Decrypt / DecryptString / DecryptData / ...)
 
-2. REPLACE the email send block with (adjust property names to match yours):
+2. In BuildTab.razor, REPLACE the email send block with
+   (adjust property names to match yours):
 
   try
   {
