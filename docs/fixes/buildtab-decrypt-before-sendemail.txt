@@ -1,0 +1,172 @@
+================================================================================
+BuildTab.razor — UPDATE email notification block (decrypt CS before send)
+NO changes to GSSEmail.cs
+================================================================================
+
+WHY
+---
+Debug Output:
+  ArgumentException: Keyword not supported: 'huixt2azeur...'
+  Missing SECUREMAILCREDENTIAL data in Process Settings
+
+Cause: connectionString from LoadAppSettings/appsettings is ENCRYPTED.
+SendEmailByNetV2 → EmailCredentialList needs a PLAIN SQL connection string.
+
+
+PREREQ (already done if you got past FileNotFound)
+---------------------------------------------------
+[ ] System.Data.SqlClient NuGet on GssDevOpsAutomationTool
+[ ] Encryption.dll referenced on GssDevOpsAutomationTool
+[ ] Do NOT modify GSSEmail.cs
+
+
+--------------------------------------------------------------------------------
+WHERE
+--------------------------------------------------------------------------------
+BuildTab.razor — success path after files copied.
+Find the comment:
+
+  // Send success notification email via GSSEmailComponent
+
+Replace the whole try/catch under that comment with NEW below.
+
+
+--------------------------------------------------------------------------------
+OLD (broken — passes encrypted CS)
+--------------------------------------------------------------------------------
+
+            // Send success notification email via GSSEmailComponent
+            try
+            {
+                var settings = LoadAppSettings();
+                var connectionString = settings.ConnectionString;
+                var fromEmail = string.IsNullOrWhiteSpace(settings.FromEmail)
+                    ? "GSSHelp@usps.gov"
+                    : settings.FromEmail;
+                var recipients = settings.EmailRecipients;
+                var toEmails = (recipients != null && recipients.Count > 0)
+                    ? string.Join(";", recipients)
+                    : "devi.s.lam@usps.gov";
+
+                var mailSubject = $"DevOps Tool — files copied successfully";
+                var mailBody =
+                    $"<html><body>" +
+                    $"<p>Build/bundle completed.</p>" +
+                    $"<p>Timestamp: {DateTime.Now:yyyy-MM-dd HH:mm:ss}</p>" +
+                    $"</body></html>";
+
+                GSS.GSSEmail.SendEmailByNetV2(
+                    fromEmail, toEmails, mailSubject, mailBody, connectionString, true);
+
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Email notification sent to {toEmails}\r\n";
+            }
+            catch (Exception emailEx)
+            {
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARN] Email notification failed: {emailEx.Message}\r\n";
+            }
+
+
+--------------------------------------------------------------------------------
+NEW (paste this — decrypt then send)
+--------------------------------------------------------------------------------
+Keep your existing mailSubject / mailBody text if different.
+Keep your real settings property names (ConnectionString / GssConnectionString /
+FromEmail / EmailRecipients). Match Encryption.Crypto method name to GSSEmail.cs
+(read-only) — usually Decrypt.
+
+            // Send success notification email via GSSEmailComponent
+            // NOTE: do not edit GSSEmail.cs — decrypt CS here before calling it.
+            try
+            {
+                var settings = LoadAppSettings();
+
+                var fromEmail = string.IsNullOrWhiteSpace(settings.FromEmail)
+                    ? "GSSHelp@usps.gov"
+                    : settings.FromEmail;
+
+                var recipients = settings.EmailRecipients;
+                var toEmails = (recipients != null && recipients.Count > 0)
+                    ? string.Join(";", recipients)
+                    : "devi.s.lam@usps.gov";
+
+                // appsettings stores ENCRYPTED GSS connection string
+                var encryptedCs = settings.ConnectionString;
+                if (string.IsNullOrWhiteSpace(encryptedCs))
+                    throw new InvalidOperationException("GSS connection string missing in appsettings.");
+
+                var crypto = new Encryption.Crypto();
+                var connectionString = crypto.Decrypt(encryptedCs);
+                // If GSSEmail.cs uses a different method name, use that exact name:
+                //   crypto.DecryptString(...) / crypto.DecryptData(...)
+
+                // Guard: must look like a SQL connection string after decrypt
+                if (string.IsNullOrWhiteSpace(connectionString)
+                    || connectionString.IndexOf('=') < 0
+                    || (connectionString.IndexOf("Data Source", StringComparison.OrdinalIgnoreCase) < 0
+                        && connectionString.IndexOf("Server", StringComparison.OrdinalIgnoreCase) < 0))
+                {
+                    throw new InvalidOperationException(
+                        "GSS connection string did not decrypt to a SQL connection string.");
+                }
+
+                var mailSubject = $"DevOps Tool — files copied successfully";
+                var mailBody =
+                    $"<html><body>" +
+                    $"<p>Build/bundle completed.</p>" +
+                    $"<p>Timestamp: {DateTime.Now:yyyy-MM-dd HH:mm:ss}</p>" +
+                    $"</body></html>";
+
+                GSS.GSSEmail.SendEmailByNetV2(
+                    fromEmail, toEmails, mailSubject, mailBody, connectionString, true);
+
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Email send requested for {toEmails} (check Output→Debug if mail missing)\r\n";
+            }
+            catch (Exception emailEx)
+            {
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARN] Email notification failed: {emailEx.Message}\r\n";
+            }
+
+
+--------------------------------------------------------------------------------
+MINIMAL DIFF (if you prefer only the 3 lines)
+--------------------------------------------------------------------------------
+Replace:
+
+    var connectionString = settings.ConnectionString;
+
+With:
+
+    var encryptedCs = settings.ConnectionString;
+    var crypto = new Encryption.Crypto();
+    var connectionString = crypto.Decrypt(encryptedCs);
+
+
+--------------------------------------------------------------------------------
+AFTER PASTE
+--------------------------------------------------------------------------------
+1. Rebuild GssDevOpsAutomationTool
+2. F5 → run the path that sends email
+3. Output → Debug:
+   - "Keyword not supported: 'huixt..." must be GONE
+   - If "Missing SECUREMAILCREDENTIAL" remains → fix Process Settings data
+     (not BuildTab / not GSSEmail.cs)
+
+
+--------------------------------------------------------------------------------
+CHECKLIST
+--------------------------------------------------------------------------------
+[ ] Only BuildTab.razor changed (GSSEmail.cs untouched)
+[ ] crypto.Decrypt method name matches GSSEmail.cs
+[ ] Decrypt runs BEFORE SendEmailByNetV2
+[ ] Plaintext CS contains Data Source= or Server=
+[ ] System.Data.SqlClient + Encryption.dll already on MAUI project
+
+
+Related:
+  docs/fixes/sqlclient-filenotfound-gssemail.txt
+  docs/fixes/gssemail-encrypted-connectionstring.txt
+
+
+================================================================================
+END
+================================================================================
