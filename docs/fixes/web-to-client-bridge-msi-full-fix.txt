@@ -1,0 +1,331 @@
+================================================================================
+NEW FILE — Web2ClientBridge MSI full fix (Installer Projects + Process)
+docs/fixes/web-to-client-bridge-msi-full-fix.txt
+================================================================================
+USE THIS FILE END-TO-END. Older MSI guides are background only.
+
+
+--------------------------------------------------------------------------------
+YOUR CURRENT FAILURE
+--------------------------------------------------------------------------------
+OUTPUT LOG:
+  (devenv HELP text: /TfsLink, /useenv, VsJITDebugger...)
+  [ERROR] Setup build failed for Web2ClientBridge with exit code 1
+  [INFO] Finished Web2ClientBridge with exit code 1 (setup exit 1)
+
+Explorer:
+  F:\build-output\Web2ClientBridge\   ← site files only, NO .msi
+
+Two separate problems (fix BOTH):
+
+  A) Visual Studio cannot build .vdproj until "Installer Projects" is
+     FULLY installed on the same VS that devenv uses
+     (your path: F:\Program Files\Microsoft Visual Studio\18\Professional\...)
+
+  B) DevOps tool must run devenv via ProcessStartInfo (NOT RunCommandAsync /
+     cmd.exe). cmd quoting under Program Files dumps HELP and exit 1.
+
+
+--------------------------------------------------------------------------------
+STEP 1 — Finish Installer Projects install (do this first)
+--------------------------------------------------------------------------------
+Your Extension Manager showed:
+  "Your changes are scheduled. The modifications will begin when
+   Microsoft Visual Studio is closed."
+  Button = Cancel Install  →  NOT installed yet.
+
+Do this:
+  1. Close ALL Visual Studio windows (and devenv processes)
+  2. Wait for VSIX installer to complete (UAC/admin if prompted)
+  3. Open Visual Studio 18 Professional again
+     (same install the DevOps tool uses)
+  4. Extensions → Manage Extensions → Installed
+  5. Confirm: "Microsoft Visual Studio Installer Projects 2022"
+     Prefer version 3.0.0+ (fixes for VS 2026 / VS 18)
+  6. Button should be Disable / Uninstall — NOT Install / Cancel Install
+
+If you only have VS 2022 Installer Projects on a different VS install,
+the DevOps tool will still fail because it resolves:
+  F:\Program Files\Microsoft Visual Studio\18\Professional\...\devenv.com
+
+
+--------------------------------------------------------------------------------
+STEP 2 — Prove MSI builds in the IDE (required before the tool)
+--------------------------------------------------------------------------------
+  1. File → Open →
+       F:\GSS\AppDev\gss-root\WebToClientBridge\WebToClientBridge.sln
+  2. Solution Explorer → right-click Web2ClientBridge.Setup → Build
+  3. Confirm file exists:
+       F:\GSS\AppDev\gss-root\WebToClientBridge\Web2ClientBridge.Setup\Release\*.msi
+       (name may be Web2ClientBridge.msi or similar)
+
+If IDE build fails (project won't load, migrate error, build errors):
+  → Stop. Fix Setup project / extension first. The DevOps tool cannot
+    succeed until IDE Build produces an .msi.
+
+If IDE build succeeds → continue to STEP 3.
+
+
+--------------------------------------------------------------------------------
+STEP 3 — appsettings.json (Web2ClientBridge entry)
+--------------------------------------------------------------------------------
+REMOVE setupBuildCommand (it goes through cmd and breaks).
+
+{
+  "name": "Web2ClientBridge",
+  "type": "AspNetMvc",
+  "projectPath": "WebToClientBridge\\WebToClientBridge\\WebToClientBridge.csproj",
+  "setupProjectPath": "WebToClientBridge\\Web2ClientBridge.Setup\\Web2ClientBridge.Setup.vdproj",
+  "setupSolutionPath": "WebToClientBridge\\WebToClientBridge.sln",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"WebToClientBridge\" && git fetch && git restore --source=@{u} --staged --worktree -- \"WebToClientBridge\" && (git stash pop || ver > nul)",
+  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
+  "outputSubfolder": "Web2ClientBridge"
+}
+
+Also need FolderProfile.pubxml for web build:
+  docs/fixes/web-to-client-bridge-build-publish.txt
+
+
+--------------------------------------------------------------------------------
+STEP 4 — Application model (if missing)
+--------------------------------------------------------------------------------
+    public string? SetupProjectPath { get; set; }
+    public string? SetupSolutionPath { get; set; }
+
+
+--------------------------------------------------------------------------------
+STEP 5 — BuildTab.razor — after web publish, call setup + use setupExit
+--------------------------------------------------------------------------------
+        int setupExit = 0;
+        if (exit == 0 && !string.IsNullOrWhiteSpace(app.SetupProjectPath))
+        {
+            Directory.CreateDirectory(outputFolder);
+            setupExit = await BuildSetupProjectAsync(app, outputFolder, cancellation);
+        }
+
+        var overallExit = exit != 0 ? exit : setupExit;
+        app.Status = overallExit == 0 ? "Success" : "Failed";
+        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Finished {app.Name} with exit code {overallExit}" +
+                     (setupExit != 0 ? $" (setup exit {setupExit})" : "") + "\r\n";
+
+        if (overallExit == 0)
+            await OnBuildSuccessChanged.InvokeAsync(true);
+
+
+--------------------------------------------------------------------------------
+STEP 6 — BuildTab.razor — REPLACE BuildSetupProjectAsync (Process, no cmd)
+--------------------------------------------------------------------------------
+Add if missing:
+  using System.Diagnostics;
+
+REPLACE your entire BuildSetupProjectAsync with this.
+Also ADD RunProcessCaptureAsync (below). Do NOT call BuildService.RunCommandAsync
+for devenv.
+
+    private async Task<int> BuildSetupProjectAsync(
+        Application app, string outputFolder, CancellationToken cancellation)
+    {
+        var setupProjectFile = GetConfiguredPath(app.SetupProjectPath);
+        if (string.IsNullOrWhiteSpace(setupProjectFile) || !File.Exists(setupProjectFile))
+        {
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] Setup project not found: {app.SetupProjectPath}\r\n";
+            return -1;
+        }
+
+        var setupProjectDir = Path.GetDirectoryName(setupProjectFile)!;
+        var setupProjectName = Path.GetFileNameWithoutExtension(setupProjectFile);
+
+        string? setupSolutionPath = null;
+        if (!string.IsNullOrWhiteSpace(app.SetupSolutionPath))
+            setupSolutionPath = GetConfiguredPath(app.SetupSolutionPath);
+
+        if (string.IsNullOrWhiteSpace(setupSolutionPath) || !File.Exists(setupSolutionPath))
+        {
+            var parent = Path.GetDirectoryName(setupProjectDir);
+            var candidate = parent is null ? null : Path.Combine(parent, "WebToClientBridge.sln");
+            if (!string.IsNullOrEmpty(candidate) && File.Exists(candidate))
+                setupSolutionPath = candidate;
+            else if (!string.IsNullOrEmpty(parent))
+                setupSolutionPath = Directory.GetFiles(parent, "*.sln").FirstOrDefault();
+        }
+
+        if (string.IsNullOrWhiteSpace(setupSolutionPath) || !File.Exists(setupSolutionPath))
+        {
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] Setup solution (.sln) not found for {app.Name}\r\n";
+            return -1;
+        }
+
+        var devenvPath = BuildService.ResolveVisualStudioIdePath();
+        if (string.IsNullOrWhiteSpace(devenvPath) || !File.Exists(devenvPath))
+        {
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] devenv not found.\r\n";
+            return -1;
+        }
+
+        var devenvCom = Path.ChangeExtension(devenvPath, ".com");
+        if (File.Exists(devenvCom))
+            devenvPath = devenvCom;
+
+        // Direct Process — avoids cmd.exe /c Program Files quoting (HELP dump)
+        var args =
+            $"\"{setupSolutionPath}\" /build Release /project \"{setupProjectName}\" /projectconfig Release";
+
+        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Building setup MSI for {app.Name}...\r\n";
+        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Setup exe: {devenvPath}\r\n";
+        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Setup args: {args}\r\n";
+
+        var solutionDir = Path.GetDirectoryName(setupSolutionPath) ?? setupProjectDir;
+
+        StartLogFlushTimer();
+        var exit = await RunProcessCaptureAsync(
+            devenvPath,
+            args,
+            solutionDir,
+            line =>
+            {
+                lock (_pendingLogBuffer)
+                {
+                    _pendingLogBuffer.Append(line);
+                    if (!line.EndsWith('\n') && !line.EndsWith('\r'))
+                        _pendingLogBuffer.AppendLine();
+                }
+                app.LogEntries.Add(line.TrimEnd('\r', '\n'));
+            },
+            cancellation);
+        FlushPendingLogs();
+
+        if (exit != 0)
+        {
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] Setup build failed for {app.Name} with exit code {exit}\r\n";
+            if (/* log still had HELP */) { }
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] HELP text (/useenv) => still using RunCommandAsync/cmd — paste STEP 6 again.\r\n";
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] No HELP text => Installer Projects missing or IDE Setup build fails — do STEP 1 + STEP 2.\r\n";
+            return exit;
+        }
+
+        var msiFiles = Directory.GetFiles(setupProjectDir, "*.msi", SearchOption.AllDirectories)
+            .OrderByDescending(File.GetLastWriteTimeUtc)
+            .ToArray();
+
+        if (msiFiles.Length == 0)
+        {
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] No .msi under {setupProjectDir} after setup build.\r\n";
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Build Web2ClientBridge.Setup in VS IDE first (STEP 2).\r\n";
+            return -1;
+        }
+
+        Directory.CreateDirectory(outputFolder);
+        foreach (var msi in msiFiles)
+        {
+            var dest = Path.Combine(outputFolder, Path.GetFileName(msi));
+            File.Copy(msi, dest, overwrite: true);
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Setup MSI copied to {dest}\r\n";
+        }
+
+        return 0;
+    }
+
+    private static async Task<int> RunProcessCaptureAsync(
+        string fileName,
+        string arguments,
+        string workingDirectory,
+        Action<string> onLine,
+        CancellationToken cancellation)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = fileName,
+            Arguments = arguments,
+            WorkingDirectory = workingDirectory,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+
+        using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        var tcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        process.OutputDataReceived += (_, e) =>
+        {
+            if (e.Data is not null)
+                onLine(e.Data);
+        };
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (e.Data is not null)
+                onLine(e.Data);
+        };
+        process.Exited += (_, _) => tcs.TrySetResult(process.ExitCode);
+
+        if (!process.Start())
+            return -1;
+
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+
+        await using (cancellation.Register(() =>
+        {
+            try
+            {
+                if (!process.HasExited)
+                    process.Kill(entireProcessTree: true);
+            }
+            catch { /* ignore */ }
+            tcs.TrySetCanceled(cancellation);
+        }))
+        {
+            return await tcs.Task.ConfigureAwait(false);
+        }
+    }
+
+
+--------------------------------------------------------------------------------
+STEP 7 — Rebuild DevOps tool, then Build Web2ClientBridge
+--------------------------------------------------------------------------------
+  1. Rebuild / restart GSS DevOps Automation Tool
+  2. Build → Web2ClientBridge
+  3. Expect:
+       F:\build-output\Web2ClientBridge\*.msi
+
+Good log (NO help dump):
+  [INFO] Setup exe: F:\Program Files\Microsoft Visual Studio\18\Professional\Common7\IDE\devenv.com
+  [INFO] Setup args: "...\WebToClientBridge.sln" /build Release /project "Web2ClientBridge.Setup" /projectconfig Release
+  (real build lines)
+  [INFO] Setup MSI copied to F:\build-output\Web2ClientBridge\Web2ClientBridge.msi
+  [INFO] Finished Web2ClientBridge with exit code 0
+
+
+--------------------------------------------------------------------------------
+Quick decision guide
+--------------------------------------------------------------------------------
+Still see /useenv /TfsLink HELP in log?
+  → STEP 6 not applied (still RunCommandAsync). Paste Process code again.
+
+No HELP, exit 1, no .msi under Setup\Release?
+  → STEP 1 / STEP 2. Extension or IDE Setup build broken.
+
+IDE produces .msi but tool does not copy?
+  → STEP 6 copy block / outputFolder path.
+
+Site files in build-output but no .msi?
+  → Setup step failed. Fix STEP 1–2 then STEP 6.
+
+
+--------------------------------------------------------------------------------
+Checklist
+--------------------------------------------------------------------------------
+[ ] Installer Projects FULLY installed on VS 18 (not "scheduled")
+[ ] IDE Build of Web2ClientBridge.Setup creates Release\*.msi
+[ ] setupBuildCommand removed from appsettings
+[ ] setupProjectPath + setupSolutionPath set
+[ ] BuildSetupProjectAsync uses Process (STEP 6), not RunCommandAsync
+[ ] RunProcessCaptureAsync added; using System.Diagnostics
+[ ] overallExit uses setupExit
+[ ] DevOps tool rebuilt
+[ ] F:\build-output\Web2ClientBridge\*.msi exists after Build
+
+
+================================================================================
+END
+================================================================================
