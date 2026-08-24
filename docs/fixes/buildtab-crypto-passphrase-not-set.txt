@@ -8,6 +8,16 @@ ERROR (OUTPUT LOG)
 [WARN] Email notification failed: Crypto passphrase is not set.
 
 
+IF YOU DO NOT HAVE CryptoPassphrase (property or value)
+-------------------------------------------------------
+Do NOT fight Encryption.Crypto in BuildTab.
+Use plaintext SQL connection string instead:
+
+  docs/fixes/buildtab-plaintext-cs-no-crypto.txt
+
+That path removes DecryptString / PassPhrase from BuildTab entirely.
+
+
 CAUSE
 -----
 Encryption.Crypto.DecryptString requires a passphrase first.

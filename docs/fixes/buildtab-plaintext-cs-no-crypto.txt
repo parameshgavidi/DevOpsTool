@@ -1,0 +1,135 @@
+================================================================================
+BuildTab.razor — NO CryptoPassphrase: use plaintext GSS connection string
+Do NOT use Encryption.Crypto in BuildTab
+Do NOT modify GSSEmail.cs
+================================================================================
+
+ERROR you hit
+-------------
+[WARN] Email notification failed: Crypto passphrase is not set.
+
+You said: CryptoPassphrase don't have
+→ skip decrypt in BuildTab. Pass a PLAIN SQL connection string instead.
+
+
+--------------------------------------------------------------------------------
+1) appsettings.json — use PLAINTEXT connection string
+--------------------------------------------------------------------------------
+Put a normal SQL connection string (NOT the huixt... encrypted blob):
+
+{
+  "build": {
+    "gssConnectionString": "Data Source=YOUR_SERVER;Initial Catalog=YOUR_DB;Integrated Security=True;TrustServerCertificate=True"
+  }
+}
+
+Or whatever key LoadAppSettings already reads (ConnectionString / GssConnectionString).
+
+MUST contain Data Source= or Server=
+MUST NOT look like huixt2azeur... (encrypted)
+
+
+--------------------------------------------------------------------------------
+2) BuildTab.razor — REPLACE email try/catch (no Crypto)
+--------------------------------------------------------------------------------
+
+            // Send success notification email via GSSEmailComponent
+            // No Encryption.Crypto here — no CryptoPassphrase required in BuildTab.
+            // Do NOT edit GSSEmail.cs
+            try
+            {
+                var settings = LoadAppSettings();
+
+                var fromEmail = string.IsNullOrWhiteSpace(settings.FromEmail)
+                    ? "GSSHelp@usps.gov"
+                    : settings.FromEmail;
+
+                var recipients = settings.EmailRecipients;
+                var toEmails = (recipients != null && recipients.Count > 0)
+                    ? string.Join(";", recipients)
+                    : "devi.s.lam@usps.gov";
+
+                // PLAINTEXT SQL connection string from appsettings (not encrypted)
+                var connectionString = settings.GssConnectionString ?? settings.ConnectionString;
+                if (string.IsNullOrWhiteSpace(connectionString))
+                    throw new InvalidOperationException("GSS connection string missing in appsettings.");
+
+                if (connectionString.IndexOf('=') < 0
+                    || (connectionString.IndexOf("Data Source", StringComparison.OrdinalIgnoreCase) < 0
+                        && connectionString.IndexOf("Server", StringComparison.OrdinalIgnoreCase) < 0))
+                {
+                    throw new InvalidOperationException(
+                        "appsettings GSS connection string must be PLAINTEXT SQL " +
+                        "(Data Source=... or Server=...), not an encrypted blob.");
+                }
+
+                var mailSubject = $"DevOps Tool — DB scripts bundled";
+                var mailBody =
+                    $"<html><body>" +
+                    $"<p>DB rollup / bundle completed.</p>" +
+                    $"<p>Timestamp: {DateTime.Now:yyyy-MM-dd HH:mm:ss}</p>" +
+                    $"</body></html>";
+
+                GSS.GSSEmail.SendEmailByNetV2(
+                    fromEmail, toEmails, mailSubject, mailBody, connectionString, true);
+
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Email send requested for {toEmails} (check Output→Debug if mail missing)\r\n";
+            }
+            catch (Exception emailEx)
+            {
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARN] Email notification failed: {emailEx.Message}\r\n";
+            }
+
+
+--------------------------------------------------------------------------------
+3) DELETE these lines from BuildTab (they cause the passphrase error)
+--------------------------------------------------------------------------------
+Remove entirely:
+
+  var crypto = new Encryption.Crypto();
+  crypto.PassPhrase = ...
+  crypto.DecryptString(...)
+  settings.CryptoPassphrase
+
+
+--------------------------------------------------------------------------------
+4) After rebuild — what to check
+--------------------------------------------------------------------------------
+[ ] LogOutput no longer says "Crypto passphrase is not set"
+[ ] Output → Debug: no "Keyword not supported: 'huixt..."
+[ ] If Debug says "Missing SECUREMAILCREDENTIAL" → add that row in GSS DB
+    (Process Settings). That is data, not BuildTab code.
+[ ] If Debug shows SMTP error → fix SECUREMAILCREDENTIAL Host/Port/User/Pwd
+
+
+--------------------------------------------------------------------------------
+NOTE about GSSEmail still using Encryption.Crypto internally
+--------------------------------------------------------------------------------
+SendEmailByNetV2 still decrypts Host/Pwd from SECUREMAILCREDENTIAL via Crypto.
+If Output→Debug later shows "Crypto passphrase is not set" FROM GSSEmail
+(GenerateSystemLogFileEntry), then passphrase must be set once at app startup
+in MauiProgram.cs / App — still without editing GSSEmail.cs — OR the shared
+Encryption.dll must get its passphrase the same way other GSS apps do.
+
+Until that happens, BuildTab plaintext CS at least lets EmailCredentialList
+query the DB.
+
+
+--------------------------------------------------------------------------------
+CHECKLIST
+--------------------------------------------------------------------------------
+[ ] No Crypto / DecryptString / CryptoPassphrase in BuildTab email block
+[ ] appsettings gssConnectionString is plaintext SQL
+[ ] GSSEmail.cs untouched
+[ ] System.Data.SqlClient still on MAUI project (earlier fix)
+
+
+Related:
+  docs/fixes/buildtab-crypto-passphrase-not-set.txt  (only if you later get a passphrase)
+  docs/fixes/buildtab-decrypt-before-sendemail.txt
+  docs/fixes/sqlclient-filenotfound-gssemail.txt
+
+
+================================================================================
+END
+================================================================================
