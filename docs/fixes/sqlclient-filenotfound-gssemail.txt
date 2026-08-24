@@ -105,10 +105,19 @@ Prefer FIX A (NuGet) so transitive natives / deps.json stay correct.
 --------------------------------------------------------------------------------
 AFTER SqlClient LOADS — next failures to watch
 --------------------------------------------------------------------------------
-Once SqlClient is fixed, SendEmailByNetV2 can still fail silently for:
+Once SqlClient is fixed, the NEXT common failure is:
 
-  1) Missing SECUREMAILCREDENTIAL in Process Settings
-     → Debug Output: "Missing SECUREMAILCREDENTIAL data in Process Settings"
+  ArgumentException: Keyword not supported: 'huixt2azeur...'
+  + Missing SECUREMAILCREDENTIAL data in Process Settings
+
+That means BuildTab passed an ENCRYPTED connection string into
+EmailCredentialList. Fix decrypt-before-send here:
+
+  docs/fixes/gssemail-encrypted-connectionstring.txt
+
+Other later failures (after plaintext CS works):
+
+  1) Truly missing SECUREMAILCREDENTIAL row in Process Settings
   2) Bad decrypted Host / Port / UserId / Pwd
   3) SMTP / TLS failure on smtpClient.Send
 
