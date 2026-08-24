@@ -98,13 +98,12 @@ B) Point projectPath at the .csproj (skip .vdproj / MSB4078)
    Prefer building the web project with msbuild on the .csproj.
    Setup .vdproj is NOT supported by MSBuild — build MSI with devenv.exe.
 
-C) Setup MSI → build-output (separate guide)
-   To build Web2ClientBridge.Setup.vdproj and copy the .msi into
-   F:\build-output\Web2ClientBridge\Setup\, see:
+C) Setup MSI → build-output (separate guide — REQUIRED for .msi)
+   If Explorer shows site files under F:\build-output\Web2ClientBridge but
+   NO .msi, and the log shows devenv HELP text then setup exit 1: that is
+   cmd.exe /c quoting breaking devenv.com under Program Files.
+   Fix guide (cmd "" quoting + copy *.msi into build-output):
      docs/fixes/web-to-client-bridge-setup-msi.txt
-   That guide adds setupProjectPath / setupBuildCommand, AspNetMvc
-   bin\Release\Publish lookup, BuildSetupProjectAsync fixes, and status
-   that fails when the MSI step fails.
 
 
 --------------------------------------------------------------------------------
