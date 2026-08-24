@@ -150,7 +150,10 @@ AFTER PASTE
 --------------------------------------------------------------------------------
 1. Rebuild GssDevOpsAutomationTool
 2. F5 → run the path that sends email
-3. Output → Debug:
+3. Output LOG / Debug:
+   - Compile OK with DecryptString
+   - If "[WARN] Email notification failed: Crypto passphrase is not set."
+     → docs/fixes/buildtab-crypto-passphrase-not-set.txt
    - "Keyword not supported: 'huixt..." must be GONE
    - If "Missing SECUREMAILCREDENTIAL" remains → fix Process Settings data
      (not BuildTab / not GSSEmail.cs)
