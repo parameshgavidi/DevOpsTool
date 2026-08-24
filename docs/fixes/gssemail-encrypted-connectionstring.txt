@@ -4,6 +4,17 @@ BuildTab / GSS.GSSEmail — ArgumentException: Keyword not supported (encrypted 
 MAUI Blazor Hybrid (GssDevOpsAutomationTool) on .NET 10 / Windows
 ================================================================================
 
+CONSTRAINT — do NOT modify GSSEmail.cs / GSSEmailComponent
+----------------------------------------------------------
+GSSEmail.cs is shared / locked. All fixes below are ONLY in:
+  - GssDevOpsAutomationTool.csproj  (NuGet: System.Data.SqlClient — prior doc)
+  - BuildTab.razor                  (decrypt connection string before call)
+  - GSS Process Settings data       (SECUREMAILCREDENTIAL row, if still missing)
+
+You may READ GSSEmail.cs to copy the Encryption.Crypto method name used for
+Host/Pwd — do not edit that file.
+
+
 PREREQ
 ------
 System.Data.SqlClient FileNotFound is already fixed
@@ -54,16 +65,17 @@ the DB call failed — not proof the row is absent (check again AFTER decrypt).
 FIX A (required) — decrypt GSS connection string BEFORE SendEmailByNetV2
 --------------------------------------------------------------------------------
 
-In BuildTab.razor, in the success-email try block, decrypt with the SAME
-Encryption.Crypto API GSSEmail.cs already uses for Host/Port/UserId/Pwd.
+In BuildTab.razor ONLY — decrypt with the SAME Encryption.Crypto API
+GSSEmail.cs already uses for Host/Port/UserId/Pwd (READ that file; do not edit it).
 
-1. Open GSSEmail.cs and find the decrypt call, e.g.:
+1. Open GSSEmail.cs (read-only) and find the decrypt call, e.g.:
 
      Encryption.Crypto objCrypto = new Encryption.Crypto();
      string host = objCrypto.Decrypt(CredentialList["Host"].ToString());
      //  ↑ copy THIS method name (Decrypt / DecryptString / DecryptData / ...)
 
-2. REPLACE the email send block with (adjust property names to match yours):
+2. In BuildTab.razor, REPLACE the email send block with
+   (adjust property names to match yours):
 
   try
   {
@@ -142,14 +154,22 @@ That is DATA / ops config — not a MAUI csproj fix.
 
 
 --------------------------------------------------------------------------------
-OPTIONAL — stop false "[INFO] Email notification sent"
+WORKAROUND — false "[INFO] Email sent" without changing GSSEmail.cs
 --------------------------------------------------------------------------------
-SendEmailByNetV2 swallows exceptions (logs only). Prefer one of:
+SendEmailByNetV2 swallows exceptions (you cannot change that). So:
 
-A) In GSSEmail.SendEmailByNetV2 catch: log, then `throw;`
-B) Change method to return bool / throw on missing credentials else-branch
+1. In BuildTab, ONLY log success after decrypt guard passes AND the call
+   returns — and ALSO tell the user to check Output → Debug for
+   GenerateSystemLogFileEntry lines (real failures still land there).
 
-Then BuildTab's catch will show [WARN] in LogOutput.
+2. Prefer logging a cautious message:
+
+  GSS.GSSEmail.SendEmailByNetV2(
+      fromEmail, toEmails, mailSubject, mailBody, connectionString, true);
+  LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Email send requested for {toEmails} (check Output→Debug if mail missing)\r\n";
+
+3. Your BuildTab catch WILL fire for decrypt/guard failures (those are yours).
+   It will NOT fire for SMTP / missing-credential failures inside GSSEmail.
 
 
 --------------------------------------------------------------------------------
@@ -191,6 +211,7 @@ CHECKLIST
 --------------------------------------------------------------------------------
 DO NOT
 --------------------------------------------------------------------------------
+- Modify GSSEmail.cs / GSSEmailComponent (not allowed / not needed)
 - Pass appsettings encrypted blob straight into SendEmailByNetV2
 - Treat "Missing SECUREMAILCREDENTIAL" as the root cause while Keyword not
   supported still appears (fix decrypt first)
