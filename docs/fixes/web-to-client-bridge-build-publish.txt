@@ -95,11 +95,20 @@ Practical path: create locally to unblock → team commits same file → permane
 
 
 B) Point projectPath at the .csproj (skip .vdproj / MSB4078)
-   Prefer building the web project only — Setup .vdproj is not supported by MSBuild.
+   Prefer building the web project with msbuild on the .csproj.
+   Setup .vdproj is NOT supported by MSBuild — build MSI with devenv.exe.
+
+C) Setup MSI → build-output (separate guide)
+   To build Web2ClientBridge.Setup.vdproj and copy the .msi into
+   F:\build-output\Web2ClientBridge\Setup\, see:
+     docs/fixes/web-to-client-bridge-setup-msi.txt
+   That guide adds setupProjectPath / setupBuildCommand, AspNetMvc
+   bin\Release\Publish lookup, BuildSetupProjectAsync fixes, and status
+   that fails when the MSI step fails.
 
 
 --------------------------------------------------------------------------------
-appsettings.json — USE THIS
+appsettings.json — USE THIS (web build; add setup fields from setup-msi guide)
 --------------------------------------------------------------------------------
 
 {
@@ -151,8 +160,12 @@ Notes
 - Published files land under:
     WebToClientBridge\WebToClientBridge\bin\Release\Publish\
   (then copy/archive to build-output\Web2ClientBridge per BuildTab logic)
+- BuildTab must look up AspNetMvc publish at bin\Release\Publish (not only
+  PrecompiledWeb). Full MSI copy flow:
+  docs/fixes/web-to-client-bridge-setup-msi.txt
 - Get latest is toolbar-only; Build does not run gitLatestCommand
 - AspNetMvc → MSBuild only (not dotnet publish)
+- .vdproj MSI → devenv.exe (not msbuild)
 
 
 --------------------------------------------------------------------------------
@@ -166,6 +179,8 @@ Checklist
 [ ] MSB4078 Setup.vdproj not blocking (csproj build)
 [ ] Get latest OK with empty stash
 [ ] Build Web2ClientBridge exits 0
+[ ] If MSI needed: follow docs/fixes/web-to-client-bridge-setup-msi.txt
+    (setup fields + BuildSetupProjectAsync + AspNetMvc publish lookup)
 
 
 ================================================================================

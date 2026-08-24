@@ -1,0 +1,376 @@
+================================================================================
+Web2ClientBridge — build Setup MSI (.vdproj) + copy to build-output
+================================================================================
+*** YES — code changes are required in BuildTab.razor (+ Application model) ***
+*** Plus appsettings.json fields for setupProjectPath / setupBuildCommand ***
+
+Based on folder:
+  F:\GSS\AppDev\gss-root\WebToClientBridge\
+
+Contents (solution root):
+  packages\
+  Web2ClientBridge.Setup\          (.vdproj — MSI; NOT built by msbuild)
+  WebToClientBridge\               (ASP.NET MVC .csproj)
+  WebToClientBridge.sln
+
+
+--------------------------------------------------------------------------------
+WHY YOU SEE ERRORS (from current BuildTab / appsettings)
+--------------------------------------------------------------------------------
+Your screenshots already call BuildSetupProjectAsync after a successful web
+build. These bugs still break MSI → build-output:
+
+1) AspNetMvc publish folder is never found
+   BuildTab only looks under PrecompiledWeb for GSS Web Service / GSSWeb.
+   Web2ClientBridge FolderProfile publishes to:
+     WebToClientBridge\WebToClientBridge\bin\Release\Publish\
+   Result in log:
+     [WARN] Publish output not found for Web2ClientBridge under ...
+   Web site files never land in F:\build-output\Web2ClientBridge.
+
+2) MSI source folder too narrow
+   Code only checks:
+     Web2ClientBridge.Setup\Release
+     Web2ClientBridge.Setup\Debug
+   If devenv put the .msi one level deeper (or only the .msi exists elsewhere
+   under the setup project), you get:
+     [WARN] Setup output folder not found for Web2ClientBridge: ...\Release
+   and nothing is copied to build-output.
+
+3) Final Status ignores setupExit
+   After BuildSetupProjectAsync returns setupExit != 0, status still uses
+   only the web build exit code → UI shows Success while MSI failed.
+
+4) .vdproj cannot use msbuild
+   MSB4078 is expected if you point projectPath at the .sln / .vdproj.
+   Web = msbuild on .csproj. Setup MSI = devenv.exe on .vdproj via .sln.
+
+5) Missing / unbound Application properties
+   If SetupProjectPath / SetupBuildCommand are not on the Application model
+   (or not loaded from appsettings), BuildSetupProjectAsync never runs
+   (SetupProjectPath is null/empty).
+
+
+--------------------------------------------------------------------------------
+PART A — appsettings.json (USE THIS for Web2ClientBridge)
+--------------------------------------------------------------------------------
+
+{
+  "name": "Web2ClientBridge",
+  "type": "AspNetMvc",
+  "projectPath": "WebToClientBridge\\WebToClientBridge\\WebToClientBridge.csproj",
+  "setupProjectPath": "WebToClientBridge\\Web2ClientBridge.Setup\\Web2ClientBridge.Setup.vdproj",
+  "setupSolutionPath": "WebToClientBridge\\WebToClientBridge.sln",
+  "setupOutputSubfolder": "Setup",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"WebToClientBridge\" && git fetch && git restore --source=@{u} --staged --worktree -- \"WebToClientBridge\" && (git stash pop || ver > nul)",
+  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
+  "setupBuildCommand": "\"{devenvPath}\" \"{setupSolutionPath}\" /build Release /project \"{setupProjectName}\" /projectconfig Release",
+  "outputSubfolder": "Web2ClientBridge"
+}
+
+
+--------------------------------------------------------------------------------
+Copy-paste fields only
+--------------------------------------------------------------------------------
+
+projectPath:
+  WebToClientBridge\WebToClientBridge\WebToClientBridge.csproj
+
+setupProjectPath:
+  WebToClientBridge\Web2ClientBridge.Setup\Web2ClientBridge.Setup.vdproj
+
+setupSolutionPath:
+  WebToClientBridge\WebToClientBridge.sln
+
+setupOutputSubfolder:
+  Setup
+
+buildCommand (needs FolderProfile.pubxml — see web-to-client-bridge-build-publish.txt):
+  msbuild "{projectFile}" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile
+
+setupBuildCommand:
+  "{devenvPath}" "{setupSolutionPath}" /build Release /project "{setupProjectName}" /projectconfig Release
+
+outputSubfolder:
+  Web2ClientBridge
+
+
+--------------------------------------------------------------------------------
+PART B — Application model (REQUIRED)
+--------------------------------------------------------------------------------
+Add these properties next to ProjectPath / BuildCommand / OutputSubfolder
+(names must bind from appsettings camelCase):
+
+    public string? SetupProjectPath { get; set; }
+    public string? SetupSolutionPath { get; set; }
+    public string? SetupBuildCommand { get; set; }
+    public string? SetupOutputSubfolder { get; set; }
+
+If you use a DTO / manual mapping in LoadAppSettings, copy these four fields
+into Application the same way you copy projectPath / buildCommand.
+
+
+--------------------------------------------------------------------------------
+PART C — BuildApplication: AspNetMvc publish lookup + setup call + status
+--------------------------------------------------------------------------------
+Inside if (exit == 0) AFTER the GSS Web Service / GSSWeb precompiled blocks,
+ADD this AspNetMvc / Web2ClientBridge branch (else if):
+
+            else if (string.Equals(app.Name, "Web2ClientBridge", StringComparison.OrdinalIgnoreCase)
+                     || string.Equals(app.Type, "AspNetMvc", StringComparison.OrdinalIgnoreCase))
+            {
+                // FolderProfile.pubxml → bin\Release\Publish (under the .csproj dir)
+                precompiled = Path.Combine(workingDir, "bin", "Release", "Publish");
+                if (!Directory.Exists(precompiled))
+                    precompiled = Path.Combine(workingDir, "bin", "Release", "PublishOutput");
+                if (!Directory.Exists(precompiled) && !string.IsNullOrEmpty(projectFile))
+                {
+                    var projDir = Path.GetDirectoryName(projectFile);
+                    if (!string.IsNullOrEmpty(projDir))
+                    {
+                        precompiled = Path.Combine(projDir, "bin", "Release", "Publish");
+                        if (!Directory.Exists(precompiled))
+                            precompiled = Path.Combine(projDir, "bin", "Release", "PublishOutput");
+                    }
+                }
+            }
+
+Keep your existing archive + copy loop that runs when precompiled exists
+(same as GSSWeb). That copies web publish → F:\build-output\Web2ClientBridge.
+
+THEN replace the finish/status block so setup runs and setupExit counts:
+
+        int setupExit = 0;
+        if (exit == 0 && !string.IsNullOrWhiteSpace(app.SetupProjectPath))
+        {
+            // Ensure build-output\<outputSubfolder> exists even if web publish
+            // folder was missing (MSI-only still copies under ...\Setup).
+            Directory.CreateDirectory(outputFolder);
+            setupExit = await BuildSetupProjectAsync(app, outputFolder, cancellation);
+        }
+
+        var overallExit = exit != 0 ? exit : setupExit;
+        app.Status = overallExit == 0 ? "Success" : "Failed";
+        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Finished {app.Name} with exit code {overallExit}" +
+                     (setupExit != 0 ? $" (setup exit {setupExit})" : "") + "\r\n";
+
+        if (overallExit == 0)
+            await OnBuildSuccessChanged.InvokeAsync(true);
+
+
+--------------------------------------------------------------------------------
+PART D — BuildSetupProjectAsync (REPLACE your method with this)
+--------------------------------------------------------------------------------
+Fixes vs your current method:
+  - Prefer app.SetupSolutionPath from appsettings (not only hard-coded .sln)
+  - Fall back: sibling .sln next to setup folder / first .sln in parent
+  - After devenv succeeds, find *.msi under the setup project (not only
+    Release/Debug folder existence)
+  - Copy MSI (+ supporting setup files) to:
+      F:\build-output\Web2ClientBridge\Setup\
+
+    private async Task<int> BuildSetupProjectAsync(
+        Application app, string outputFolder, CancellationToken cancellation)
+    {
+        var setupProjectFile = GetConfiguredPath(app.SetupProjectPath);
+        if (string.IsNullOrWhiteSpace(setupProjectFile) || !File.Exists(setupProjectFile))
+        {
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] Setup project not found for {app.Name}: {app.SetupProjectPath}\r\n";
+            return -1;
+        }
+
+        var setupProjectDir = Path.GetDirectoryName(setupProjectFile)!;
+        var setupProjectName = Path.GetFileNameWithoutExtension(setupProjectFile);
+
+        // 1) appsettings setupSolutionPath  2) hard-coded sibling  3) discover *.sln
+        string? setupSolutionPath = null;
+        if (!string.IsNullOrWhiteSpace(app.SetupSolutionPath))
+            setupSolutionPath = GetConfiguredPath(app.SetupSolutionPath);
+
+        if (string.IsNullOrWhiteSpace(setupSolutionPath) || !File.Exists(setupSolutionPath))
+        {
+            var parent = Path.GetDirectoryName(setupProjectDir);
+            var candidate = parent is null
+                ? null
+                : Path.Combine(parent, "WebToClientBridge.sln");
+            if (!string.IsNullOrEmpty(candidate) && File.Exists(candidate))
+                setupSolutionPath = candidate;
+            else if (!string.IsNullOrEmpty(parent))
+                setupSolutionPath = Directory.GetFiles(parent, "*.sln").FirstOrDefault();
+        }
+
+        if (string.IsNullOrWhiteSpace(setupSolutionPath) || !File.Exists(setupSolutionPath))
+        {
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] Setup solution (.sln) not found for {app.Name}\r\n";
+            return -1;
+        }
+
+        var devenvPath = BuildService.ResolveVisualStudioIdePath();
+        if (string.IsNullOrWhiteSpace(devenvPath) || !File.Exists(devenvPath))
+        {
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] devenv.exe not found. Install Visual Studio + Installer Projects for .vdproj.\r\n";
+            return -1;
+        }
+
+        var command = string.IsNullOrWhiteSpace(app.SetupBuildCommand)
+            ? "\"{devenvPath}\" \"{setupSolutionPath}\" /build Release /project \"{setupProjectName}\" /projectconfig Release"
+            : app.SetupBuildCommand;
+
+        command = command
+            .Replace("{setupProjectFile}", setupProjectFile, StringComparison.OrdinalIgnoreCase)
+            .Replace("{setupProjectDir}", setupProjectDir, StringComparison.OrdinalIgnoreCase)
+            .Replace("{setupSolutionPath}", setupSolutionPath, StringComparison.OrdinalIgnoreCase)
+            .Replace("{setupProjectName}", setupProjectName, StringComparison.OrdinalIgnoreCase)
+            .Replace("{devenvPath}", devenvPath, StringComparison.OrdinalIgnoreCase)
+            .Replace("{outputFolder}", outputFolder, StringComparison.OrdinalIgnoreCase);
+
+        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Building setup MSI for {app.Name}...\r\n";
+        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Setup command: {command}\r\n";
+
+        StartLogFlushTimer();
+        var exit = await BuildService.RunCommandAsync(
+            setupProjectDir,
+            command,
+            line =>
+            {
+                lock (_pendingLogBuffer)
+                {
+                    _pendingLogBuffer.Append(line);
+                }
+                app.LogEntries.Add(line.TrimEnd('\r', '\n'));
+            },
+            cancellation);
+        FlushPendingLogs();
+
+        if (exit != 0)
+        {
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] Setup build failed for {app.Name} with exit code {exit}\r\n";
+            return exit;
+        }
+
+        // Prefer Release, then Debug, then any *.msi under the setup project tree
+        string? setupSourceDir = null;
+        var releaseDir = Path.Combine(setupProjectDir, "Release");
+        var debugDir = Path.Combine(setupProjectDir, "Debug");
+        if (Directory.Exists(releaseDir) &&
+            Directory.EnumerateFiles(releaseDir, "*.msi", SearchOption.AllDirectories).Any())
+            setupSourceDir = releaseDir;
+        else if (Directory.Exists(debugDir) &&
+                 Directory.EnumerateFiles(debugDir, "*.msi", SearchOption.AllDirectories).Any())
+            setupSourceDir = debugDir;
+        else
+        {
+            var anyMsi = Directory.Exists(setupProjectDir)
+                ? Directory.GetFiles(setupProjectDir, "*.msi", SearchOption.AllDirectories)
+                    .OrderByDescending(File.GetLastWriteTimeUtc)
+                    .FirstOrDefault()
+                : null;
+            if (!string.IsNullOrEmpty(anyMsi))
+                setupSourceDir = Path.GetDirectoryName(anyMsi);
+        }
+
+        if (string.IsNullOrEmpty(setupSourceDir) || !Directory.Exists(setupSourceDir))
+        {
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] Setup MSI not found under {setupProjectDir} (checked Release/Debug and *.msi).\r\n";
+            return -1;
+        }
+
+        var setupDestFolder = Path.Combine(
+            outputFolder,
+            string.IsNullOrWhiteSpace(app.SetupOutputSubfolder) ? "Setup" : app.SetupOutputSubfolder);
+
+        if (Directory.Exists(setupDestFolder))
+            Directory.Delete(setupDestFolder, recursive: true);
+        Directory.CreateDirectory(setupDestFolder);
+
+        foreach (var file in Directory.GetFiles(setupSourceDir, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(setupSourceDir, file);
+            var dest = Path.Combine(setupDestFolder, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+            File.Copy(file, dest, overwrite: true);
+        }
+
+        var msiCopied = Directory.GetFiles(setupDestFolder, "*.msi", SearchOption.AllDirectories);
+        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Setup output copied to {setupDestFolder}" +
+                     (msiCopied.Length > 0
+                         ? $" ({string.Join(", ", msiCopied.Select(Path.GetFileName))})"
+                         : " (warning: no .msi in copied files)") + "\r\n";
+
+        return 0;
+    }
+
+
+--------------------------------------------------------------------------------
+PART E — Prerequisites on the build PC (not code)
+--------------------------------------------------------------------------------
+[ ] Visual Studio with "Microsoft Visual Studio Installer Projects" extension
+    (.vdproj will not build without it — devenv exits non-zero)
+[ ] FolderProfile.pubxml present (or alternate FileSystem buildCommand)
+    See: docs/fixes/web-to-client-bridge-build-publish.txt
+[ ] projectPath points at .csproj (NOT .sln / NOT .vdproj)
+[ ] Repo Root = F:\GSS\AppDev\gss-root (parent of WebToClientBridge\)
+[ ] Output root = F:\build-output (tool OutputRoot / build:outputRoot)
+
+
+--------------------------------------------------------------------------------
+Expected result after fix
+--------------------------------------------------------------------------------
+Web publish:
+  F:\build-output\Web2ClientBridge\          (site files from bin\Release\Publish)
+
+Setup MSI:
+  F:\build-output\Web2ClientBridge\Setup\*.msi
+  (plus any setup support files devenv wrote next to the MSI)
+
+Log should include:
+  [INFO] Building setup MSI for Web2ClientBridge...
+  [INFO] Setup command: "C:\...\devenv.exe" "...\WebToClientBridge.sln" /build Release /project "Web2ClientBridge.Setup" /projectconfig Release
+  [INFO] Setup output copied to F:\build-output\Web2ClientBridge\Setup (Web2ClientBridge.msi)
+  [INFO] Finished Web2ClientBridge with exit code 0
+
+
+--------------------------------------------------------------------------------
+Common error → fix
+--------------------------------------------------------------------------------
+ERROR: Setup project not found
+  → setupProjectPath wrong or Application.SetupProjectPath not bound
+
+ERROR: Setup solution (.sln) not found
+  → add setupSolutionPath in appsettings (PART A)
+
+ERROR: devenv.exe not found
+  → install VS; ensure ResolveVisualStudioIdePath finds Community/Professional/Enterprise
+
+ERROR: Setup build failed with exit code N
+  → install "Installer Projects" extension; open .sln in VS once; rebuild
+    Web2ClientBridge.Setup manually to confirm vdproj builds
+
+ERROR: Setup MSI not found under ...\Web2ClientBridge.Setup
+  → devenv did not produce MSI (see previous); or output went elsewhere —
+    PART D recursive *.msi search should find it if it exists
+
+WARN: Publish output not found for Web2ClientBridge
+  → PART C AspNetMvc bin\Release\Publish lookup missing, OR FolderProfile /
+    publish failed (fix web build first — see web-to-client-bridge-build-publish.txt)
+
+MSB4078: .vdproj is not supported by MSBuild
+  → ignore if you still build .sln; prefer projectPath = .csproj (PART A)
+
+
+--------------------------------------------------------------------------------
+Checklist
+--------------------------------------------------------------------------------
+[ ] Application has SetupProjectPath, SetupSolutionPath, SetupBuildCommand,
+    SetupOutputSubfolder and LoadAppSettings maps them
+[ ] appsettings Web2ClientBridge entry matches PART A
+[ ] AspNetMvc / Web2ClientBridge precompiled → bin\Release\Publish (PART C)
+[ ] BuildSetupProjectAsync replaced with PART D (*.msi search + setupSolutionPath)
+[ ] overallExit uses setupExit (failed MSI ⇒ Status Failed)
+[ ] Manual: devenv can build Web2ClientBridge.Setup in VS
+[ ] Build Web2ClientBridge → MSI under F:\build-output\Web2ClientBridge\Setup\
+
+
+================================================================================
+END
+================================================================================
