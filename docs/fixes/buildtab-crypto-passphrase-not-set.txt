@@ -1,0 +1,177 @@
+================================================================================
+BuildTab.razor — FIX: Crypto passphrase is not set
+(after DecryptString compiles)
+================================================================================
+
+ERROR (OUTPUT LOG)
+------------------
+[WARN] Email notification failed: Crypto passphrase is not set.
+
+
+CAUSE
+-----
+Encryption.Crypto.DecryptString requires a passphrase first.
+new Encryption.Crypto() alone is not enough in the MAUI app.
+
+
+CONSTRAINT
+----------
+Do NOT modify GSSEmail.cs.
+Fix only BuildTab.razor + appsettings (+ BuildSettings model if needed).
+
+
+--------------------------------------------------------------------------------
+STEP 1 — find how to set passphrase (IntelliSense on Encryption.Crypto)
+--------------------------------------------------------------------------------
+In BuildTab, type:  new Encryption.Crypto().
+Check members / constructors for one of:
+
+  A) property:   crypto.PassPhrase = "...";
+                 crypto.Passphrase = "...";
+                 crypto.Phrase = "...";
+
+  B) method:     crypto.SetPassPhrase("...");
+                 crypto.SetPassphrase("...");
+
+  C) ctor:       new Encryption.Crypto("your-passphrase");
+
+Use whichever IntelliSense shows. Copy the SAME pattern GSSEmail.cs uses
+if it sets a passphrase before DecryptString (read-only).
+
+
+--------------------------------------------------------------------------------
+STEP 2 — store passphrase in appsettings (do not hardcode in razor long-term)
+--------------------------------------------------------------------------------
+Under "build" (or top-level — match how LoadAppSettings reads other keys):
+
+{
+  "build": {
+    "gssConnectionString": "<encrypted-blob>",
+    "cryptoPassphrase": "<GSS Encryption passphrase>"
+  }
+}
+
+Add to BuildSettings / DeploymentModels:
+
+  public string CryptoPassphrase { get; set; } = string.Empty;
+  // and/or public string GssConnectionString { get; set; } = string.Empty;
+
+Wire LoadAppSettings to map build:cryptoPassphrase → settings.CryptoPassphrase.
+
+
+--------------------------------------------------------------------------------
+STEP 3 — paste-ready email block (BuildTab.razor ONLY)
+--------------------------------------------------------------------------------
+Replace your decrypt lines with:
+
+            // Send success notification email via GSSEmailComponent
+            // Do NOT edit GSSEmail.cs
+            try
+            {
+                var settings = LoadAppSettings();
+
+                var fromEmail = string.IsNullOrWhiteSpace(settings.FromEmail)
+                    ? "GSSHelp@usps.gov"
+                    : settings.FromEmail;
+
+                var recipients = settings.EmailRecipients;
+                var toEmails = (recipients != null && recipients.Count > 0)
+                    ? string.Join(";", recipients)
+                    : "devi.s.lam@usps.gov";
+
+                var encryptedCs = settings.GssConnectionString ?? settings.ConnectionString;
+                if (string.IsNullOrWhiteSpace(encryptedCs))
+                    throw new InvalidOperationException("GSS connection string missing in appsettings.");
+
+                var passphrase = settings.CryptoPassphrase;
+                if (string.IsNullOrWhiteSpace(passphrase))
+                    throw new InvalidOperationException(
+                        "Crypto passphrase is not set. Add build:cryptoPassphrase to appsettings.json.");
+
+                var crypto = new Encryption.Crypto();
+                // Pick the API IntelliSense shows (examples — keep ONE):
+                crypto.PassPhrase = passphrase;           // common
+                // crypto.SetPassPhrase(passphrase);      // if method exists
+                // var crypto = new Encryption.Crypto(passphrase);  // if ctor exists
+
+                var connectionString = crypto.DecryptString(encryptedCs);
+
+                if (string.IsNullOrWhiteSpace(connectionString)
+                    || connectionString.IndexOf('=') < 0
+                    || (connectionString.IndexOf("Data Source", StringComparison.OrdinalIgnoreCase) < 0
+                        && connectionString.IndexOf("Server", StringComparison.OrdinalIgnoreCase) < 0))
+                {
+                    throw new InvalidOperationException(
+                        "GSS connection string did not decrypt to a SQL connection string. Check passphrase.");
+                }
+
+                var mailSubject = $"DevOps Tool — DB scripts bundled";
+                var mailBody =
+                    $"<html><body>" +
+                    $"<p>DB rollup / bundle completed.</p>" +
+                    $"<p>Timestamp: {DateTime.Now:yyyy-MM-dd HH:mm:ss}</p>" +
+                    $"</body></html>";
+
+                GSS.GSSEmail.SendEmailByNetV2(
+                    fromEmail, toEmails, mailSubject, mailBody, connectionString, true);
+
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Email send requested for {toEmails} (check Output→Debug if mail missing)\r\n";
+            }
+            catch (Exception emailEx)
+            {
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARN] Email notification failed: {emailEx.Message}\r\n";
+            }
+
+
+--------------------------------------------------------------------------------
+ALTERNATE (no Crypto in BuildTab) — plaintext CS in DevOps appsettings only
+--------------------------------------------------------------------------------
+If policy allows the DevOps tool machine to store a PLAIN SQL connection string:
+
+  1) Put plaintext CS in appsettings (Data Source=...;Initial Catalog=...;...)
+  2) Skip Crypto entirely:
+
+       var connectionString = settings.GssConnectionString;
+       GSS.GSSEmail.SendEmailByNetV2(..., connectionString, true);
+
+  GSSEmail will still decrypt Host/Pwd from SECUREMAILCREDENTIAL using its own
+  Crypto path — that path may ALSO need the passphrase set somewhere the DLL
+  can see it (app startup). If GSSEmail then fails with the same passphrase
+  error in Output→Debug, you must set passphrase once at app startup
+  (MauiProgram.cs / App start), still without editing GSSEmail.cs:
+
+       // once at startup
+       var crypto = new Encryption.Crypto();
+       crypto.PassPhrase = builder.Configuration["build:cryptoPassphrase"];
+       // if passphrase is static/shared, set the static member IntelliSense shows
+
+
+--------------------------------------------------------------------------------
+WHERE TO GET THE PASSPHRASE VALUE
+--------------------------------------------------------------------------------
+- Same passphrase used by other GSS apps that call Encryption.Crypto
+- Ask team / check existing GSS web/service config (not from this docs repo)
+- Must match the key that encrypted gssConnectionString and SECUREMAILCREDENTIAL
+
+
+--------------------------------------------------------------------------------
+CHECKLIST
+--------------------------------------------------------------------------------
+[ ] IntelliSense: PassPhrase / SetPassPhrase / ctor(passphrase) identified
+[ ] build:cryptoPassphrase in appsettings.json
+[ ] BuildSettings.CryptoPassphrase loaded by LoadAppSettings
+[ ] Passphrase set BEFORE DecryptString
+[ ] Still using DecryptString (not Decrypt)
+[ ] GSSEmail.cs untouched
+[ ] After success: Output→Debug has no Keyword-not-supported / Missing SECUREMAILCREDENTIAL
+
+
+Related:
+  docs/fixes/buildtab-decryptstring-not-decrypt.txt
+  docs/fixes/buildtab-decrypt-before-sendemail.txt
+  docs/fixes/gssemail-encrypted-connectionstring.txt
+
+
+================================================================================
+END
+================================================================================
