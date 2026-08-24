@@ -1,0 +1,203 @@
+================================================================================
+BuildTab / GSS.GSSEmail — ArgumentException: Keyword not supported (encrypted CS)
++ Missing SECUREMAILCREDENTIAL data in Process Settings
+MAUI Blazor Hybrid (GssDevOpsAutomationTool) on .NET 10 / Windows
+================================================================================
+
+PREREQ
+------
+System.Data.SqlClient FileNotFound is already fixed
+(see docs/fixes/sqlclient-filenotfound-gssemail.txt).
+This doc is the NEXT failure after SqlClient loads.
+
+
+SYMPTOM
+-------
+- UI LogOutput still shows: [INFO] Email notification sent to ...
+- No email arrives
+- Visual Studio → View → Output → Debug shows BOTH of:
+
+  GenerateSystemLogFileEntry: An error occurred while Sending Emails
+  System.ArgumentException: Keyword not supported: 'huixt2azeur...'
+    at System.Data.SqlClient...
+    at Microsoft.ApplicationBlocks.Data.SqlHelper.ExecuteDataset
+    at GSS.GSSEmail.EmailCredentialList(...) in GSSEmail.cs:~336
+    at GSS.GSSEmail.SendEmailByNetV2(...)
+
+  GenerateSystemLogFileEntry: Missing SECUREMAILCREDENTIAL data in Process Settings
+
+
+CAUSE (read the garbled "keyword")
+----------------------------------
+'huixt2azeur...' is NOT a SQL keyword. It is the START of an ENCRYPTED blob
+that BuildTab passed as sGSSConnectionString.
+
+Flow today:
+
+  BuildTab.razor
+    connectionString = LoadAppSettings() / appsettings   ← still ENCRYPTED
+    SendEmailByNetV2(..., connectionString, true)
+      → EmailCredentialList(sGSSConnectionString, true)
+         → SqlHelper.ExecuteDataset(ENCRYPTED_BLOB, ...)
+            → SqlClient parses first token as a keyword → ArgumentException
+      → catch logs "An error occurred while Sending Emails..."
+      → credentials never load
+      → else branch logs "Missing SECUREMAILCREDENTIAL data..."
+      → returns WITHOUT throw
+  BuildTab logs success anyway
+
+So "Missing SECUREMAILCREDENTIAL" here is usually a FOLLOW-ON message after
+the DB call failed — not proof the row is absent (check again AFTER decrypt).
+
+
+--------------------------------------------------------------------------------
+FIX A (required) — decrypt GSS connection string BEFORE SendEmailByNetV2
+--------------------------------------------------------------------------------
+
+In BuildTab.razor, in the success-email try block, decrypt with the SAME
+Encryption.Crypto API GSSEmail.cs already uses for Host/Port/UserId/Pwd.
+
+1. Open GSSEmail.cs and find the decrypt call, e.g.:
+
+     Encryption.Crypto objCrypto = new Encryption.Crypto();
+     string host = objCrypto.Decrypt(CredentialList["Host"].ToString());
+     //  ↑ copy THIS method name (Decrypt / DecryptString / DecryptData / ...)
+
+2. REPLACE the email send block with (adjust property names to match yours):
+
+  try
+  {
+      var settings = LoadAppSettings();
+      var fromEmail = settings.FromEmail ?? "GSSHelp@usps.gov";
+      var recipients = settings.EmailRecipients; // your actual property
+      var toEmails = (recipients != null && recipients.Count > 0)
+          ? string.Join(";", recipients)
+          : "devi.s.lam@usps.gov";
+
+      // --- FIX: appsettings / LoadAppSettings often stores ENCRYPTED CS ---
+      var encryptedCs = settings.ConnectionString
+          ?? settings.GssConnectionString
+          ?? throw new InvalidOperationException("GSS connection string missing in appsettings.");
+
+      var crypto = new Encryption.Crypto();
+      var connectionString = crypto.Decrypt(encryptedCs);   // ← use same method as GSSEmail.cs
+      // If Decrypt needs a key/IV overload, copy the exact call from GSSEmail.cs.
+
+      // Guard: plaintext must look like a SQL connection string
+      if (string.IsNullOrWhiteSpace(connectionString)
+          || connectionString.IndexOf('=') < 0
+          || connectionString.StartsWith("huixt", StringComparison.OrdinalIgnoreCase)
+          || connectionString.IndexOf("Data Source", StringComparison.OrdinalIgnoreCase) < 0
+             && connectionString.IndexOf("Server", StringComparison.OrdinalIgnoreCase) < 0)
+      {
+          throw new InvalidOperationException(
+              "GSS connection string did not decrypt to a SQL connection string. " +
+              "Check Encryption.dll key and appsettings value.");
+      }
+
+      var mailSubject = $"DevOps Tool — files copied successfully";
+      var mailBody = $"<html><body>...</body></html>"; // keep your existing body
+
+      GSS.GSSEmail.SendEmailByNetV2(
+          fromEmail, toEmails, mailSubject, mailBody, connectionString, true);
+
+      LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Email notification sent to {toEmails}\r\n";
+  }
+  catch (Exception emailEx)
+  {
+      LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARN] Email notification failed: {emailEx.Message}\r\n";
+  }
+
+3. If Encrypted value is ALREADY decrypted elsewhere in the app (e.g. a shared
+   helper used for other DB calls), call THAT helper instead of inventing a
+   second decrypt path:
+
+     var connectionString = GetPlainGssConnectionString(); // existing helper
+
+4. Rebuild → F5 → check Output → Debug:
+   - ArgumentException "Keyword not supported: 'huixt..." MUST be GONE
+   - If mail still fails, read the NEXT GenerateSystemLogFileEntry line
+
+
+--------------------------------------------------------------------------------
+FIX B — if after decrypt you STILL see Missing SECUREMAILCREDENTIAL
+--------------------------------------------------------------------------------
+Then EmailCredentialList connected, but Process Settings has no usable row.
+
+Check in the GSS database pointed to by the decrypted connection string:
+
+  - Table / process-settings store used by EmailCredentialList
+    (often Process_Settings / similar — confirm in EmailCredentialList SQL)
+  - Key / code: SECUREMAILCREDENTIAL
+  - Values: Host, Port, UserId, Pwd, FromEmailId (encrypted as GSSEmail expects)
+
+Until that row exists and decrypts, SendEmailByNetV2 hits the else branch:
+
+  ExceptionHandling.GenerateSystemLogFileEntry(
+      "System", "Email Component",
+      "Missing SECUREMAILCREDENTIAL data in Process Settings",
+      "SendEmailByPowerShell", sGSSConnectionString);
+
+That is DATA / ops config — not a MAUI csproj fix.
+
+
+--------------------------------------------------------------------------------
+OPTIONAL — stop false "[INFO] Email notification sent"
+--------------------------------------------------------------------------------
+SendEmailByNetV2 swallows exceptions (logs only). Prefer one of:
+
+A) In GSSEmail.SendEmailByNetV2 catch: log, then `throw;`
+B) Change method to return bool / throw on missing credentials else-branch
+
+Then BuildTab's catch will show [WARN] in LogOutput.
+
+
+--------------------------------------------------------------------------------
+DIAGNOSTIC (temporary — do not log full CS in shared logs)
+--------------------------------------------------------------------------------
+
+  var raw = settings.ConnectionString ?? "(null)";
+  LogOutput += $"[{DateTime.Now:HH:mm:ss}] [DEBUG] CS length={raw.Length}, hasEquals={raw.Contains('=')}, preview={raw.Substring(0, Math.Min(12, raw.Length))}...\r\n";
+
+  var plain = new Encryption.Crypto().Decrypt(raw);
+  LogOutput += $"[{DateTime.Now:HH:mm:ss}] [DEBUG] plain length={plain?.Length}, hasDataSource={(plain?.IndexOf("Data Source", StringComparison.OrdinalIgnoreCase) ?? -1) >= 0}, hasServer={(plain?.IndexOf("Server", StringComparison.OrdinalIgnoreCase) ?? -1) >= 0}\r\n";
+
+HOW TO READ
+-----------
+1. preview looks like huixt2azeur / random junk, hasEquals=False
+   → encrypted. Must Decrypt before SendEmailByNetV2 (FIX A).
+
+2. After Decrypt, hasDataSource/hasServer=False
+   → wrong decrypt method/key, or wrong appsettings value.
+
+3. Decrypt OK, Debug still "Missing SECUREMAILCREDENTIAL"
+   → FIX B (insert/fix Process Settings row).
+
+4. Decrypt OK, Debug shows SMTP / auth error
+   → fix Host/Port/UserId/Pwd / TLS for SECUREMAILCREDENTIAL.
+
+
+--------------------------------------------------------------------------------
+CHECKLIST
+--------------------------------------------------------------------------------
+[ ] Matched Encryption.Crypto method name to GSSEmail.cs (Host/Pwd decrypt)
+[ ] BuildTab decrypts connection string BEFORE SendEmailByNetV2
+[ ] Guard rejects still-encrypted values (no '=')
+[ ] Output → Debug: no more "Keyword not supported: 'huixt..."
+[ ] If still missing credentials: SECUREMAILCREDENTIAL row in GSS DB
+[ ] Encryption.dll + System.Data.SqlClient both in startup deps.json
+
+
+--------------------------------------------------------------------------------
+DO NOT
+--------------------------------------------------------------------------------
+- Pass appsettings encrypted blob straight into SendEmailByNetV2
+- Treat "Missing SECUREMAILCREDENTIAL" as the root cause while Keyword not
+  supported still appears (fix decrypt first)
+- Log the full plaintext connection string or password to LogOutput
+- Replace System.Data.SqlClient with Microsoft.Data.SqlClient for this DLL
+
+
+================================================================================
+END
+================================================================================
