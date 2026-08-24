@@ -2,7 +2,14 @@
 NEW FILE — Web2ClientBridge MSI full fix (Installer Projects + Process)
 docs/fixes/web-to-client-bridge-msi-full-fix.txt
 ================================================================================
-USE THIS FILE END-TO-END. Older MSI guides are background only.
+If your log shows:
+  ERROR: An error occurred while validating. HRESULT = '8000000A'
+use this file instead (devenv works; .vdproj needs EnableOutOfProcBuild=0):
+
+  docs/fixes/web-to-client-bridge-msi-hresult-8000000a.txt
+
+USE THIS FILE END-TO-END for HELP/cmd / Installer Projects setup. Older MSI
+guides are background only.
 
 
 --------------------------------------------------------------------------------
