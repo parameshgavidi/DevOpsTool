@@ -1,0 +1,199 @@
+================================================================================
+BuildTab / GSS.GSSEmail — FileNotFoundException: System.Data.SqlClient
+MAUI Blazor Hybrid (GssDevOpsAutomationTool) on .NET 10 / Windows
+================================================================================
+
+SYMPTOM
+-------
+- Bundle / build completes
+- UI LogOutput shows: [INFO] Email notification sent to ...
+- No email arrives
+- No error in Build tab LogOutput ("not getting any error")
+
+
+ERROR (Visual Studio → View → Output → Debug)
+---------------------------------------------
+GenerateSystemLogFileEntry: An error occurred while Sending Emails
+System.IO.FileNotFoundException: Could not load file or assembly
+  'System.Data.SqlClient, Version=0.0.0.0, Culture=neutral,
+   PublicKeyToken=b03f5f7f11d50a3a'. The system cannot find the file specified.
+
+Where it throws (inside GSSEmailComponent, swallowed before BuildTab):
+  GSS.GSSEmail.SendEmailByNetV2
+    → EmailCredentialList(...)     ← needs SQL to read SECUREMAILCREDENTIAL
+    → System.Data.SqlClient        ← MISSING on .NET / MAUI
+  Source: GSSEmail.cs (EmailCredentialList ~line 314)
+
+Why BuildTab shows success with no error:
+  SendEmailByNetV2 catches Exception, calls GenerateSystemLogFileEntry
+  (Debug.WriteLine + DB), and does NOT rethrow.
+  BuildTab then logs "[INFO] Email notification sent..." after the call returns.
+
+
+CAUSE
+-----
+GSSEmailComponent was built for .NET Framework-style hosting where
+System.Data.SqlClient ships with the runtime.
+
+GssDevOpsAutomationTool is .NET 10 MAUI. SqlClient is NOT in the shared
+framework — it must be an explicit NuGet (or DLL) dependency of the STARTUP
+project so it appears in GssDevOpsAutomationTool.deps.json.
+
+Same class of bug as Encryption.dll FileNotFound on MAUI:
+  file-on-disk / Framework assumption ≠ deps.json registration.
+
+
+--------------------------------------------------------------------------------
+FIX (preferred) — add System.Data.SqlClient NuGet to the MAUI startup project
+--------------------------------------------------------------------------------
+
+1. Open the STARTUP project (GssDevOpsAutomationTool.csproj), NOT only
+   GSSEmailComponent.
+
+2. Package Manager Console (Default project = GssDevOpsAutomationTool):
+
+     Install-Package System.Data.SqlClient
+
+   Or CLI from the MAUI project folder:
+
+     dotnet add package System.Data.SqlClient
+
+   Or edit the .csproj:
+
+  <ItemGroup>
+    <PackageReference Include="System.Data.SqlClient" Version="4.9.0" />
+  </ItemGroup>
+
+   (Use the latest stable 4.x if 4.9.0 is not available in your feed.)
+
+3. Why NOT Microsoft.Data.SqlClient alone?
+   GSSEmailComponent.dll was compiled against the assembly name
+   System.Data.SqlClient. Microsoft.Data.SqlClient is a different assembly
+   name — it will NOT satisfy this FileNotFoundException unless you rebuild
+   GSSEmail to use Microsoft.Data.SqlClient.
+
+4. Rebuild the STARTUP project (Clean → Rebuild).
+
+5. VERIFY deps.json (proof the package registered):
+
+  Open:
+    bin\Debug\net10.0-windows10.0.19041.0\win-x64\GssDevOpsAutomationTool.deps.json
+  Search for:  "System.Data.SqlClient"
+  You MUST see entries under "targets" / "libraries".
+
+6. VERIFY output folder has the DLL, e.g.:
+    bin\Debug\net10.0-windows10.0.19041.0\win-x64\System.Data.SqlClient.dll
+  (and platform natives NuGet may copy under runtimes\...)
+
+
+--------------------------------------------------------------------------------
+FIX B — explicit Reference (only if you cannot use NuGet)
+--------------------------------------------------------------------------------
+If your feed blocks the package, copy System.Data.SqlClient.dll next to your
+other GSS libs and Reference it the same way as Encryption.dll:
+
+  <ItemGroup>
+    <Reference Include="System.Data.SqlClient">
+      <HintPath>libs\System.Data.SqlClient.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+Prefer FIX A (NuGet) so transitive natives / deps.json stay correct.
+
+
+--------------------------------------------------------------------------------
+AFTER SqlClient LOADS — next failures to watch
+--------------------------------------------------------------------------------
+Once SqlClient is fixed, SendEmailByNetV2 can still fail silently for:
+
+  1) Missing SECUREMAILCREDENTIAL in Process Settings
+     → Debug Output: "Missing SECUREMAILCREDENTIAL data in Process Settings"
+  2) Bad decrypted Host / Port / UserId / Pwd
+  3) SMTP / TLS failure on smtpClient.Send
+
+Those still only appear in Output → Debug (GenerateSystemLogFileEntry),
+not in BuildTab LogOutput, until you surface errors (optional below).
+
+
+--------------------------------------------------------------------------------
+OPTIONAL — surface email failures in BuildTab LogOutput
+--------------------------------------------------------------------------------
+In BuildTab.razor, only log success when send did not throw. Today
+SendEmailByNetV2 swallows exceptions, so either:
+
+A) Change GSSEmail.SendEmailByNetV2 catch to rethrow after logging, OR
+B) Temporarily wrap with a probe that fails loudly if SqlClient still missing:
+
+  try
+  {
+      // Force early failure if package missing (optional):
+      // _ = typeof(System.Data.SqlClient.SqlConnection);
+
+      GSS.GSSEmail.SendEmailByNetV2(fromEmail, toEmails, mailSubject, mailBody, connectionString, true);
+      LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Email notification sent to {toEmails}\r\n";
+  }
+  catch (Exception emailEx)
+  {
+      LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARN] Email notification failed: {emailEx.Message}\r\n";
+  }
+
+Note: until GSSEmail rethrows, BuildTab catch still will NOT see SqlClient
+errors — watch Output → Debug, or patch GSSEmail to rethrow.
+
+
+--------------------------------------------------------------------------------
+CHECKLIST before F5 again
+--------------------------------------------------------------------------------
+[ ] PackageReference System.Data.SqlClient on GssDevOpsAutomationTool.csproj
+[ ] Rebuilt STARTUP project (Windows Machine / net10.0-windows*)
+[ ] GssDevOpsAutomationTool.deps.json contains "System.Data.SqlClient"
+[ ] System.Data.SqlClient.dll present under AppContext.BaseDirectory
+[ ] Output → Debug no longer shows FileNotFoundException for SqlClient
+[ ] If mail still missing: check Debug for SECUREMAILCREDENTIAL / SMTP errors
+[ ] Related: Encryption.dll also registered (see encryption-dll-filenotfound-gssemail.txt)
+
+
+--------------------------------------------------------------------------------
+DIAGNOSTIC (paste temporarily above SendEmailByNetV2, remove after)
+--------------------------------------------------------------------------------
+
+  var baseDir = AppContext.BaseDirectory;
+  LogOutput += $"[{DateTime.Now:HH:mm:ss}] [DEBUG] BaseDirectory={baseDir}\r\n";
+  var sqlDll = Path.Combine(baseDir, "System.Data.SqlClient.dll");
+  LogOutput += $"[{DateTime.Now:HH:mm:ss}] [DEBUG] System.Data.SqlClient.dll exists={File.Exists(sqlDll)}\r\n";
+  var deps = Directory.GetFiles(baseDir, "*.deps.json").FirstOrDefault();
+  if (deps != null)
+  {
+      var text = File.ReadAllText(deps);
+      LogOutput += $"[{DateTime.Now:HH:mm:ss}] [DEBUG] deps has System.Data.SqlClient={text.Contains("System.Data.SqlClient", StringComparison.Ordinal)} ({Path.GetFileName(deps)})\r\n";
+  }
+
+
+HOW TO READ THE DIAGNOSTIC
+--------------------------
+1. exists=False AND deps=False
+   → package not added / wrong project / wrong TFM. Apply FIX A.
+
+2. exists=True AND deps=False
+   → Copy alone is not enough on .NET 10. Need PackageReference or Reference
+     so deps.json lists it.
+
+3. exists=True AND deps=True AND still FileNotFound Version=0.0.0.0
+   → Wrong RID / natives missing, or another dependent assembly missing.
+     Check Output for the next FileNotFound after SqlClient is fixed.
+
+
+--------------------------------------------------------------------------------
+DO NOT
+--------------------------------------------------------------------------------
+- Expect "email sent" in LogOutput to mean SMTP succeeded
+- Add only Microsoft.Data.SqlClient when GSSEmail still binds System.Data.SqlClient
+- Fix only GSSEmailComponent.csproj if the MAUI app loads a prebuilt DLL
+  (the STARTUP app must own the PackageReference)
+- Rely on .NET Framework GAC / machine-wide SqlClient on MAUI
+
+
+================================================================================
+END
+================================================================================
