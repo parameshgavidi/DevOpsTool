@@ -197,7 +197,6 @@ for devenv.
         if (exit != 0)
         {
             LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] Setup build failed for {app.Name} with exit code {exit}\r\n";
-            if (/* log still had HELP */) { }
             LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] HELP text (/useenv) => still using RunCommandAsync/cmd — paste STEP 6 again.\r\n";
             LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] No HELP text => Installer Projects missing or IDE Setup build fails — do STEP 1 + STEP 2.\r\n";
             return exit;
