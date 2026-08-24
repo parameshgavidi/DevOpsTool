@@ -1,6 +1,13 @@
 ================================================================================
 Web2ClientBridge — Setup MSI into F:\build-output\Web2ClientBridge
 ================================================================================
+*** SUPERSEDED — use the NEW file for the current devenv HELP / exit 1 error ***
+
+  docs/fixes/web-to-client-bridge-setup-msi-devenv-process.txt
+
+That guide runs devenv via ProcessStartInfo (no cmd.exe /c) and copies
+*.msi into F:\build-output\Web2ClientBridge\.
+
 *** REAL FAILURE (from your OUTPUT LOG 00:55:56 / 00:56:06) ***
 
 Web publish SUCCEEDED:
