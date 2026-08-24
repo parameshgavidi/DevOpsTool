@@ -1,0 +1,273 @@
+================================================================================
+NEW FILE — Web2ClientBridge Setup MSI (bypass cmd.exe)
+docs/fixes/web-to-client-bridge-setup-msi-devenv-process.txt
+================================================================================
+USE THIS FILE. Do not rely on setupBuildCommand + RunCommandAsync for devenv.
+
+
+--------------------------------------------------------------------------------
+YOUR CURRENT ERROR (still broken)
+--------------------------------------------------------------------------------
+OUTPUT LOG ends with devenv HELP text, then:
+
+  [ERROR] Setup build failed for Web2ClientBridge with exit code 1
+  [INFO] Finished Web2ClientBridge with exit code 1 (setup exit 1)
+  [INFO] If log shows devenv HELP (/useenv, /TfsLink), cmd quoting is still wrong...
+
+Explorer:
+  F:\build-output\Web2ClientBridge\   ← site files only, NO .msi
+
+Why previous "" quoting fix can still fail:
+  BuildService.RunCommandAsync always runs:  cmd.exe /c {command}
+  devenv lives under "F:\Program Files\..." — cmd quoting keeps breaking.
+  Help text = devenv never received /build args.
+
+
+--------------------------------------------------------------------------------
+FIX — run devenv with ProcessStartInfo (NO cmd.exe)
+--------------------------------------------------------------------------------
+Replace your entire BuildSetupProjectAsync with the method below.
+It starts devenv.com / devenv.exe directly (FileName + Arguments).
+Then copies *.msi into F:\build-output\Web2ClientBridge\
+
+
+--------------------------------------------------------------------------------
+appsettings.json — keep paths; REMOVE setupBuildCommand
+--------------------------------------------------------------------------------
+{
+  "name": "Web2ClientBridge",
+  "type": "AspNetMvc",
+  "projectPath": "WebToClientBridge\\WebToClientBridge\\WebToClientBridge.csproj",
+  "setupProjectPath": "WebToClientBridge\\Web2ClientBridge.Setup\\Web2ClientBridge.Setup.vdproj",
+  "setupSolutionPath": "WebToClientBridge\\WebToClientBridge.sln",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"WebToClientBridge\" && git fetch && git restore --source=@{u} --staged --worktree -- \"WebToClientBridge\" && (git stash pop || ver > nul)",
+  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
+  "outputSubfolder": "Web2ClientBridge"
+}
+
+DELETE this key if present (it goes through cmd and breaks):
+  "setupBuildCommand": "..."
+
+
+--------------------------------------------------------------------------------
+Application model (if missing)
+--------------------------------------------------------------------------------
+    public string? SetupProjectPath { get; set; }
+    public string? SetupSolutionPath { get; set; }
+
+
+--------------------------------------------------------------------------------
+BuildApplication — after web publish copy, call setup + use setupExit
+--------------------------------------------------------------------------------
+        int setupExit = 0;
+        if (exit == 0 && !string.IsNullOrWhiteSpace(app.SetupProjectPath))
+        {
+            Directory.CreateDirectory(outputFolder);
+            setupExit = await BuildSetupProjectAsync(app, outputFolder, cancellation);
+        }
+
+        var overallExit = exit != 0 ? exit : setupExit;
+        app.Status = overallExit == 0 ? "Success" : "Failed";
+        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Finished {app.Name} with exit code {overallExit}" +
+                     (setupExit != 0 ? $" (setup exit {setupExit})" : "") + "\r\n";
+
+        if (overallExit == 0)
+            await OnBuildSuccessChanged.InvokeAsync(true);
+
+
+--------------------------------------------------------------------------------
+PASTE THIS — BuildSetupProjectAsync (full replace)
+--------------------------------------------------------------------------------
+Add at top of BuildTab.razor @code if missing:
+  using System.Diagnostics;
+
+    private async Task<int> BuildSetupProjectAsync(
+        Application app, string outputFolder, CancellationToken cancellation)
+    {
+        var setupProjectFile = GetConfiguredPath(app.SetupProjectPath);
+        if (string.IsNullOrWhiteSpace(setupProjectFile) || !File.Exists(setupProjectFile))
+        {
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] Setup project not found: {app.SetupProjectPath}\r\n";
+            return -1;
+        }
+
+        var setupProjectDir = Path.GetDirectoryName(setupProjectFile)!;
+        var setupProjectName = Path.GetFileNameWithoutExtension(setupProjectFile);
+
+        string? setupSolutionPath = null;
+        if (!string.IsNullOrWhiteSpace(app.SetupSolutionPath))
+            setupSolutionPath = GetConfiguredPath(app.SetupSolutionPath);
+
+        if (string.IsNullOrWhiteSpace(setupSolutionPath) || !File.Exists(setupSolutionPath))
+        {
+            var parent = Path.GetDirectoryName(setupProjectDir);
+            var candidate = parent is null ? null : Path.Combine(parent, "WebToClientBridge.sln");
+            if (!string.IsNullOrEmpty(candidate) && File.Exists(candidate))
+                setupSolutionPath = candidate;
+            else if (!string.IsNullOrEmpty(parent))
+                setupSolutionPath = Directory.GetFiles(parent, "*.sln").FirstOrDefault();
+        }
+
+        if (string.IsNullOrWhiteSpace(setupSolutionPath) || !File.Exists(setupSolutionPath))
+        {
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] Setup solution (.sln) not found for {app.Name}\r\n";
+            return -1;
+        }
+
+        var devenvPath = BuildService.ResolveVisualStudioIdePath();
+        if (string.IsNullOrWhiteSpace(devenvPath) || !File.Exists(devenvPath))
+        {
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] devenv not found.\r\n";
+            return -1;
+        }
+
+        // Prefer console host for captured stdout
+        var devenvCom = Path.ChangeExtension(devenvPath, ".com");
+        if (File.Exists(devenvCom))
+            devenvPath = devenvCom;
+
+        // NO cmd.exe — FileName + Arguments avoids Program Files quoting bugs
+        var args =
+            $"\"{setupSolutionPath}\" /build Release /project \"{setupProjectName}\" /projectconfig Release";
+
+        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Building setup MSI for {app.Name}...\r\n";
+        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Setup exe: {devenvPath}\r\n";
+        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Setup args: {args}\r\n";
+
+        var solutionDir = Path.GetDirectoryName(setupSolutionPath) ?? setupProjectDir;
+        var exit = await RunProcessCaptureAsync(
+            devenvPath,
+            args,
+            solutionDir,
+            line =>
+            {
+                lock (_pendingLogBuffer)
+                {
+                    _pendingLogBuffer.Append(line);
+                    if (!line.EndsWith('\n') && !line.EndsWith('\r'))
+                        _pendingLogBuffer.AppendLine();
+                }
+                app.LogEntries.Add(line.TrimEnd('\r', '\n'));
+            },
+            cancellation);
+
+        FlushPendingLogs();
+
+        if (exit != 0)
+        {
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] Setup build failed for {app.Name} with exit code {exit}\r\n";
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] If you still see devenv HELP text, this method was not used (still on RunCommandAsync/cmd).\r\n";
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] If no help text: install VS extension 'Installer Projects' and Build Web2ClientBridge.Setup once in IDE.\r\n";
+            return exit;
+        }
+
+        var msiFiles = Directory.GetFiles(setupProjectDir, "*.msi", SearchOption.AllDirectories)
+            .OrderByDescending(File.GetLastWriteTimeUtc)
+            .ToArray();
+
+        if (msiFiles.Length == 0)
+        {
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] No .msi under {setupProjectDir} after setup build.\r\n";
+            return -1;
+        }
+
+        Directory.CreateDirectory(outputFolder);
+        foreach (var msi in msiFiles)
+        {
+            var dest = Path.Combine(outputFolder, Path.GetFileName(msi));
+            File.Copy(msi, dest, overwrite: true);
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Setup MSI copied to {dest}\r\n";
+        }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// Runs an exe directly (no cmd.exe /c). Required for devenv under Program Files.
+    /// </summary>
+    private static async Task<int> RunProcessCaptureAsync(
+        string fileName,
+        string arguments,
+        string workingDirectory,
+        Action<string> onLine,
+        CancellationToken cancellation)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = fileName,
+            Arguments = arguments,
+            WorkingDirectory = workingDirectory,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+
+        using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        var tcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        process.OutputDataReceived += (_, e) =>
+        {
+            if (e.Data is not null)
+                onLine(e.Data);
+        };
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (e.Data is not null)
+                onLine(e.Data);
+        };
+        process.Exited += (_, _) => tcs.TrySetResult(process.ExitCode);
+
+        if (!process.Start())
+            return -1;
+
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+
+        await using (cancellation.Register(() =>
+        {
+            try
+            {
+                if (!process.HasExited)
+                    process.Kill(entireProcessTree: true);
+            }
+            catch { /* ignore */ }
+            tcs.TrySetCanceled(cancellation);
+        }))
+        {
+            return await tcs.Task.ConfigureAwait(false);
+        }
+    }
+
+
+--------------------------------------------------------------------------------
+Expected result
+--------------------------------------------------------------------------------
+Log (NO /useenv /TfsLink help dump):
+  [INFO] Building setup MSI for Web2ClientBridge...
+  [INFO] Setup exe: F:\Program Files\Microsoft Visual Studio\18\Professional\Common7\IDE\devenv.com
+  [INFO] Setup args: "F:\GSS\AppDev\gss-root\WebToClientBridge\WebToClientBridge.sln" /build Release /project "Web2ClientBridge.Setup" /projectconfig Release
+  (real build lines from devenv)
+  [INFO] Setup MSI copied to F:\build-output\Web2ClientBridge\Web2ClientBridge.msi
+  [INFO] Finished Web2ClientBridge with exit code 0
+
+Explorer:
+  F:\build-output\Web2ClientBridge\Web2ClientBridge.msi
+
+
+--------------------------------------------------------------------------------
+Checklist
+--------------------------------------------------------------------------------
+[ ] DELETE setupBuildCommand from appsettings for Web2ClientBridge
+[ ] REPLACE BuildSetupProjectAsync with this file's version (Process, not RunCommandAsync)
+[ ] ADD RunProcessCaptureAsync helper
+[ ] ADD using System.Diagnostics;
+[ ] overallExit uses setupExit
+[ ] Rebuild DevOps tool, then Build Web2ClientBridge
+[ ] Confirm .msi under F:\build-output\Web2ClientBridge\
+[ ] If exit != 0 and NO help text: install "Microsoft Visual Studio Installer Projects"
+
+
+================================================================================
+END
+================================================================================
