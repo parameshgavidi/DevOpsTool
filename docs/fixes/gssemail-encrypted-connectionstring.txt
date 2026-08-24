@@ -74,8 +74,8 @@ GSSEmail.cs already uses for Host/Port/UserId/Pwd (READ that file; do not edit i
 1. Open GSSEmail.cs (read-only) and find the decrypt call, e.g.:
 
      Encryption.Crypto objCrypto = new Encryption.Crypto();
-     string host = objCrypto.Decrypt(CredentialList["Host"].ToString());
-     //  ↑ copy THIS method name (Decrypt / DecryptString / DecryptData / ...)
+     string host = objCrypto.DecryptString(CredentialList["Host"].ToString());
+     //  ↑ use DecryptString (NOT Decrypt — Decrypt does not exist on Encryption.Crypto)
 
 2. In BuildTab.razor, REPLACE the email send block with
    (adjust property names to match yours):
@@ -95,8 +95,8 @@ GSSEmail.cs already uses for Host/Port/UserId/Pwd (READ that file; do not edit i
           ?? throw new InvalidOperationException("GSS connection string missing in appsettings.");
 
       var crypto = new Encryption.Crypto();
-      var connectionString = crypto.Decrypt(encryptedCs);   // ← use same method as GSSEmail.cs
-      // If Decrypt needs a key/IV overload, copy the exact call from GSSEmail.cs.
+      var connectionString = crypto.DecryptString(encryptedCs);   // NOT Decrypt
+      // IntelliSense: DecryptFile / DecryptStream / DecryptString
 
       // Guard: plaintext must look like a SQL connection string
       if (string.IsNullOrWhiteSpace(connectionString)
@@ -182,7 +182,7 @@ DIAGNOSTIC (temporary — do not log full CS in shared logs)
   var raw = settings.ConnectionString ?? "(null)";
   LogOutput += $"[{DateTime.Now:HH:mm:ss}] [DEBUG] CS length={raw.Length}, hasEquals={raw.Contains('=')}, preview={raw.Substring(0, Math.Min(12, raw.Length))}...\r\n";
 
-  var plain = new Encryption.Crypto().Decrypt(raw);
+  var plain = new Encryption.Crypto().DecryptString(raw);
   LogOutput += $"[{DateTime.Now:HH:mm:ss}] [DEBUG] plain length={plain?.Length}, hasDataSource={(plain?.IndexOf("Data Source", StringComparison.OrdinalIgnoreCase) ?? -1) >= 0}, hasServer={(plain?.IndexOf("Server", StringComparison.OrdinalIgnoreCase) ?? -1) >= 0}\r\n";
 
 HOW TO READ
@@ -203,7 +203,7 @@ HOW TO READ
 --------------------------------------------------------------------------------
 CHECKLIST
 --------------------------------------------------------------------------------
-[ ] Matched Encryption.Crypto method name to GSSEmail.cs (Host/Pwd decrypt)
+[ ] Matched Encryption.Crypto method: DecryptString (not Decrypt)
 [ ] BuildTab decrypts connection string BEFORE SendEmailByNetV2
 [ ] Guard rejects still-encrypted values (no '=')
 [ ] Output → Debug: no more "Keyword not supported: 'huixt..."
