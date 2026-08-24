@@ -71,8 +71,12 @@ NEW (paste this — decrypt then send)
 --------------------------------------------------------------------------------
 Keep your existing mailSubject / mailBody text if different.
 Keep your real settings property names (ConnectionString / GssConnectionString /
-FromEmail / EmailRecipients). Match Encryption.Crypto method name to GSSEmail.cs
-(read-only) — usually Decrypt.
+FromEmail / EmailRecipients).
+
+IMPORTANT — Encryption.Crypto method name:
+  Use DecryptString (NOT Decrypt).
+  IntelliSense shows: DecryptFile, DecryptStream, DecryptString.
+  crypto.Decrypt(...) does not compile.
 
             // Send success notification email via GSSEmailComponent
             // NOTE: do not edit GSSEmail.cs — decrypt CS here before calling it.
@@ -95,9 +99,8 @@ FromEmail / EmailRecipients). Match Encryption.Crypto method name to GSSEmail.cs
                     throw new InvalidOperationException("GSS connection string missing in appsettings.");
 
                 var crypto = new Encryption.Crypto();
-                var connectionString = crypto.Decrypt(encryptedCs);
-                // If GSSEmail.cs uses a different method name, use that exact name:
-                //   crypto.DecryptString(...) / crypto.DecryptData(...)
+                var connectionString = crypto.DecryptString(encryptedCs);
+                // NOT crypto.Decrypt(...) — that method does not exist on Encryption.Crypto
 
                 // Guard: must look like a SQL connection string after decrypt
                 if (string.IsNullOrWhiteSpace(connectionString)
@@ -138,7 +141,8 @@ With:
 
     var encryptedCs = settings.ConnectionString;
     var crypto = new Encryption.Crypto();
-    var connectionString = crypto.Decrypt(encryptedCs);
+    var connectionString = crypto.DecryptString(encryptedCs);
+    // NOT Decrypt — use DecryptString
 
 
 --------------------------------------------------------------------------------
@@ -156,7 +160,7 @@ AFTER PASTE
 CHECKLIST
 --------------------------------------------------------------------------------
 [ ] Only BuildTab.razor changed (GSSEmail.cs untouched)
-[ ] crypto.Decrypt method name matches GSSEmail.cs
+[ ] Uses crypto.DecryptString (not Decrypt)
 [ ] Decrypt runs BEFORE SendEmailByNetV2
 [ ] Plaintext CS contains Data Source= or Server=
 [ ] System.Data.SqlClient + Encryption.dll already on MAUI project

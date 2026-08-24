@@ -1,0 +1,54 @@
+================================================================================
+BuildTab.razor — FIX: Encryption.Crypto has DecryptString, not Decrypt
+================================================================================
+
+ERROR
+-----
+Red squiggle on:
+
+  var connectionString = crypto.Decrypt(encryptedCs);
+
+IntelliSense members on Encryption.Crypto:
+  DecryptFile
+  DecryptStream
+  DecryptString   ← use this
+
+crypto.Decrypt does not exist → compile error.
+
+
+FIX (one line)
+--------------
+Change:
+
+  var connectionString = crypto.Decrypt(encryptedCs);
+
+To:
+
+  var connectionString = crypto.DecryptString(encryptedCs);
+
+
+FULL MINIMAL BLOCK
+------------------
+
+  var encryptedCs = settings.GssConnectionString; // or settings.ConnectionString
+  if (string.IsNullOrWhiteSpace(encryptedCs))
+      throw new InvalidOperationException("GSS connection string missing in appsettings.");
+
+  var crypto = new Encryption.Crypto();
+  var connectionString = crypto.DecryptString(encryptedCs);
+
+  GSS.GSSEmail.SendEmailByNetV2(
+      fromEmail, toEmails, mailSubject, mailBody, connectionString, true);
+
+
+NOTES
+-----
+- Do NOT modify GSSEmail.cs
+- Full paste-ready try/catch:
+    docs/fixes/buildtab-decrypt-before-sendemail.txt
+- After compile succeeds, check Output → Debug for SECUREMAILCREDENTIAL / SMTP
+
+
+================================================================================
+END
+================================================================================
