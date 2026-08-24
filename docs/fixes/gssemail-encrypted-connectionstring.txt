@@ -14,6 +14,9 @@ GSSEmail.cs is shared / locked. All fixes below are ONLY in:
 You may READ GSSEmail.cs to copy the Encryption.Crypto method name used for
 Host/Pwd — do not edit that file.
 
+PASTE-READY method block (OLD → NEW):
+  docs/fixes/buildtab-decrypt-before-sendemail.txt
+
 
 PREREQ
 ------
