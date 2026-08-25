@@ -1,0 +1,131 @@
+================================================================================
+GSS API — Finished with exit code 1 (GSSWebComponent warnings in log)
+================================================================================
+
+SYMPTOM (OUTPUT LOG)
+--------------------
+  ... Shared Components\GSSWebComponent\...\GSSWebComponent.csproj ...
+  warning CS0168: The variable 'ex' is declared but never used
+  warning CS0414: The field '..._bLoadImageLabelTemplates' is assigned but never used
+  GSSWebComponent -> ...\bin\Release\GSSWebComponent.dll
+  [INFO] Finished GSS API with exit code 1
+
+
+WHAT THIS MEANS
+---------------
+1) CS0168 / CS0414 are WARNINGS only — they do NOT fail the build.
+2) GSSWebComponent.dll was produced (that step succeeded).
+3) Exit code 1 means SOME OTHER step failed (scroll for lines with "error ").
+4) GSSWebComponent is built because GSSApi.csproj ProjectReferences pull in
+   Shared Components. That is expected for publish — not because you opened
+   the whole .sln.
+
+
+FIND THE REAL ERROR
+-------------------
+In OUTPUT LOG, search for:
+
+  error
+  : error
+  NETSDK
+  MSB3
+  MSB4
+  could not
+  FAILED
+
+Ignore "warning CS..." lines.
+
+
+================================================================================
+FIX A — Prefer MSBuild Publish (matches Visual Studio Build better)
+================================================================================
+dotnet publish often fails on net9 API + old .NET Framework ProjectReferences
+(Shared Components / GSSWebComponent), while VS Build succeeds.
+
+Paste this into appsettings.json for "GSS API":
+
+
+{
+  "name": "GSS API",
+  "type": "DotNetCoreApi",
+  "projectPath": "Web Services\\GSSApi\\GSSApi\\GSSApi.csproj",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"Web Services\\GSSApi\" && git fetch && git restore --source=@{u} --staged --worktree -- \"Web Services\\GSSApi\" && (git stash pop || ver > nul)",
+  "buildCommand": "msbuild \"{projectFile}\" /t:Restore;Publish /p:Configuration=Release /p:PublishDir=\"{outputFolder}\\\\\" /v:m",
+  "outputSubfolder": "GSSApi"
+}
+
+
+buildCommand only (copy-paste):
+
+  msbuild "{projectFile}" /t:Restore;Publish /p:Configuration=Release /p:PublishDir="{outputFolder}\\" /v:m
+
+
+Notes:
+- Requires msbuild on PATH (Developer Command Prompt for VS, or VS Build Tools).
+- PublishDir trailing \\ is intentional (folder path for MSBuild).
+- If {outputFolder} is NOT replaced in the log, hardcode Output Root:
+
+  msbuild "{projectFile}" /t:Restore;Publish /p:Configuration=Release /p:PublishDir="F:\build-output\GSSApi\\" /v:m
+
+  (JSON form:)
+  "buildCommand": "msbuild \"{projectFile}\" /t:Restore;Publish /p:Configuration=Release /p:PublishDir=\"F:\\\\build-output\\\\GSSApi\\\\\" /v:m"
+
+
+================================================================================
+FIX B — Keep dotnet publish (only if manual publish already exits 0)
+================================================================================
+
+{
+  "name": "GSS API",
+  "type": "DotNetCoreApi",
+  "projectPath": "Web Services\\GSSApi\\GSSApi\\GSSApi.csproj",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"Web Services\\GSSApi\" && git fetch && git restore --source=@{u} --staged --worktree -- \"Web Services\\GSSApi\" && (git stash pop || ver > nul)",
+  "buildCommand": "dotnet publish \"{projectFile}\" -c Release -o \"{outputFolder}\"",
+  "outputSubfolder": "GSSApi"
+}
+
+
+================================================================================
+Prove outside the tool (cmd at Repo Root)
+================================================================================
+cd /d F:\GSS\AppDev\gss-root
+
+1) See the REAL error (same as tool):
+
+  dotnet publish "Web Services\GSSApi\GSSApi\GSSApi.csproj" -c Release -o "%TEMP%\GSSApi-test"
+
+2) Try MSBuild path (open "Developer Command Prompt for VS" first):
+
+  msbuild "Web Services\GSSApi\GSSApi\GSSApi.csproj" /t:Restore;Publish /p:Configuration=Release /p:PublishDir="%TEMP%\GSSApi-msbuild\\" /v:m
+
+Use whichever exits 0 in appsettings buildCommand.
+
+
+--------------------------------------------------------------------------------
+If msbuild is not recognized
+--------------------------------------------------------------------------------
+Install Visual Studio Build Tools / use VS Developer Command Prompt, OR put
+full path in buildCommand, example (adjust VS year/edition):
+
+  "C:\Program Files\Microsoft Visual Studio\18\Enterprise\MSBuild\Current\Bin\MSBuild.exe"
+
+  "buildCommand": "\"C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\MSBuild\\Current\\Bin\\MSBuild.exe\" \"{projectFile}\" /t:Restore;Publish /p:Configuration=Release /p:PublishDir=\"{outputFolder}\\\\\" /v:m"
+
+(Your machine may be VS 2022 = 17, or VS 2026 = 18 — match the folder that exists.)
+
+
+--------------------------------------------------------------------------------
+Checklist
+--------------------------------------------------------------------------------
+[ ] Understood: CS0168 / CS0414 are NOT the failure
+[ ] Found real "error ..." line in OUTPUT LOG (or from manual publish)
+[ ] Manual msbuild OR dotnet publish exits 0 at Repo Root
+[ ] appsettings buildCommand matches the command that exited 0
+[ ] projectPath stays GSSApi.csproj (not .sln)
+[ ] DevOpsTool Build GSS API → exit code 0
+[ ] Files under Output Root\GSSApi
+
+
+================================================================================
+END
+================================================================================
