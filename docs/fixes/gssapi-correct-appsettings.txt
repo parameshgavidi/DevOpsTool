@@ -1,0 +1,99 @@
+================================================================================
+GSS API — CORRECT appsettings.json (USE THIS)
+================================================================================
+
+Paste this block into DevOpsTool appsettings.json for "GSS API".
+
+
+{
+  "name": "GSS API",
+  "type": "DotNetCoreApi",
+  "projectPath": "Web Services\\GSSApi\\GSSApi\\GSSApi.csproj",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"Web Services\\GSSApi\" && git fetch && git restore --source=@{u} --staged --worktree -- \"Web Services\\GSSApi\" && (git stash pop || ver > nul)",
+  "buildCommand": "dotnet publish \"{projectFile}\" -c Release -o \"{outputFolder}\"",
+  "outputSubfolder": "GSSApi"
+}
+
+
+--------------------------------------------------------------------------------
+Copy-paste fields only
+--------------------------------------------------------------------------------
+
+projectPath:
+
+  Web Services\GSSApi\GSSApi\GSSApi.csproj
+
+gitLatestCommand:
+
+  git stash push -m "devops-pre-build" -- "Web Services\GSSApi" && git fetch && git restore --source=@{u} --staged --worktree -- "Web Services\GSSApi" && (git stash pop || ver > nul)
+
+buildCommand:
+
+  dotnet publish "{projectFile}" -c Release -o "{outputFolder}"
+
+outputSubfolder:
+
+  GSSApi
+
+
+--------------------------------------------------------------------------------
+Why this is the correct one
+--------------------------------------------------------------------------------
+1) projectPath = GSSApi.csproj (NOT GSSApi.sln)
+   - Avoids building all 51 solution projects / SSRS .rptproj
+
+2) buildCommand uses -o "{outputFolder}" (NOT {outputSubfolder})
+   - Publishes straight into Output Root\GSSApi
+   - {outputSubfolder} alone only creates a relative "GSSApi" under Repo Root
+   - Tool PrecompiledWeb copy is for GSSWeb/ASMX only — not DotNetCoreApi
+
+3) gitLatestCommand = stash → fetch → restore → (stash pop || ver > nul)
+   - Keeps local changes
+   - No git clean -fd (does not wipe files)
+   - Empty stash does not fail Get latest
+
+
+--------------------------------------------------------------------------------
+If {outputFolder} is NOT replaced in OUTPUT LOG
+--------------------------------------------------------------------------------
+You will see the literal text {outputFolder} in the command.
+Then hardcode your Output Root (example — change to your real path):
+
+  "buildCommand": "dotnet publish \"{projectFile}\" -c Release -o \"F:\\build-output\\GSSApi\""
+
+
+--------------------------------------------------------------------------------
+Prove outside the tool (cmd at Repo Root)
+--------------------------------------------------------------------------------
+cd /d F:\GSS\AppDev\gss-root
+
+dotnet publish "Web Services\GSSApi\GSSApi\GSSApi.csproj" -c Release -o "%TEMP%\GSSApi-test"
+
+Must exit 0 before DevOpsTool Build can succeed.
+
+
+--------------------------------------------------------------------------------
+Do NOT use
+--------------------------------------------------------------------------------
+- projectPath pointing at GSSApi.sln
+- buildCommand with -o {outputSubfolder}   (wrong output location)
+- buildCommand with csproj\\\"              (broken quote / trailing \)
+- gitLatestCommand with git clean -fd
+- gitLatestCommand ending with: && git stash pop   (fails when no stash)
+
+
+--------------------------------------------------------------------------------
+Checklist
+--------------------------------------------------------------------------------
+[ ] projectPath = Web Services\GSSApi\GSSApi\GSSApi.csproj
+[ ] buildCommand = dotnet publish "{projectFile}" -c Release -o "{outputFolder}"
+[ ] outputSubfolder = GSSApi
+[ ] gitLatestCommand ends with (git stash pop || ver > nul)
+[ ] Manual dotnet publish exits 0
+[ ] DevOpsTool Get latest OK → Build GSS API → Success
+[ ] Files appear under Output Root\GSSApi
+
+
+================================================================================
+END
+================================================================================
