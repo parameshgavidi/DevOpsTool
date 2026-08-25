@@ -1,0 +1,170 @@
+================================================================================
+GSS API — VS Build succeeds, DevOpsTool Build fails
+================================================================================
+
+SYMPTOM
+-------
+- Visual Studio (e.g. VS 2026): Build GSSApi.sln → SUCCESS
+  (e.g. "Build: 23 succeeded, 0 failed" — often Debug)
+- DevOpsTool Build tab for "GSS API" → FAILED
+
+
+WHY (VS vs command tool are NOT the same command)
+-------------------------------------------------
+Visual Studio "Build":
+  - Builds projects it can load (skips incompatible ones like SSRS .rptproj)
+  - Usually Debug
+  - Does NOT run "dotnet publish"
+  - Does NOT run appsettings gitLatestCommand
+
+DevOpsTool Build (your appsettings):
+  - Runs:  dotnet publish "{projectFile}" -c Release -o {outputSubfolder}
+  - {projectFile} = projectPath → currently GSSApi.sln
+  - Publish on a .sln fails when the solution contains:
+      * SSRSReports.rptproj (incompatible / not SDK)
+      * other non-publishable / non-SDK projects
+      * multiple apps fighting over the same -o folder
+  - Also uses Release (VS often showed Debug\net9.0)
+
+Your CURRENT gitLatestCommand (from screenshot) is ALSO risky:
+
+  git fetch && git clean -fd -- "Web Services\GSSApi" && git restore ...
+
+  git clean -fd DELETES untracked files under GSSApi before build.
+  That can remove local files the API needs and is unrelated to VS Build.
+
+
+================================================================================
+FIX — paste into appsettings.json for "GSS API"
+================================================================================
+
+USE THIS BLOCK (publish the API .csproj only — not the whole .sln):
+
+{
+  "name": "GSS API",
+  "type": "DotNetCoreApi",
+  "projectPath": "Web Services\\GSSApi\\GSSApi\\GSSApi.csproj",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"Web Services\\GSSApi\" && git fetch && git restore --source=@{u} --staged --worktree -- \"Web Services\\GSSApi\" && (git stash pop || ver > nul)",
+  "buildCommand": "dotnet publish \"{projectFile}\" -c Release -o {outputSubfolder}",
+  "outputSubfolder": "GSSApi"
+}
+
+
+--------------------------------------------------------------------------------
+Copy-paste fields only
+--------------------------------------------------------------------------------
+
+projectPath (CHANGE — point at host csproj, not .sln):
+
+  Web Services\GSSApi\GSSApi\GSSApi.csproj
+
+gitLatestCommand (USE THIS — NO git clean -fd; empty-stash safe):
+
+  git stash push -m "devops-pre-build" -- "Web Services\GSSApi" && git fetch && git restore --source=@{u} --staged --worktree -- "Web Services\GSSApi" && (git stash pop || ver > nul)
+
+buildCommand (keep):
+
+  dotnet publish "{projectFile}" -c Release -o {outputSubfolder}
+
+outputSubfolder (keep):
+
+  GSSApi
+
+
+--------------------------------------------------------------------------------
+OLD (causes tool failure / wipe) vs NEW
+--------------------------------------------------------------------------------
+
+projectPath:
+  OLD:  Web Services\GSSApi\GSSApi.sln
+  NEW:  Web Services\GSSApi\GSSApi\GSSApi.csproj
+
+gitLatestCommand:
+  OLD:  git fetch && git clean -fd -- "Web Services\GSSApi" && git restore --source=@{u} --staged --worktree -- "Web Services\GSSApi"
+  NEW:  stash → fetch → restore → (stash pop || ver > nul)
+        DO NOT use git clean -fd here
+
+Commented stash line in your screenshot was ALSO wrong:
+  OLD (bad precedence):  ... && git stash pop || ver > nul
+  NEW (correct):         ... && (git stash pop || ver > nul)
+
+
+================================================================================
+What the tool actually runs (after fix)
+================================================================================
+
+cwd = Code Repo Root (build:repoRoot), e.g.:
+  F:\GSS\AppDev\gss-root
+
+Get latest (toolbar only — NOT on Build click):
+
+  git stash push -m "devops-pre-build" -- "Web Services\GSSApi" && git fetch && git restore --source=@{u} --staged --worktree -- "Web Services\GSSApi" && (git stash pop || ver > nul)
+
+Build:
+
+  dotnet publish "Web Services\GSSApi\GSSApi\GSSApi.csproj" -c Release -o GSSApi
+
+(Tool may resolve {outputSubfolder} under Output Root — same idea.)
+
+
+================================================================================
+Prove it outside the tool (cmd at Repo Root)
+================================================================================
+
+1) Check SDK (GSSApi targets net9.0 — need .NET 9 SDK):
+
+  dotnet --list-sdks
+
+2) Publish the SAME way as the tool (should succeed):
+
+  dotnet publish "Web Services\GSSApi\GSSApi\GSSApi.csproj" -c Release -o "%TEMP%\GSSApi-publish-test"
+
+3) Optional — see why .sln publish fails (expect errors if SSRS / non-SDK projects exist):
+
+  dotnet publish "Web Services\GSSApi\GSSApi.sln" -c Release -o "%TEMP%\GSSApi-sln-test"
+
+
+================================================================================
+If Build still fails after appsettings fix
+================================================================================
+
+Check DevOpsTool OUTPUT LOG for:
+
+  A) "dotnet is not recognized"
+     → Install .NET 9 SDK; reopen tool; ensure PATH has dotnet
+
+  B) error MSB3202 / project file does not exist
+     → projectPath casing/folder wrong — folder is GSSApi (not GSSAPI)
+     → confirm file exists:
+       dir "Web Services\GSSApi\GSSApi\GSSApi.csproj"
+
+  C) NU1101 / restore failed
+     → run once:  dotnet restore "Web Services\GSSApi\GSSApi\GSSApi.csproj"
+
+  D) Get latest failed / No stash entries found
+     → must end with (git stash pop || ver > nul)
+     → see also: docs/fixes/gss-api-build-publish.txt
+
+  E) @{u} / no upstream
+     → set upstream on current branch, or Get latest restore fails
+
+Unload SSRSReports in Visual Studio is fine for IDE comfort.
+It does NOT affect Get latest or Build in the command tool
+(those use git + dotnet on paths from appsettings).
+
+
+================================================================================
+Checklist
+================================================================================
+[ ] projectPath = Web Services\GSSApi\GSSApi\GSSApi.csproj  (NOT .sln)
+[ ] gitLatestCommand has NO git clean -fd
+[ ] gitLatestCommand ends with (git stash pop || ver > nul)
+[ ] buildCommand = dotnet publish "{projectFile}" -c Release -o {outputSubfolder}
+[ ] outputSubfolder = GSSApi
+[ ] Manual: dotnet publish ...\GSSApi.csproj -c Release works at Repo Root
+[ ] DevOpsTool: Get latest OK, then Build GSS API → Success
+
+
+================================================================================
+END
+================================================================================
