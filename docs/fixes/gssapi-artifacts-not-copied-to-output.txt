@@ -1,147 +1,126 @@
 ================================================================================
-GSS API — Why artifacts are NOT in F:\build-output\GSSApi
+GSS API — literal folder "{outputFolder}" created under Web Services\GSSApi
 ================================================================================
 
-YOUR SETUP (from screenshot)
-----------------------------
-appsettings:
+WHAT YOU SAW
+------------
+Explorer path:
 
-  "type": "DotNetCoreApi"
-  "projectPath": "Web Services\\GSSApi\\GSSApi\\GSSApi.csproj"
-  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:OutputPath={outputSubfolder}"
-  "outputSubfolder": "GSSApi"
+  F:\GSS\AppDev\gss-root\Web Services\GSSApi\{outputFolder}
 
-Output Root explorer (F:\build-output) shows:
-  db-scripts
-  GSSWebService          ← copied (AsmxWebService / PrecompiledWeb flow)
-  Web2ClientBridge       ← copied (MVC / setup flow)
-  Web2ClientBridge_...
-  (NO GSSApi folder)
+A folder whose NAME is exactly:  {outputFolder}
+
+That means the placeholder was NOT replaced. MSBuild/dotnet used the
+literal string "{outputFolder}" as the publish/output path.
 
 
 ================================================================================
-WHY — two separate reasons
+WHY
 ================================================================================
+In BuildTab buildCommand substitution, these ARE typically replaced:
 
-REASON 1 — Your buildCommand never writes to F:\build-output
-------------------------------------------------------------
-  /p:OutputPath={outputSubfolder}
-  → {outputSubfolder} becomes just "GSSApi"
-  → MSBuild writes compile output to a RELATIVE "GSSApi" folder
-    (under the project / working dir — NOT under Output Root)
+  {projectFile}        → full path to GSSApi.csproj
+  {outputSubfolder}    → "GSSApi"  (name only — NOT Output Root)
 
-  OutputPath ≠ Publish.
-  It only redirects bin output. It does NOT create F:\build-output\GSSApi.
+{outputFolder} (full path F:\build-output\GSSApi) is often replaced ONLY in
+setup/MSI commands — NOT in the main buildCommand.
+
+So this command:
+
+  msbuild ... /p:PublishDir="{outputFolder}\\"
+  or
+  dotnet publish ... -o "{outputFolder}"
+
+creates:
+
+  F:\GSS\AppDev\gss-root\Web Services\GSSApi\{outputFolder}\
 
 
-REASON 2 — DevOpsTool does NOT copy DotNetCoreApi to Output Root
-----------------------------------------------------------------
-After exit == 0, BuildTab only looks for PrecompiledWeb for:
-
-  - AsmxWebService  (GSS Web Service)  → copy PrecompiledWeb → outputFolder
-  - AspNetWebForms  (GSSWeb)           → copy PrecompiledWeb → outputFolder
-
-DotNetCoreApi / "GSS API" has NO else-if branch.
-So even when build "succeeds", you get:
-
-  [WARN] Publish output not found for GSS API under {workingDir}
-
-and F:\build-output\GSSApi is never created/filled.
-
-That is why GSSWebService appears in F:\build-output but GSSApi does not.
+Also: DotNetCoreApi has NO PrecompiledWeb copy into F:\build-output.
+So even a good build will not create F:\build-output\GSSApi unless the
+publish command itself writes there.
 
 
 ================================================================================
-FIX — publish STRAIGHT into Output Root (no copy needed)
+FIX NOW — hardcode Output Root in appsettings (USE THIS)
 ================================================================================
+Delete the bad folder when convenient:
 
-Do NOT use OutputPath={outputSubfolder}.
-Use PublishDir / -o with {outputFolder} (full path = OutputRoot\GSSApi).
+  rmdir /s /q "F:\GSS\AppDev\gss-root\Web Services\GSSApi\{outputFolder}"
 
 
-OPTION A — MSBuild Publish (recommended if VS Build works)
+Paste this GSS API block (Output Root = F:\build-output):
+
 
 {
   "name": "GSS API",
   "type": "DotNetCoreApi",
   "projectPath": "Web Services\\GSSApi\\GSSApi\\GSSApi.csproj",
   "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"Web Services\\GSSApi\" && git fetch && git restore --source=@{u} --staged --worktree -- \"Web Services\\GSSApi\" && (git stash pop || ver > nul)",
-  "buildCommand": "msbuild \"{projectFile}\" /t:Restore;Publish /p:Configuration=Release /p:PublishDir=\"{outputFolder}\\\\\" /v:m",
+  "buildCommand": "msbuild \"{projectFile}\" /t:Restore;Publish /p:Configuration=Release /p:PublishDir=\"F:\\\\build-output\\\\GSSApi\\\\\" /v:m",
   "outputSubfolder": "GSSApi"
 }
 
 
-OPTION B — dotnet publish
+OR with dotnet:
 
 {
   "name": "GSS API",
   "type": "DotNetCoreApi",
   "projectPath": "Web Services\\GSSApi\\GSSApi\\GSSApi.csproj",
   "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"Web Services\\GSSApi\" && git fetch && git restore --source=@{u} --staged --worktree -- \"Web Services\\GSSApi\" && (git stash pop || ver > nul)",
-  "buildCommand": "dotnet publish \"{projectFile}\" -c Release -o \"{outputFolder}\"",
+  "buildCommand": "dotnet publish \"{projectFile}\" -c Release -o \"F:\\build-output\\GSSApi\"",
   "outputSubfolder": "GSSApi"
 }
 
 
-If OUTPUT LOG still shows literal {outputFolder}, hardcode:
+buildCommand only (MSBuild — preferred if VS Build works):
 
-  "buildCommand": "dotnet publish \"{projectFile}\" -c Release -o \"F:\\build-output\\GSSApi\""
+  msbuild "{projectFile}" /t:Restore;Publish /p:Configuration=Release /p:PublishDir="F:\build-output\GSSApi\\" /v:m
 
-  or MSBuild:
+buildCommand only (dotnet):
 
-  "buildCommand": "msbuild \"{projectFile}\" /t:Restore;Publish /p:Configuration=Release /p:PublishDir=\"F:\\\\build-output\\\\GSSApi\\\\\" /v:m"
+  dotnet publish "{projectFile}" -c Release -o "F:\build-output\GSSApi"
+
+
+After Build, you should see:
+
+  F:\build-output\GSSApi\   ← real publish files
+  NOT under Web Services\GSSApi\{outputFolder}
 
 
 --------------------------------------------------------------------------------
-OLD (wrong) vs NEW
+DO NOT use
 --------------------------------------------------------------------------------
-OLD:  /p:OutputPath={outputSubfolder}     → relative "GSSApi", no Output Root
-NEW:  /p:PublishDir="{outputFolder}\\"    → F:\build-output\GSSApi
-  or  -o "{outputFolder}"
+- -o "{outputFolder}"              → creates literal {outputFolder} folder
+- /p:PublishDir="{outputFolder}\\" → same problem
+- /p:OutputPath={outputSubfolder}  → relative "GSSApi", not F:\build-output
 
 
 ================================================================================
-OPTIONAL — BuildTab.razor code fix (if you want tool to COPY like GSSWeb)
+OPTIONAL CODE FIX — make {outputFolder} work in buildCommand
 ================================================================================
-Only needed if buildCommand writes somewhere else and you want archive+copy.
+In BuildApplication, where buildCommand placeholders are replaced, ADD:
 
-Inside if (exit == 0), ADD else if for DotNetCoreApi BEFORE the
-"if (!string.IsNullOrEmpty(precompiled))" block:
+    command = command
+        .Replace("{projectFile}", projectFile, StringComparison.OrdinalIgnoreCase)
+        .Replace("{outputSubfolder}", app.OutputSubfolder ?? string.Empty, StringComparison.OrdinalIgnoreCase)
+        .Replace("{outputFolder}", outputFolder, StringComparison.OrdinalIgnoreCase);
 
-            else if (string.Equals(app.Type, "DotNetCoreApi", StringComparison.OrdinalIgnoreCase)
-                     || string.Equals(app.Name, "GSS API", StringComparison.OrdinalIgnoreCase))
-            {
-                // Prefer publishing directly to outputFolder via buildCommand.
-                // If command used a local folder, point precompiled at that folder:
-                //   e.g. Path.Combine(workingDir, app.OutputSubfolder ?? "GSSApi")
-                // Better: leave this unused and publish with -o "{outputFolder}".
-                precompiled = null;
-            }
+(outputFolder should already be Path.Combine(OutputRoot, app.OutputSubfolder).)
 
-Preferred approach remains: publish with "{outputFolder}" so no copy code is required.
-
-
-================================================================================
-Prove it
-================================================================================
-1) After Build, check:
-
-     dir F:\build-output\GSSApi
-
-2) OUTPUT LOG should show publish into that path (not only bin\Release).
-
-3) You should NOT rely on:
-     [WARN] Publish output not found for GSS API
+After that code fix you MAY use "{outputFolder}" in appsettings again.
+Until then — hardcode F:\build-output\GSSApi.
 
 
 --------------------------------------------------------------------------------
 Checklist
 --------------------------------------------------------------------------------
-[ ] Removed /p:OutputPath={outputSubfolder}
-[ ] buildCommand uses PublishDir="{outputFolder}\\"  OR  -o "{outputFolder}"
-[ ] outputSubfolder is still "GSSApi" (used to form OutputRoot\GSSApi)
-[ ] F:\build-output\GSSApi exists after successful Build
-[ ] GSS.dll / publish files present under that folder
+[ ] Deleted Web Services\GSSApi\{outputFolder} junk folder
+[ ] buildCommand uses F:\build-output\GSSApi (hardcoded) — not {outputFolder}
+[ ] projectPath = Web Services\GSSApi\GSSApi\GSSApi.csproj
+[ ] Build GSS API → files appear under F:\build-output\GSSApi
+[ ] Optional later: Replace("{outputFolder}", outputFolder) in BuildTab
 
 
 ================================================================================
