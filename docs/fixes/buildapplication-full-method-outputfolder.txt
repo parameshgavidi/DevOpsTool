@@ -142,9 +142,8 @@ REPLACE your entire BuildApplication method with this
 
                 // ---- GSS Web Service (working — keep this) ----
                 // FolderProfile → PrecompiledWeb → copy into outputFolder (versioned)
-                if (string.Equals(app.Name, "GSS Web Service", StringComparison.OrdinalIgnoreCase)
-                    || (string.Equals(app.Type, "AsmxWebService", StringComparison.OrdinalIgnoreCase)
-                        && string.Equals(app.Name, "GSS Web Service", StringComparison.OrdinalIgnoreCase)))
+                // Do NOT use all AsmxWebService here — GSS Mailer publishes via PublishDir={outputFolder}
+                if (string.Equals(app.Name, "GSS Web Service", StringComparison.OrdinalIgnoreCase))
                 {
                     precompiled = Path.Combine(workingDir, "PrecompiledWeb", app.OutputSubfolder ?? "GSSWebService");
                     if (!Directory.Exists(precompiled))
