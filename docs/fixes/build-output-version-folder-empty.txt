@@ -1,0 +1,88 @@
+================================================================================
+Version folder created but EMPTY (not published)
+F:\build-output\9.2.1\GSSApi  → "This folder is empty"
+================================================================================
+
+WHAT HAPPENED
+-------------
+GetAppOutputFolder ran Directory.CreateDirectory → folder exists.
+MSBuild/dotnet published somewhere ELSE (or nowhere useful).
+So Explorer shows empty F:\build-output\9.2.1\GSSApi.
+
+
+WHY (most common)
+-----------------
+buildCommand still does not get {outputFolder} replaced with the real path.
+
+Example broken flow:
+  1. outputFolder = F:\build-output\9.2.1\GSSApi     ← created
+  2. Command still has literal: PublishDir="{outputFolder}\\"
+     OR still hardcodes:     PublishDir="F:\build-output\GSSApi\\"
+  3. Build exits 0 → Status Success
+  4. Version folder stays empty
+
+
+--------------------------------------------------------------------------------
+FIX 1 — BuildTab: REPLACE {outputFolder} when building the command
+--------------------------------------------------------------------------------
+Where you expand app.BuildCommand (before RunCommandAsync), MUST include:
+
+    var outputFolder = GetAppOutputFolder(app);
+
+    var cmd = (app.BuildCommand ?? string.Empty)
+        .Replace("{projectFile}", projectFile ?? string.Empty, StringComparison.OrdinalIgnoreCase)
+        .Replace("{outputSubfolder}", app.OutputSubfolder ?? string.Empty, StringComparison.OrdinalIgnoreCase)
+        .Replace("{outputFolder}", outputFolder, StringComparison.OrdinalIgnoreCase);
+
+    LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Output folder: {outputFolder}\r\n";
+    LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Build command: {cmd}\r\n";
+
+Then run `cmd` (not the raw app.BuildCommand).
+
+After Build, OUTPUT LOG must show a REAL path, e.g.:
+
+  Build command: msbuild "F:\...\GSSApi.csproj" ... /p:PublishDir="F:\build-output\9.2.1\GSSApi\\" ...
+
+If log still shows literal {outputFolder} → replacement missing → empty folder.
+
+
+--------------------------------------------------------------------------------
+FIX 2 — appsettings buildCommand for GSS API / IMC / Mailer
+--------------------------------------------------------------------------------
+Must use placeholder (you likely already did):
+
+  "buildCommand": "msbuild \"{projectFile}\" /t:Restore;Publish /p:Configuration=Release /p:PublishDir=\"{outputFolder}\\\\\" /v:m"
+
+NOT:
+
+  PublishDir=\"F:\\\\build-output\\\\GSSApi\\\\\"
+
+
+GSS Web Service — leave FolderProfile. It publishes to PrecompiledWeb, then
+BuildTab COPY must target GetAppOutputFolder(app). If copy uses old flat path,
+fix that copy destination only (not PublishDir).
+
+
+--------------------------------------------------------------------------------
+FIX 3 — quick verify after one Build
+--------------------------------------------------------------------------------
+1. Rebuild tool
+2. Build GSS API
+3. Check OUTPUT LOG:
+   [INFO] Output folder: F:\build-output\9.2.1\GSSApi
+   [INFO] Build command: ... PublishDir="F:\build-output\9.2.1\GSSApi\\" ...
+4. Explorer: folder has DLLs / publish files (not empty)
+
+If command path is correct but still empty:
+  - Open the logged command in a VS Developer CMD manually
+  - Confirm msbuild Publish actually writes files
+  - Check you are not looking at an old empty folder while publish went to
+    F:\build-output\GSSApi (flat) — search both places
+
+
+CHECKLIST
+---------
+[ ] cmd.Replace("{outputFolder}", outputFolder, ...) exists
+[ ] Log shows full PublishDir path under \9.2.1\
+[ ] No literal {outputFolder} in the executed command
+[ ] F:\build-output\9.2.1\GSSApi contains publish output
