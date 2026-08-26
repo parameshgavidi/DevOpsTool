@@ -1,0 +1,86 @@
+================================================================================
+GSS Mailer WebService — Success but NOT published
+Use FolderProfile like GSS Web Service (settings + copy)
+================================================================================
+
+WHY ONLY MAILER FAILS
+---------------------
+GSS API / IMC use PublishDir={outputFolder} (SDK-style) → works.
+
+GSS Web Service uses:
+
+  msbuild ... /p:DeployOnBuild=true /p:PublishProfile=FolderProfile
+  → writes PrecompiledWeb\
+  → BuildTab COPIES into GetAppOutputFolder(app)
+
+GSS Mailer is AsmxWebService + .sln (website-style) but you set the SAME
+buildCommand as DotNetCoreApi (Restore;Publish + PublishDir). That often
+exits 0 without filling the versioned output folder.
+
+So YES — change Mailer settings (and include Mailer in PrecompiledWeb copy).
+
+
+--------------------------------------------------------------------------------
+1) appsettings.json — GSS Mailer WebService buildCommand ONLY
+--------------------------------------------------------------------------------
+REPLACE Mailer buildCommand with the same style as GSS Web Service:
+
+{
+  "name": "GSS Mailer WebService",
+  "type": "AsmxWebService",
+  "projectPath": "Web Services\\GSSMailerWebService\\GSSMailerWebService.sln",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"Web Services\\GSSMailerWebService\" && git fetch && git restore --source=@{u} --staged --worktree -- \"Web Services\\GSSMailerWebService\" && (git stash pop || ver > nul)",
+  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
+  "outputSubfolder": "GSSMailerWebService"
+}
+
+Copy-paste buildCommand only:
+
+  msbuild "{projectFile}" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile
+
+Do NOT use for Mailer:
+
+  /t:Restore;Publish /p:PublishDir="{outputFolder}\\"
+
+
+Leave GSS API / IMC / GSS Web Service as they are.
+
+
+--------------------------------------------------------------------------------
+2) BuildTab BuildApplication — include Mailer in PrecompiledWeb copy
+--------------------------------------------------------------------------------
+Find the GSS Web Service block and CHANGE the if to:
+
+                // ---- GSS Web Service + GSS Mailer (FolderProfile → PrecompiledWeb) ----
+                if (string.Equals(app.Name, "GSS Web Service", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(app.Name, "GSS Mailer WebService", StringComparison.OrdinalIgnoreCase))
+                {
+                    precompiled = Path.Combine(
+                        workingDir,
+                        "PrecompiledWeb",
+                        app.OutputSubfolder
+                            ?? (string.Equals(app.Name, "GSS Mailer WebService", StringComparison.OrdinalIgnoreCase)
+                                ? "GSSMailerWebService"
+                                : "GSSWebService"));
+
+                    if (!Directory.Exists(precompiled))
+                    {
+                        var precompiledRoot = Path.Combine(workingDir, "PrecompiledWeb");
+                        precompiled = Directory.Exists(precompiledRoot)
+                            ? Directory.GetDirectories(precompiledRoot).FirstOrDefault()
+                            : null;
+                    }
+                }
+
+Existing archive + File.Copy into outputFolder stays the same → files land in:
+
+  F:\build-output\9.2.1\GSSMailerWebService\
+
+
+--------------------------------------------------------------------------------
+3) Checklist
+--------------------------------------------------------------------------------
+[ ] Mailer buildCommand = FolderProfile (like GSS Web Service)
+[ ] BuildApplication PrecompiledWeb if includes "GSS Mailer WebService"
+[ ] Build Mailer → log: Published artifacts copied to F:\build-output\...\GSSMailerWebService
+[ ] Explorer folder is NOT empty
