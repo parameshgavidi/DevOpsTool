@@ -1,11 +1,65 @@
 ================================================================================
-DeploymentTool.razor — paste this exact code (field + 2 methods)
+Build All → Dispatcher error in DeployTab.HandleBuildSuccessChanged
 ================================================================================
 
-Put the field with your other private fields in @code.
-Replace SelectTab + HandleBuildSuccessChanged with the methods below.
+SYMPTOM
+-------
+Click Build All. Exception in DeployTab.razor ~line 152:
+
+  System.InvalidOperationException:
+  The current thread is not associated with the Dispatcher.
+  Use InvokeAsync() to switch execution to the Dispatcher when triggering
+  rendering or component state.
+
+Your current method (BROKEN when called from build background thread):
+
+    private Task HandleBuildSuccessChanged(bool success)
+    {
+        return OnBuildSuccessChanged.HasDelegate
+            ? OnBuildSuccessChanged.InvokeAsync(success)
+            : Task.CompletedTask;
+    }
+
+Stack shows:
+  DeployTab.HandleBuildSuccessChanged
+    → OnBuildSuccessChanged.InvokeAsync
+      → IHandleEvent.HandleEventAsync
+        → StateHasChanged
+          → Dispatcher.AssertAccess  (FAILS)
 
 
+ROOT CAUSE
+----------
+Build finishes on a background thread → BuildTab raises OnBuildSuccessChanged
+→ DeployTab.HandleBuildSuccessChanged runs OFF the UI thread → calling
+OnBuildSuccessChanged.InvokeAsync there makes Blazor re-render on that same
+background thread → crash.
+
+Fix: marshal onto the dispatcher with InvokeAsync BEFORE forwarding.
+
+
+--------------------------------------------------------------------------------
+1) DeployTab.razor — REPLACE HandleBuildSuccessChanged
+--------------------------------------------------------------------------------
+REPLACE the whole method with:
+
+    private Task HandleBuildSuccessChanged(bool success)
+    {
+        return InvokeAsync(() =>
+            OnBuildSuccessChanged.HasDelegate
+                ? OnBuildSuccessChanged.InvokeAsync(success)
+                : Task.CompletedTask);
+    }
+
+Keep the Parameter (already required):
+
+    [Parameter]
+    public EventCallback<bool> OnBuildSuccessChanged { get; set; }
+
+
+--------------------------------------------------------------------------------
+2) DeploymentTool.razor — keep this (already correct if you applied earlier)
+--------------------------------------------------------------------------------
     private bool HasSuccessfulBuild;
 
     private void SelectTab(string tabName)
@@ -21,23 +75,10 @@ Replace SelectTab + HandleBuildSuccessChanged with the methods below.
     }
 
 
-DeployTab.razor — leave as-is (no HasSuccessfulBuild there):
-
-    private Task HandleBuildSuccessChanged(bool success)
-    {
-        return OnBuildSuccessChanged.HasDelegate
-            ? OnBuildSuccessChanged.InvokeAsync(success)
-            : Task.CompletedTask;
-    }
-
-And DeployTab must also have this Parameter (if missing, add it):
-
-    [Parameter]
-    public EventCallback<bool> OnBuildSuccessChanged { get; set; }
-
-
-If save still errors, copy the EXACT red error text (Error List).
-Common causes:
-  - field declared twice
-  - field put outside @code
-  - typo: HasSuccessfullBuild / hasSuccessfulBuild field name mismatch
+--------------------------------------------------------------------------------
+3) Checklist
+--------------------------------------------------------------------------------
+[ ] DeployTab.HandleBuildSuccessChanged wraps forward in InvokeAsync(() => ...)
+[ ] DeploymentTool still uses InvokeAsync(StateHasChanged)
+[ ] Click Build All — no Dispatcher InvalidOperationException
+[ ] After Success, other tabs unlock
