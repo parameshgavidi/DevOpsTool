@@ -1,138 +1,100 @@
 ================================================================================
-Build All → InvalidOperationException: thread not associated with Dispatcher
-Fix HandleBuildSuccessChanged in PARENT tabs (NOT BuildTab)
+DeployTab error on OnBuildSuccessChanged.HasDelegate + Build All Dispatcher crash
 ================================================================================
 
-SYMPTOM
--------
-Click Build All (or Build). Debugger stops on StateHasChanged():
+WHAT YOU ARE SEEING IN DeployTab.razor (~line 150)
+--------------------------------------------------
+    private Task HandleBuildSuccessChanged(bool success)
+    {
+        return OnBuildSuccessChanged.HasDelegate
+            ? OnBuildSuccessChanged.InvokeAsync(success)
+            : Task.CompletedTask;
+    }
 
-  System.InvalidOperationException:
-  The current thread is not associated with the Dispatcher.
-  Use InvokeAsync() to switch execution to the Dispatcher when triggering
-  rendering or component state.
-
-
-WHERE THE METHOD ACTUALLY LIVES
--------------------------------
-HandleBuildSuccessChanged is NOT in BuildTab.razor.
-
-Find-in-solution for "HandleBuildSuccessChanged" shows hits like:
-
-  DeployTab.razor
-    ~line 74:  <BuildTab OnBuildSuccessChanged="HandleBuildSuccessChanged" />
-    ~line 150: private Task HandleBuildSuccessChanged(bool success)
-
-  DeploymentTool.razor
-    ~line 38:  <DeployTab ... OnBuildSuccessChanged="HandleBuildSuccessChanged" />
-    ~line 180: private Task HandleBuildSuccessChanged(bool hasSuccessfulBuild)
-
-BuildTab only RAISES the event:
-
-  await OnBuildSuccessChanged.InvokeAsync(true);
-
-Parents HANDLE it. Fix those handlers.
+Red squiggles on OnBuildSuccessChanged / HasDelegate mean DeployTab does not
+have a proper EventCallback parameter named OnBuildSuccessChanged.
 
 
-ROOT CAUSE
-----------
-Build finishes on a background thread → OnBuildSuccessChanged fires → parent
-HandleBuildSuccessChanged runs off the UI thread → bare StateHasChanged() throws.
+--------------------------------------------------------------------------------
+1) DeployTab.razor — ADD the missing Parameter
+--------------------------------------------------------------------------------
+Near your other [Parameter] properties in DeployTab.razor @code, ADD:
+
+    [Parameter]
+    public EventCallback<bool> OnBuildSuccessChanged { get; set; }
+
+That is required because DeploymentTool.razor already passes it:
+
+    <DeployTab ... OnBuildSuccessChanged="HandleBuildSuccessChanged" />
+
+After adding the Parameter, HasDelegate and InvokeAsync compile.
 
 
-================================================================================
-THE ONLY REQUIRED CHANGE
-================================================================================
-In EACH HandleBuildSuccessChanged (DeployTab + DeploymentTool):
-
-  KEEP your existing method body exactly as it is.
-  Do NOT add any new variables (no HasSuccessfulBuild needed).
-  ONLY change how you call StateHasChanged.
-
-
-BEFORE (broken):
+--------------------------------------------------------------------------------
+2) DeployTab.razor — KEEP your forwarder method as-is
+--------------------------------------------------------------------------------
+Your current method is fine. Do NOT change it to StateHasChanged.
+Do NOT add HasSuccessfulBuild.
 
     private Task HandleBuildSuccessChanged(bool success)
     {
-        // ... whatever you already have here ...
-        StateHasChanged();
-        return Task.CompletedTask;
+        return OnBuildSuccessChanged.HasDelegate
+            ? OnBuildSuccessChanged.InvokeAsync(success)
+            : Task.CompletedTask;
     }
 
-AFTER (fixed) — Option A:
-
-    private Task HandleBuildSuccessChanged(bool success)
-    {
-        // ... whatever you already have here (unchanged) ...
-        return InvokeAsync(StateHasChanged);
-    }
-
-AFTER (fixed) — Option B (if the method already uses async/await):
-
-    private async Task HandleBuildSuccessChanged(bool success)
-    {
-        // ... whatever you already have here (unchanged) ...
-        await InvokeAsync(StateHasChanged);
-    }
-
-Parameter name may be `success` or `hasSuccessfulBuild` — match YOUR file.
-Do the same edit in BOTH DeployTab.razor and DeploymentTool.razor.
+This only forwards the bool up to DeploymentTool.
 
 
-EXAMPLES (illustrative — keep YOUR real body)
----------------------------------------------
-If DeployTab currently looks like:
-
-    private Task HandleBuildSuccessChanged(bool success)
-    {
-        return OnBuildSuccessChanged.InvokeAsync(success);
-    }
-
-and somehow still hits StateHasChanged elsewhere, fix THAT StateHasChanged.
-If it currently has StateHasChanged:
-
-    private Task HandleBuildSuccessChanged(bool success)
-    {
-        // existing lines stay
-        return InvokeAsync(StateHasChanged);
-    }
-
-If DeploymentTool currently looks like:
+--------------------------------------------------------------------------------
+3) DeploymentTool.razor — FIX the Dispatcher crash HERE
+--------------------------------------------------------------------------------
+The original runtime error (thread not associated with Dispatcher) is in
+DeploymentTool.HandleBuildSuccessChanged (~line 180), which typically has:
 
     private Task HandleBuildSuccessChanged(bool hasSuccessfulBuild)
     {
-        // existing lines stay — do not invent new fields
+        // ... your existing lines ...
+        StateHasChanged();              // ← throws off UI thread
+        return Task.CompletedTask;
+    }
+
+REPLACE only the re-render part:
+
+    private Task HandleBuildSuccessChanged(bool hasSuccessfulBuild)
+    {
+        // ... keep your existing lines unchanged ...
         return InvokeAsync(StateHasChanged);
     }
 
+Or if already async:
 
-Do NOT keep:
+    private async Task HandleBuildSuccessChanged(bool hasSuccessfulBuild)
+    {
+        // ... keep your existing lines unchanged ...
+        await InvokeAsync(StateHasChanged);
+    }
 
-    StateHasChanged();
-    return Task.CompletedTask;
-
-
---------------------------------------------------------------------------------
-Wiring — leave alone
---------------------------------------------------------------------------------
-  DeployTab:       <BuildTab OnBuildSuccessChanged="HandleBuildSuccessChanged" />
-  DeploymentTool:  <DeployTab ... OnBuildSuccessChanged="HandleBuildSuccessChanged" />
+Do NOT invent new variables. Keep whatever body you already have.
+Only remove bare StateHasChanged() + Task.CompletedTask and use InvokeAsync.
 
 
 --------------------------------------------------------------------------------
-Checklist
+4) Call chain (for clarity)
 --------------------------------------------------------------------------------
-[ ] DeployTab.HandleBuildSuccessChanged → InvokeAsync(StateHasChanged)
-[ ] DeploymentTool.HandleBuildSuccessChanged → InvokeAsync(StateHasChanged)
-[ ] No new HasSuccessfulBuild (or other) variable added
+  BuildTab  →  OnBuildSuccessChanged.InvokeAsync(true)
+       ↓
+  DeployTab.HandleBuildSuccessChanged(success)
+       ↓  forwards via Parameter OnBuildSuccessChanged
+  DeploymentTool.HandleBuildSuccessChanged(...)
+       ↓  must use InvokeAsync(StateHasChanged)
+
+
+--------------------------------------------------------------------------------
+5) Checklist
+--------------------------------------------------------------------------------
+[ ] DeployTab has: [Parameter] public EventCallback<bool> OnBuildSuccessChanged { get; set; }
+[ ] DeployTab.HandleBuildSuccessChanged still only forwards (no StateHasChanged needed)
+[ ] DeploymentTool.HandleBuildSuccessChanged uses InvokeAsync(StateHasChanged)
+[ ] Red squiggles gone in DeployTab
 [ ] Click Build All — no Dispatcher InvalidOperationException
-[ ] UI still updates after builds finish
-
-
---------------------------------------------------------------------------------
-Quick test
---------------------------------------------------------------------------------
-1. Run under debugger
-2. Click Build All
-3. Expect: no Exception on StateHasChanged
-4. Expect: status / log UI still refreshes
