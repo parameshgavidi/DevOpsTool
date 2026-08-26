@@ -1,40 +1,10 @@
 ================================================================================
-DeployTab error on OnBuildSuccessChanged.HasDelegate + Build All Dispatcher crash
+Build All Dispatcher — final status for YOUR current code
 ================================================================================
 
-WHAT YOU ARE SEEING IN DeployTab.razor (~line 150)
---------------------------------------------------
-    private Task HandleBuildSuccessChanged(bool success)
-    {
-        return OnBuildSuccessChanged.HasDelegate
-            ? OnBuildSuccessChanged.InvokeAsync(success)
-            : Task.CompletedTask;
-    }
-
-Red squiggles on OnBuildSuccessChanged / HasDelegate mean DeployTab does not
-have a proper EventCallback parameter named OnBuildSuccessChanged.
-
-
---------------------------------------------------------------------------------
-1) DeployTab.razor — ADD the missing Parameter
---------------------------------------------------------------------------------
-Near your other [Parameter] properties in DeployTab.razor @code, ADD:
-
-    [Parameter]
-    public EventCallback<bool> OnBuildSuccessChanged { get; set; }
-
-That is required because DeploymentTool.razor already passes it:
-
-    <DeployTab ... OnBuildSuccessChanged="HandleBuildSuccessChanged" />
-
-After adding the Parameter, HasDelegate and InvokeAsync compile.
-
-
---------------------------------------------------------------------------------
-2) DeployTab.razor — KEEP your forwarder method as-is
---------------------------------------------------------------------------------
-Your current method is fine. Do NOT change it to StateHasChanged.
-Do NOT add HasSuccessfulBuild.
+DeployTab.razor — NO MORE CHANGES NEEDED
+----------------------------------------
+Your forwarder is correct:
 
     private Task HandleBuildSuccessChanged(bool success)
     {
@@ -43,58 +13,49 @@ Do NOT add HasSuccessfulBuild.
             : Task.CompletedTask;
     }
 
-This only forwards the bool up to DeploymentTool.
+(Only required earlier: [Parameter] public EventCallback<bool> OnBuildSuccessChanged
+ — if HasDelegate compiles now, you already have it.)
 
 
---------------------------------------------------------------------------------
-3) DeploymentTool.razor — FIX the Dispatcher crash HERE
---------------------------------------------------------------------------------
-The original runtime error (thread not associated with Dispatcher) is in
-DeploymentTool.HandleBuildSuccessChanged (~line 180), which typically has:
+DeploymentTool.razor — Dispatcher fix is DONE
+---------------------------------------------
+This part is correct:
 
-    private Task HandleBuildSuccessChanged(bool hasSuccessfulBuild)
+    return InvokeAsync(StateHasChanged);
+
+That stops the "thread is not associated with the Dispatcher" crash.
+
+
+ONE remaining change in DeploymentTool.razor
+--------------------------------------------
+You still use HasSuccessfulBuild in SelectTab:
+
+    private void SelectTab(string tabName)
     {
-        // ... your existing lines ...
-        StateHasChanged();              // ← throws off UI thread
-        return Task.CompletedTask;
+        if (!HasSuccessfulBuild && tabName != "BUILD") return;
+        ActiveTab = tabName;
     }
 
-REPLACE only the re-render part:
+But the assignment in HandleBuildSuccessChanged is commented out:
+
+    //HasSuccessfulBuild = HasSuccessfulBuild || hasSuccessfulBuild;
+
+UNCOMMENT it. Final method should be:
 
     private Task HandleBuildSuccessChanged(bool hasSuccessfulBuild)
     {
-        // ... keep your existing lines unchanged ...
+        HasSuccessfulBuild = HasSuccessfulBuild || hasSuccessfulBuild;
         return InvokeAsync(StateHasChanged);
     }
 
-Or if already async:
-
-    private async Task HandleBuildSuccessChanged(bool hasSuccessfulBuild)
-    {
-        // ... keep your existing lines unchanged ...
-        await InvokeAsync(StateHasChanged);
-    }
-
-Do NOT invent new variables. Keep whatever body you already have.
-Only remove bare StateHasChanged() + Task.CompletedTask and use InvokeAsync.
+Why: if that line stays commented, HasSuccessfulBuild never becomes true,
+so SelectTab keeps blocking every tab except BUILD after a successful build.
 
 
---------------------------------------------------------------------------------
-4) Call chain (for clarity)
---------------------------------------------------------------------------------
-  BuildTab  →  OnBuildSuccessChanged.InvokeAsync(true)
-       ↓
-  DeployTab.HandleBuildSuccessChanged(success)
-       ↓  forwards via Parameter OnBuildSuccessChanged
-  DeploymentTool.HandleBuildSuccessChanged(...)
-       ↓  must use InvokeAsync(StateHasChanged)
-
-
---------------------------------------------------------------------------------
-5) Checklist
---------------------------------------------------------------------------------
-[ ] DeployTab has: [Parameter] public EventCallback<bool> OnBuildSuccessChanged { get; set; }
-[ ] DeployTab.HandleBuildSuccessChanged still only forwards (no StateHasChanged needed)
-[ ] DeploymentTool.HandleBuildSuccessChanged uses InvokeAsync(StateHasChanged)
-[ ] Red squiggles gone in DeployTab
-[ ] Click Build All — no Dispatcher InvalidOperationException
+Checklist
+---------
+[x] DeployTab forwarder only (no StateHasChanged there)
+[x] DeploymentTool uses InvokeAsync(StateHasChanged)
+[ ] Uncomment HasSuccessfulBuild = HasSuccessfulBuild || hasSuccessfulBuild;
+[ ] Build All → no Dispatcher exception
+[ ] After Success → other tabs unlock via SelectTab
