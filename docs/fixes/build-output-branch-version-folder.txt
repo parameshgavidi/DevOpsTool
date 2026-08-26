@@ -1,0 +1,288 @@
+================================================================================
+build-output version folder from git branch (trim GSSv)
+NEW structure without breaking current builds
+================================================================================
+
+GOAL
+----
+Current (flat):
+
+  F:\build-output\
+    GSSApi\
+    IMCApi\
+    GSSMailerWebService\
+    GSSWebService\
+    db-scripts\
+
+New (version folder from branch, then same app folders):
+
+  F:\build-output\
+    8.7\                    ← from branch GSSv8.7 (trim "GSSv")
+      GSSApi\
+      IMCApi\
+      GSSMailerWebService\
+      GSSWebService\
+      db-scripts\           ← optional same rule for Bundle Scripts
+
+Matches Migration share style: \\...\Migration\GSS\8.7\ ...
+
+
+RULES
+-----
+1. Read current branch at Code Repo Root (after Get latest).
+2. Trim remote prefix (origin/) and trim leading "GSSv" (or "GSS").
+3. If version folder does not exist under Output Root → create it.
+4. If it already exists → reuse (do not fail).
+5. Publish each app into:  {outputRoot}\{version}\{outputSubfolder}\
+6. If branch cannot be resolved → FALL BACK to old flat path
+   {outputRoot}\{outputSubfolder}\  so current process still works.
+
+
+EXAMPLES
+--------
+  Branch              Version folder     App output
+  ------------------  -----------------  --------------------------------
+  GSSv8.7             8.7                F:\build-output\8.7\GSSApi\
+  origin/GSSv8.3S2    8.3S2              F:\build-output\8.3S2\IMCApi\
+  GSS8.7              8.7                F:\build-output\8.7\GSSApi\
+  (unknown / empty)   (none — flat)      F:\build-output\GSSApi\
+
+
+================================================================================
+1) BuildTab.razor — helpers (ADD)
+================================================================================
+Add near other path helpers (RepoRoot / OutputRoot):
+
+    /// <summary>
+    /// Current branch at RepoRoot, e.g. "GSSv8.7" or "origin/GSSv8.7".
+    /// </summary>
+    private string? TryGetCurrentGitBranch()
+    {
+        try
+        {
+            var root = RepoRoot?.Trim();
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+                return null;
+
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = "/c git rev-parse --abbrev-ref HEAD",
+                WorkingDirectory = root,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var p = System.Diagnostics.Process.Start(psi);
+            if (p is null) return null;
+            var stdout = p.StandardOutput.ReadToEnd().Trim();
+            p.WaitForExit(15000);
+            if (p.ExitCode != 0 || string.IsNullOrWhiteSpace(stdout) || stdout == "HEAD")
+                return null;
+            return stdout;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// GSSv8.7 / origin/GSSv8.7 / GSS8.7 → "8.7"
+    /// </summary>
+    private static string? TrimGssVersionFolder(string? branchName)
+    {
+        if (string.IsNullOrWhiteSpace(branchName))
+            return null;
+
+        var name = branchName.Trim();
+
+        // origin/GSSv8.7 → GSSv8.7
+        var slash = name.LastIndexOf('/');
+        if (slash >= 0 && slash < name.Length - 1)
+            name = name[(slash + 1)..];
+
+        // GSSv8.7 → 8.7
+        if (name.StartsWith("GSSv", StringComparison.OrdinalIgnoreCase))
+            return name[4..];
+
+        // GSS8.7 → 8.7 (rare, no "v")
+        if (name.StartsWith("GSS", StringComparison.OrdinalIgnoreCase)
+            && name.Length > 3
+            && char.IsDigit(name[3]))
+            return name[3..];
+
+        return null;
+    }
+
+    /// <summary>
+    /// New: OutputRoot\8.7\GSSApi
+    /// Fallback: OutputRoot\GSSApi  (current behavior)
+    /// </summary>
+    private string ResolveAppOutputFolder(Application app)
+    {
+        var outputRoot = (OutputRoot ?? string.Empty).Trim();
+        var sub = (app.OutputSubfolder ?? app.Name ?? "app").Trim();
+
+        var version = TrimGssVersionFolder(TryGetCurrentGitBranch());
+        if (!string.IsNullOrWhiteSpace(version))
+        {
+            var versionDir = Path.Combine(outputRoot, version);
+            Directory.CreateDirectory(versionDir);   // no-op if exists
+            var folder = Path.Combine(versionDir, sub);
+            Directory.CreateDirectory(folder);
+            return folder;
+        }
+
+        // FALLBACK — do not break current flat layout
+        var flat = Path.Combine(outputRoot, sub);
+        Directory.CreateDirectory(flat);
+        return flat;
+    }
+
+
+================================================================================
+2) BuildTab.razor — USE ResolveAppOutputFolder everywhere outputFolder is built
+================================================================================
+Find where you currently do something like:
+
+    var outputFolder = Path.Combine(OutputRoot, app.OutputSubfolder);
+
+REPLACE with:
+
+    var outputFolder = ResolveAppOutputFolder(app);
+
+    AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Output folder: {outputFolder}\r\n");
+
+Do this in BuildApplication (and any MSI / copy / archive helpers that take
+outputFolder). Archive of previous build stays NEXT TO the app folder:
+
+  F:\build-output\8.7\GSSWebService
+  F:\build-output\8.7\GSSWebService_20260826001755   ← parent = version folder
+
+That already works if archive uses Path.GetDirectoryName(outputFolder).
+
+
+================================================================================
+3) buildCommand substitution — always replace {outputFolder}
+================================================================================
+When expanding appsettings buildCommand, replace BOTH placeholders:
+
+    var cmd = app.BuildCommand
+        .Replace("{projectFile}", projectFile, StringComparison.OrdinalIgnoreCase)
+        .Replace("{outputSubfolder}", app.OutputSubfolder ?? "", StringComparison.OrdinalIgnoreCase)
+        .Replace("{outputFolder}", outputFolder, StringComparison.OrdinalIgnoreCase);
+
+outputFolder MUST be ResolveAppOutputFolder(app) — full path.
+
+
+================================================================================
+4) appsettings.json — stop hardcoding F:\build-output\AppName
+================================================================================
+Hardcoded PublishDir bypasses the version folder. Change apps to use
+{outputFolder} so BuildTab controls the path.
+
+GSS API example:
+
+{
+  "name": "GSS API",
+  "type": "DotNetCoreApi",
+  "projectPath": "Web Services\\GSSApi\\GSSApi.csproj",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"Web Services\\GSSApi\" && git fetch && git restore --source=@{u} --staged --worktree -- \"Web Services\\GSSApi\" && (git stash pop || ver > nul)",
+  "buildCommand": "msbuild \"{projectFile}\" /t:Restore;Publish /p:Configuration=Release /p:PublishDir=\"{outputFolder}\\\\\" /v:m",
+  "outputSubfolder": "GSSApi"
+}
+
+IMC Api:
+
+  "buildCommand": "msbuild \"{projectFile}\" /t:Restore;Publish /p:Configuration=Release /p:PublishDir=\"{outputFolder}\\\\\" /v:m",
+  "outputSubfolder": "IMCApi"
+
+GSS Mailer WebService:
+
+  "buildCommand": "msbuild \"{projectFile}\" /t:Restore;Publish /p:Configuration=Release /p:PublishDir=\"{outputFolder}\\\\\" /v:m",
+  "outputSubfolder": "GSSMailerWebService"
+
+GSS Web Service (FolderProfile — often copies via PrecompiledWeb; still set
+outputFolder in code for the copy destination). Keep buildCommand if it does
+not take PublishDir; only ensure the COPY target uses ResolveAppOutputFolder.
+
+
+IMPORTANT: Only switch to {outputFolder} AFTER step 3 replacement is in code.
+Otherwise MSBuild creates a literal folder named {outputFolder}.
+
+
+================================================================================
+5) Optional — Bundle DB scripts under same version folder
+================================================================================
+Today:  {outputRoot}\db-scripts\
+Desired: {outputRoot}\{version}\db-scripts\
+
+In BundleDbScriptsAsync, resolve dest the same way:
+
+    var version = TrimGssVersionFolder(TryGetCurrentGitBranch());
+    var dbOut = !string.IsNullOrWhiteSpace(version)
+        ? Path.Combine(OutputRoot, version, "db-scripts")
+        : Path.Combine(OutputRoot, "db-scripts");
+    Directory.CreateDirectory(dbOut);
+
+
+================================================================================
+6) Optional safety flag (appsettings build section)
+================================================================================
+If you want an off-switch:
+
+  "build": {
+    "outputRoot": "F:\\build-output",
+    "useBranchVersionFolder": true,
+    ...
+  }
+
+In ResolveAppOutputFolder:
+
+    if (!UseBranchVersionFolder)   // bound from settings
+    {
+        // old flat path only
+        var flat = Path.Combine(outputRoot, sub);
+        Directory.CreateDirectory(flat);
+        return flat;
+    }
+
+Default true once tested; set false to instantly restore old layout.
+
+
+================================================================================
+7) Does NOT break current process — how
+================================================================================
+- Same Build / Build All / Get latest flow
+- Same outputSubfolder names (GSSApi, IMCApi, ...)
+- Same archive + copy logic; only parent path gains \8.7\
+- If git branch missing / not GSSv* → flat F:\build-output\AppName (old)
+- Feature flag can force flat layout
+- Migration share copy (if any) still targets version folders like 8.7
+
+
+================================================================================
+8) Quick test
+================================================================================
+1. Repo on branch GSSv8.7 (or checkout that branch)
+2. Get latest → Build All
+3. Expect log: Output folder: F:\build-output\8.7\GSSApi
+4. Explorer:
+     F:\build-output\8.7\GSSApi\
+     F:\build-output\8.7\IMCApi\
+     ...
+5. Second Build All — folder 8.7 already exists → reuse, no error
+6. Checkout unknown branch / fail git → still publishes flat (fallback)
+
+
+CHECKLIST
+---------
+[ ] TryGetCurrentGitBranch + TrimGssVersionFolder + ResolveAppOutputFolder added
+[ ] All outputFolder = ResolveAppOutputFolder(app)
+[ ] buildCommand replaces {outputFolder}
+[ ] appsettings PublishDir uses {outputFolder}\\ (not hardcoded flat path)
+[ ] Branch GSSv8.7 → F:\build-output\8.7\<app>\
+[ ] Fallback still writes F:\build-output\<app>\ when branch unknown
