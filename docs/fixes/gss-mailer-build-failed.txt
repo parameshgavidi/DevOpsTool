@@ -1,0 +1,144 @@
+================================================================================
+GSS Mailer WebService — Build Failed (after FolderProfile change)
+================================================================================
+
+Check OUTPUT LOG / View Log for which case matches.
+
+
+--------------------------------------------------------------------------------
+CASE A — Restore failed (MSB4249)  [most common if restore still runs]
+--------------------------------------------------------------------------------
+Log looks like:
+
+  Restoring packages for GSS Mailer WebService...
+  >>> Command: ... dotnet restore "...\GSSMailerWebService.sln"
+  MSB4249: Unable to build website project "GSSMailerWebService".
+  The ASP.NET compiler is only available on the .NET Framework version of MSBuild.
+  [ERROR] Restore failed for GSS Mailer WebService with exit code 1
+
+FIX — BuildTab RestorePackagesAsync must SKIP Mailer (same as AsmxWebService):
+
+        if (string.Equals(app.Type, "AspNetWebForms", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(app.Type, "AsmxWebService", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(app.Name, "GSS Mailer WebService", StringComparison.OrdinalIgnoreCase))
+        {
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Skipping dotnet restore for {app.Name} ({app.Type})\r\n";
+            return true;
+        }
+
+Mailer type is already "AsmxWebService" — if skip is present, you should see
+"Skipping dotnet restore" in the log. If you still see "dotnet restore", the
+guard is missing or type string does not match.
+
+
+--------------------------------------------------------------------------------
+CASE B — FolderProfile.pubxml missing
+--------------------------------------------------------------------------------
+Log looks like:
+
+  The value for PublishProfile is set to 'FolderProfile', expected to find the
+  file at:
+    ...\GSSMailerWebService\...\Properties\PublishProfiles\FolderProfile.pubxml
+  but it could not be found.
+  ValidatePublishProfileSettings target failed
+
+FIX option B1 — create FolderProfile.pubxml under the Mailer web project
+(same as GSS Web Service / Web2ClientBridge). Path is usually:
+
+  Web Services\GSSMailerWebService\<WebProject>\Properties\PublishProfiles\FolderProfile.pubxml
+
+Minimal contents:
+
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <WebPublishMethod>FileSystem</WebPublishMethod>
+    <LastUsedBuildConfiguration>Release</LastUsedBuildConfiguration>
+    <LastUsedPlatform>Any CPU</LastUsedPlatform>
+    <SiteUrlToLaunchAfterPublish />
+    <LaunchSiteAfterPublish>False</LaunchSiteAfterPublish>
+    <ExcludeApp_Data>False</ExcludeApp_Data>
+    <publishUrl>..\PrecompiledWeb\GSSMailerWebService</publishUrl>
+    <DeleteExistingFiles>True</DeleteExistingFiles>
+  </PropertyGroup>
+</Project>
+
+Adjust publishUrl if your PrecompiledWeb layout differs. Prefer committing this
+file to the GSS repo (same as team note for Web2ClientBridge).
+
+
+FIX option B2 — NO pubxml required (alternate buildCommand)
+If you cannot add FolderProfile.pubxml, change appsettings Mailer to:
+
+  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:WebPublishMethod=FileSystem /p:PublishUrl=\"PrecompiledWeb\\GSSMailerWebService\" /p:DeleteExistingFiles=True"
+
+Do NOT pass /p:PublishProfile=FolderProfile with this alternate.
+
+Keep:
+
+  "type": "AsmxWebService",
+  "outputSubfolder": "GSSMailerWebService"
+
+BuildTab still copies PrecompiledWeb → GetAppOutputFolder(app) when name is
+"GSS Mailer WebService".
+
+
+--------------------------------------------------------------------------------
+CASE C — Build OK but PrecompiledWeb empty / copy warn
+--------------------------------------------------------------------------------
+Log:
+
+  Finished GSS Mailer WebService with exit code 0
+  [WARN] Publish output not found for GSS Mailer WebService under ...
+
+Or Status Failed after copy logic.
+
+FIX:
+  - Confirm BuildApplication if-block includes "GSS Mailer WebService"
+  - After msbuild, check disk:
+      F:\GSS\AppDev\gss-root\Web Services\GSSMailerWebService\PrecompiledWeb\
+  - If publish went to a different subfolder name, set outputSubfolder to match
+    OR let code pick first child of PrecompiledWeb (already in the fallback)
+
+
+--------------------------------------------------------------------------------
+CASE D — ASPRUNTIME PrecompiledWeb not empty
+--------------------------------------------------------------------------------
+Log:
+
+  ASPNETCOMPILER error ASPRUNTIME: The target directory is not empty
+
+FIX — clean before build (CleanPrecompiledOutputAsync), or manually:
+
+  Remove-Item -Recurse -Force "F:\GSS\AppDev\gss-root\Web Services\GSSMailerWebService\PrecompiledWeb"
+
+
+--------------------------------------------------------------------------------
+RECOMMENDED appsettings (Mailer) RIGHT NOW
+--------------------------------------------------------------------------------
+If FolderProfile.pubxml EXISTS (like GSS Web Service):
+
+  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile"
+
+If FolderProfile.pubxml DOES NOT exist (use this):
+
+  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:WebPublishMethod=FileSystem /p:PublishUrl=\"PrecompiledWeb\\GSSMailerWebService\" /p:DeleteExistingFiles=True"
+
+Do NOT use PublishDir={outputFolder} for Mailer.
+
+
+--------------------------------------------------------------------------------
+WHAT TO PASTE BACK
+--------------------------------------------------------------------------------
+From OUTPUT LOG, copy the lines around the Mailer failure
+([ERROR] / MSB#### / PublishProfile / Restore failed).
+That picks Case A/B/C/D exactly.
+
+
+CHECKLIST
+---------
+[ ] View Log — identify Case A / B / C / D
+[ ] AsmxWebService restore skip works (no dotnet restore for Mailer)
+[ ] FolderProfile.pubxml exists OR alternate WebPublishMethod command used
+[ ] BuildApplication copies PrecompiledWeb for "GSS Mailer WebService"
+[ ] Build Mailer → files under F:\build-output\<version>\GSSMailerWebService\
