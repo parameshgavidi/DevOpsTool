@@ -144,25 +144,37 @@ Add near other path helpers (RepoRoot / OutputRoot):
 
 
 ================================================================================
-2) BuildTab.razor — USE ResolveAppOutputFolder everywhere outputFolder is built
+2) BuildTab.razor — YOUR BuildApplication line (KEEP THE CALL)
 ================================================================================
-Find where you currently do something like:
+You already have (around line 330):
 
-    var outputFolder = Path.Combine(OutputRoot, app.OutputSubfolder);
+    var outputFolder = GetAppOutputFolder(app);
 
-REPLACE with:
+DO NOT change that line. Leave it as GetAppOutputFolder(app).
 
-    var outputFolder = ResolveAppOutputFolder(app);
+WHAT TO DO INSTEAD:
+  Find the METHOD body of GetAppOutputFolder(...) and REPLACE its insides
+  with the version-folder logic from section 1 (ResolveAppOutputFolder).
 
-    AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Output folder: {outputFolder}\r\n");
+Easiest: rename is optional — either:
 
-Do this in BuildApplication (and any MSI / copy / archive helpers that take
-outputFolder). Archive of previous build stays NEXT TO the app folder:
+  A) Paste section-1 helpers, then change GetAppOutputFolder to:
+
+        private string GetAppOutputFolder(Application app)
+            => ResolveAppOutputFolder(app);
+
+  B) Or put the ResolveAppOutputFolder body directly inside GetAppOutputFolder
+     (same code, keep your method name).
+
+Optional log right after line 330:
+
+    LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Output folder: {outputFolder}\r\n";
+    // or AppendLog(...) if you use that helper
+
+Archive stays correct if it uses Path.GetDirectoryName(outputFolder):
 
   F:\build-output\8.7\GSSWebService
-  F:\build-output\8.7\GSSWebService_20260826001755   ← parent = version folder
-
-That already works if archive uses Path.GetDirectoryName(outputFolder).
+  F:\build-output\8.7\GSSWebService_20260826001755
 
 
 ================================================================================
@@ -175,7 +187,7 @@ When expanding appsettings buildCommand, replace BOTH placeholders:
         .Replace("{outputSubfolder}", app.OutputSubfolder ?? "", StringComparison.OrdinalIgnoreCase)
         .Replace("{outputFolder}", outputFolder, StringComparison.OrdinalIgnoreCase);
 
-outputFolder MUST be ResolveAppOutputFolder(app) — full path.
+outputFolder MUST be GetAppOutputFolder(app) — full path (after you update that method).
 
 
 ================================================================================
