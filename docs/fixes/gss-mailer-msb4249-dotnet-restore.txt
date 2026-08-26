@@ -1,0 +1,105 @@
+================================================================================
+GSS Mailer WebService — Build failed on restore (MSB4249)
+================================================================================
+
+SYMPTOM (OUTPUT LOG)
+--------------------
+  [INFO] Finished GSS Web Service with exit code 0
+  [INFO] Building GSS Mailer WebService...
+  [INFO] Restoring packages for GSS Mailer WebService...
+  >>> Command: cmd.exe /c dotnet restore "...\GSSMailerWebService.sln"
+  Solution file error MSB4249: Unable to build website project "GSSMailerWebService".
+  The ASP.NET compiler is only available on the .NET Framework version of MSBuild.
+  [ERROR] Restore failed for GSS Mailer WebService with exit code 1
+
+GSS Web Service OK — this failure is Mailer restore only (before its buildCommand).
+
+
+WHY IT FAILED
+-------------
+BuildTab runs a separate restore step first. Because app type is DotNetCoreApi,
+it runs:
+
+  dotnet restore "GSSMailerWebService.sln"
+
+That .sln contains a classic ASP.NET **website** project. The `dotnet` CLI uses
+cross-platform MSBuild, which cannot compile ASP.NET website projects.
+
+MSB4249 = use .NET Framework MSBuild (Visual Studio MSBuild.exe), not `dotnet`.
+
+Your buildCommand already uses msbuild /t:Restore;Publish — the separate
+`dotnet restore` before that is what breaks.
+
+
+--------------------------------------------------------------------------------
+FIX A (quick) — skip restore for this app type / name
+--------------------------------------------------------------------------------
+In BuildTab RestorePackagesAsync, you already skip AspNetWebForms / AsmxWebService.
+Extend the skip so GSS Mailer does not run `dotnet restore`.
+
+Option A1 — if the .sln is legacy website-style, change appsettings type:
+
+  "type": "AsmxWebService"
+  (or "AspNetWebForms")
+
+so the existing skip runs. Keep buildCommand as Framework msbuild.
+
+Option A2 — add an explicit skip for Mailer (or any .sln that needs Framework MSBuild):
+
+        if (string.Equals(app.Type, "AspNetWebForms", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(app.Type, "AsmxWebService", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(app.Name, "GSS Mailer WebService", StringComparison.OrdinalIgnoreCase))
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Skipping dotnet restore for {app.Name} ({app.Type})\r\n");
+            return true;
+        }
+
+Then Build continues to your msbuild buildCommand (which already has /t:Restore).
+
+
+--------------------------------------------------------------------------------
+FIX B — use Framework msbuild for restore instead of dotnet
+--------------------------------------------------------------------------------
+When projectPath is a .sln that needs Framework MSBuild, restore with:
+
+  msbuild "{projectFile}" /t:Restore /p:Configuration=Release /m
+
+not:
+
+  dotnet restore "{projectFile}"
+
+Example in RestorePackagesAsync (Windows + legacy / msbuild apps):
+
+        if (isLegacy && OperatingSystem.IsWindows())
+            restoreCommand = $"msbuild \"{projectFile}\" /t:Restore /p:Configuration=Release /m";
+        else
+            restoreCommand = $"dotnet restore \"{projectFile}\"";
+
+Ensure isLegacy is true for GSS Mailer (or force msbuild path for this app).
+
+
+--------------------------------------------------------------------------------
+appsettings — keep build on Framework MSBuild
+--------------------------------------------------------------------------------
+Keep something like:
+
+{
+  "name": "GSS Mailer WebService",
+  "type": "AsmxWebService",
+  "projectPath": "Web Services\\GSSMailerWebService\\GSSMailerWebService.sln",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"Web Services\\GSSMailerWebService\" && git fetch && git restore --source=@{u} --staged --worktree -- \"Web Services\\GSSMailerWebService\" && (git stash pop || ver > nul)",
+  "buildCommand": "msbuild \"{projectFile}\" /t:Restore;Publish /p:Configuration=Release /p:PublishDir=\"F:\\\\build-output\\\\GSSMailerWebService\\\\\" /v:m",
+  "outputSubfolder": "GSSMailerWebService"
+}
+
+Do NOT use "dotnet restore" / "dotnet build" against this .sln while it still
+contains the website project.
+
+
+--------------------------------------------------------------------------------
+CHECKLIST
+--------------------------------------------------------------------------------
+[ ] Understood: failure is restore via dotnet CLI (MSB4249), not Build All UI
+[ ] Skip dotnet restore for GSS Mailer OR use Framework msbuild restore
+[ ] buildCommand stays msbuild (Framework)
+[ ] Re-run Build / Build All — Mailer gets past restore
