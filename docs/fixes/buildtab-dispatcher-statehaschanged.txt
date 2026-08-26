@@ -1,0 +1,143 @@
+================================================================================
+Build All → InvalidOperationException: thread not associated with Dispatcher
+Fix HandleBuildSuccessChanged (and any off-UI StateHasChanged)
+================================================================================
+
+SYMPTOM
+-------
+Click Build All (or Build). Debugger stops in BuildTab.razor on StateHasChanged():
+
+  System.InvalidOperationException:
+  The current thread is not associated with the Dispatcher.
+  Use InvokeAsync() to switch execution to the Dispatcher when triggering
+  rendering or component state.
+
+Typical crash site (line numbers may differ):
+
+  private Task HandleBuildSuccessChanged(bool hasSuccessfulBuild)
+  {
+      HasSuccessfulBuild = HasSuccessfulBuild || hasSuccessfulBuild;
+      StateHasChanged();              // ← throws
+      return Task.CompletedTask;
+  }
+
+
+ROOT CAUSE
+----------
+Build / Build All runs process work on background (thread-pool) threads.
+Child build steps call OnBuildSuccessChanged.InvokeAsync(true) when a build
+succeeds. That EventCallback can run HandleBuildSuccessChanged off the UI
+thread.
+
+In .NET MAUI Blazor Hybrid, StateHasChanged() MUST run on the Blazor
+dispatcher. Calling it from a background thread throws the exception above.
+
+Other BuildTab helpers already use:
+
+  await InvokeAsync(StateHasChanged);
+
+HandleBuildSuccessChanged was still calling StateHasChanged() directly.
+
+
+--------------------------------------------------------------------------------
+1) BuildTab.razor — FIX HandleBuildSuccessChanged
+--------------------------------------------------------------------------------
+REPLACE the broken method with ONE of these (same behavior):
+
+Option A — return InvokeAsync (minimal change):
+
+    private Task HandleBuildSuccessChanged(bool hasSuccessfulBuild)
+    {
+        HasSuccessfulBuild = HasSuccessfulBuild || hasSuccessfulBuild;
+        return InvokeAsync(StateHasChanged);
+    }
+
+Option B — async/await (matches most other BuildTab methods):
+
+    private async Task HandleBuildSuccessChanged(bool hasSuccessfulBuild)
+    {
+        HasSuccessfulBuild = HasSuccessfulBuild || hasSuccessfulBuild;
+        await InvokeAsync(StateHasChanged);
+    }
+
+Do NOT keep:
+
+    StateHasChanged();
+    return Task.CompletedTask;
+
+That is what causes the crash.
+
+
+--------------------------------------------------------------------------------
+2) Keep EventCallback wiring as-is
+--------------------------------------------------------------------------------
+Parent binding stays the same, for example:
+
+    OnBuildSuccessChanged="HandleBuildSuccessChanged"
+
+or
+
+    OnBuildSuccessChanged="EventCallback.Factory.Create<bool>(this, HandleBuildSuccessChanged)"
+
+Child apps still notify success with:
+
+    if (overallExit == 0)
+        await OnBuildSuccessChanged.InvokeAsync(true);
+
+Only the HANDLER must marshal UI updates via InvokeAsync.
+
+
+--------------------------------------------------------------------------------
+3) Scan BuildTab.razor for other bare StateHasChanged()
+--------------------------------------------------------------------------------
+Any StateHasChanged() reachable from Build / Build All / process output /
+OnBuildSuccessChanged must use InvokeAsync.
+
+Search in BuildTab.razor for:
+
+    StateHasChanged()
+
+Replace each call that can run after await / background work with:
+
+    await InvokeAsync(StateHasChanged);
+    // or: return InvokeAsync(StateHasChanged);
+
+Safe to leave ONLY if you are 100% sure the call is always on the UI thread
+(e.g. pure @onclick with no await before it). Prefer InvokeAsync everywhere
+in BuildTab for consistency — it is cheap and correct on the UI thread too.
+
+
+--------------------------------------------------------------------------------
+4) SelectTab / HasSuccessfulBuild (unchanged logic)
+--------------------------------------------------------------------------------
+Keep existing gate logic, e.g.:
+
+    private void SelectTab(string tabName)
+    {
+        if (HasSuccessfulBuild || tabName == "BUILD")
+            ActiveTab = tabName;
+    }
+
+HasSuccessfulBuild is still set in HandleBuildSuccessChanged; only the
+re-render path changes.
+
+
+--------------------------------------------------------------------------------
+5) Checklist
+--------------------------------------------------------------------------------
+[ ] HandleBuildSuccessChanged uses InvokeAsync(StateHasChanged) — not bare StateHasChanged()
+[ ] No remaining bare StateHasChanged() on build-success / log / status update paths
+[ ] Click Build All — builds run without Dispatcher InvalidOperationException
+[ ] After a successful build, HasSuccessfulBuild is true and other tabs unlock as before
+[ ] UI still refreshes (status / Success) after each app finishes
+
+
+--------------------------------------------------------------------------------
+6) Quick test
+--------------------------------------------------------------------------------
+1. Run the MAUI app under the debugger
+2. Get latest (if needed) so APPLICATIONS is visible
+3. Click Build All
+4. Expect: no Exception User-Unhandled on StateHasChanged
+5. Expect: apps move Building → Success/Failed and OUTPUT LOG updates
+6. After at least one Success, DEPLOY / other gated tabs become available
