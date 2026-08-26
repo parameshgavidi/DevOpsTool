@@ -1,0 +1,93 @@
+================================================================================
+IMC Api — Get latest Failed (pathspec did not match)
+Wrong folder in gitLatestCommand
+================================================================================
+
+SYMPTOM
+-------
+Click Get latest (before Build). OUTPUT LOG:
+
+  error: pathspec ':(prefix:0)Web Services/IMCApi' did not match any file(s) known to git
+  Did you forget to 'git add'?
+  [ERROR] Git latest failed for IMC Api with exit code 1
+
+APPLICATIONS grid:
+  IMC Api  |  DotNetCoreApi  |  Failed
+
+Other apps (GSS API, GSS Mailer WebService, GSS Web Service) stay Ready.
+
+
+ROOT CAUSE
+----------
+appsettings IMC Api entry has a path mismatch:
+
+  projectPath (CORRECT — matches disk):
+    Web Services\GSSIMCApi\IMCApi\IMCApi.csproj
+
+  gitLatestCommand (WRONG):
+    ... -- "Web Services\IMCApi" ...
+    ... -- "Web Services\IMCApi" ...
+
+Real folder on disk:
+  F:\GSS\AppDev\gss-root\Web Services\GSSIMCApi\IMCApi\
+
+There is NO "Web Services\IMCApi". Git pathspec fails → exit 1 → Status = Failed.
+This is Get latest only — not a build failure.
+
+
+--------------------------------------------------------------------------------
+FIX — appsettings.json "IMC Api" entry
+--------------------------------------------------------------------------------
+Change BOTH pathspecs in gitLatestCommand from:
+
+  Web Services\IMCApi
+
+to:
+
+  Web Services\GSSIMCApi
+
+Full corrected entry (paste over IMC Api object):
+
+{
+  "name": "IMC Api",
+  "type": "DotNetCoreApi",
+  "projectPath": "Web Services\\GSSIMCApi\\IMCApi\\IMCApi.csproj",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"Web Services\\GSSIMCApi\" && git fetch && git restore --source=@{u} --staged --worktree -- \"Web Services\\GSSIMCApi\" && (git stash pop || ver > nul)",
+  "buildCommand": "msbuild \"{projectFile}\" /t:Restore;Publish /p:Configuration=Release /p:PublishDir=\"F:\\\\build-output\\\\IMCApi\\\\\" /v:m",
+  "outputSubfolder": "IMCApi"
+}
+
+
+Copy-paste gitLatestCommand only:
+
+  git stash push -m "devops-pre-build" -- "Web Services\GSSIMCApi" && git fetch && git restore --source=@{u} --staged --worktree -- "Web Services\GSSIMCApi" && (git stash pop || ver > nul)
+
+
+Same pattern as GSS API / GSS Mailer:
+  git path = top folder under "Web Services" (GSSIMCApi), not the inner project name.
+
+
+--------------------------------------------------------------------------------
+OPTIONAL — verify path exists
+--------------------------------------------------------------------------------
+In File Explorer / cmd under repo root:
+
+  dir "F:\GSS\AppDev\gss-root\Web Services\GSSIMCApi"
+
+Should list IMCApi (and any sibling projects). Then:
+
+  git -C "F:\GSS\AppDev\gss-root" ls-files "Web Services/GSSIMCApi" | more
+
+Should list tracked files (not empty).
+
+
+--------------------------------------------------------------------------------
+CHECKLIST
+--------------------------------------------------------------------------------
+[ ] appsettings IMC Api gitLatestCommand uses Web Services\GSSIMCApi (both places)
+[ ] projectPath still Web Services\GSSIMCApi\IMCApi\IMCApi.csproj
+[ ] Restart app / reload config if needed
+[ ] Click Get latest
+[ ] OUTPUT LOG: no pathspec error for IMC Api
+[ ] APPLICATIONS: IMC Api Status = Ready (not Failed)
+[ ] Then Build / Build All when ready
