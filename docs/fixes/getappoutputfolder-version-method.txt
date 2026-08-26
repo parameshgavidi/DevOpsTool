@@ -1,0 +1,123 @@
+================================================================================
+BuildTab.razor — PASTE: updated GetAppOutputFolder (+ 2 helpers)
+================================================================================
+
+FIND your existing method:
+
+    private string GetAppOutputFolder(Application app)
+    {
+        // old: Path.Combine(OutputRoot, app.OutputSubfolder)
+        ...
+    }
+
+REPLACE that whole method with the GetAppOutputFolder below.
+Also ADD the two helpers if you do not already have them.
+
+
+--------------------------------------------------------------------------------
+PASTE 1 — helpers (add near GetAppOutputFolder)
+--------------------------------------------------------------------------------
+
+    private string? TryGetCurrentGitBranch()
+    {
+        try
+        {
+            var root = RepoRoot?.Trim();
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+                return null;
+
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = "/c git rev-parse --abbrev-ref HEAD",
+                WorkingDirectory = root,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var p = System.Diagnostics.Process.Start(psi);
+            if (p is null) return null;
+            var stdout = p.StandardOutput.ReadToEnd().Trim();
+            p.WaitForExit(15000);
+            if (p.ExitCode != 0 || string.IsNullOrWhiteSpace(stdout) || stdout == "HEAD")
+                return null;
+            return stdout;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? TrimGssVersionFolder(string? branchName)
+    {
+        if (string.IsNullOrWhiteSpace(branchName))
+            return null;
+
+        var name = branchName.Trim();
+
+        // origin/GSSv8.7 → GSSv8.7
+        var slash = name.LastIndexOf('/');
+        if (slash >= 0 && slash < name.Length - 1)
+            name = name[(slash + 1)..];
+
+        // GSSv8.7 → 8.7
+        if (name.StartsWith("GSSv", StringComparison.OrdinalIgnoreCase))
+            return name[4..];
+
+        // GSS8.7 → 8.7
+        if (name.StartsWith("GSS", StringComparison.OrdinalIgnoreCase)
+            && name.Length > 3
+            && char.IsDigit(name[3]))
+            return name[3..];
+
+        return null;
+    }
+
+
+--------------------------------------------------------------------------------
+PASTE 2 — REPLACE your GetAppOutputFolder method with this
+--------------------------------------------------------------------------------
+
+    private string GetAppOutputFolder(Application app)
+    {
+        var outputRoot = (OutputRoot ?? string.Empty).Trim();
+        var sub = (app.OutputSubfolder ?? app.Name ?? "app").Trim();
+
+        // Branch GSSv8.7 → folder 8.7 → F:\build-output\8.7\GSSApi
+        var version = TrimGssVersionFolder(TryGetCurrentGitBranch());
+        if (!string.IsNullOrWhiteSpace(version))
+        {
+            var versionDir = Path.Combine(outputRoot, version);
+            Directory.CreateDirectory(versionDir); // exists = OK
+            var folder = Path.Combine(versionDir, sub);
+            Directory.CreateDirectory(folder);
+            return folder;
+        }
+
+        // Fallback — old flat layout (does not break current process)
+        var flat = Path.Combine(outputRoot, sub);
+        Directory.CreateDirectory(flat);
+        return flat;
+    }
+
+
+--------------------------------------------------------------------------------
+BuildApplication — KEEP this line (no change)
+--------------------------------------------------------------------------------
+
+    var outputFolder = GetAppOutputFolder(app);
+
+
+Optional log after that line:
+
+    LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Output folder: {outputFolder}\r\n";
+
+
+--------------------------------------------------------------------------------
+CHECK
+--------------------------------------------------------------------------------
+Branch GSSv8.7 + Build → F:\build-output\8.7\GSSApi\
+No GSSv branch → F:\build-output\GSSApi\  (old behavior)
