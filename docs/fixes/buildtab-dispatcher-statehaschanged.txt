@@ -1,35 +1,12 @@
 ================================================================================
-DeploymentTool.razor — HasSuccessfulBuild compile error on save
+DeploymentTool.razor — paste this exact code (field + 2 methods)
 ================================================================================
 
-SYMPTOM
--------
-After uncommenting:
+Put the field with your other private fields in @code.
+Replace SelectTab + HandleBuildSuccessChanged with the methods below.
 
-    HasSuccessfulBuild = HasSuccessfulBuild || hasSuccessfulBuild;
-
-Save / build fails (red squiggle on HasSuccessfulBuild).
-
-SelectTab also uses it:
-
-    if (!HasSuccessfulBuild && tabName != "BUILD") return;
-
-
-FIX — declare the field once in DeploymentTool.razor @code
------------------------------------------------------------
-Add this with your other private fields (near ActiveTab, etc.):
 
     private bool HasSuccessfulBuild;
-
-Then HandleBuildSuccessChanged must be:
-
-    private Task HandleBuildSuccessChanged(bool hasSuccessfulBuild)
-    {
-        HasSuccessfulBuild = HasSuccessfulBuild || hasSuccessfulBuild;
-        return InvokeAsync(StateHasChanged);
-    }
-
-And SelectTab stays:
 
     private void SelectTab(string tabName)
     {
@@ -37,19 +14,30 @@ And SelectTab stays:
         ActiveTab = tabName;
     }
 
-
-NOTES
------
-- Field name: HasSuccessfulBuild (PascalCase) — matches SelectTab.
-- Parameter name: hasSuccessfulBuild (camelCase) — different; that is fine.
-- Do NOT comment out the assignment again; without it tabs stay locked on BUILD.
-- DeployTab needs no HasSuccessfulBuild — only DeploymentTool.
+    private Task HandleBuildSuccessChanged(bool hasSuccessfulBuild)
+    {
+        HasSuccessfulBuild = HasSuccessfulBuild || hasSuccessfulBuild;
+        return InvokeAsync(StateHasChanged);
+    }
 
 
-CHECKLIST
----------
-[ ] private bool HasSuccessfulBuild; declared in DeploymentTool
-[ ] assignment uncommented in HandleBuildSuccessChanged
-[ ] return InvokeAsync(StateHasChanged);
-[ ] save / build — no red squiggles
-[ ] Build All — no Dispatcher exception; other tabs unlock after Success
+DeployTab.razor — leave as-is (no HasSuccessfulBuild there):
+
+    private Task HandleBuildSuccessChanged(bool success)
+    {
+        return OnBuildSuccessChanged.HasDelegate
+            ? OnBuildSuccessChanged.InvokeAsync(success)
+            : Task.CompletedTask;
+    }
+
+And DeployTab must also have this Parameter (if missing, add it):
+
+    [Parameter]
+    public EventCallback<bool> OnBuildSuccessChanged { get; set; }
+
+
+If save still errors, copy the EXACT red error text (Error List).
+Common causes:
+  - field declared twice
+  - field put outside @code
+  - typo: HasSuccessfullBuild / hasSuccessfulBuild field name mismatch
