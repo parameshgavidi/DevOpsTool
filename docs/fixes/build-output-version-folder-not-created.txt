@@ -1,0 +1,230 @@
+================================================================================
+Build Success but NO version folder (still F:\build-output\GSSApi flat)
+================================================================================
+
+WHAT YOU SAW
+------------
+Build = Success
+Explorer still:
+
+  F:\build-output\GSSApi
+  F:\build-output\GSSWebService
+  ...
+
+NOT:
+
+  F:\build-output\8.7\GSSApi
+
+
+WHY
+---
+GetAppOutputFolder only creates \8.7\ when TrimGssVersionFolder returns a value.
+If branch is null / not GSSv* → it uses the FALLBACK flat path (by design).
+
+Common causes:
+  1. Repo is not on a GSSv* branch (e.g. main / master / other name)
+  2. TryGetCurrentGitBranch failed (RepoRoot wrong, git not found)
+  3. You wanted "latest remote GSSv branch", not current HEAD
+
+
+--------------------------------------------------------------------------------
+STEP 1 — add logging (see the real branch)
+--------------------------------------------------------------------------------
+In GetAppOutputFolder, REPLACE with this version (logs branch + path):
+
+    private string GetAppOutputFolder(Application app)
+    {
+        var outputRoot = (OutputRoot ?? string.Empty).Trim();
+        var sub = (app.OutputSubfolder ?? app.Name ?? "app").Trim();
+
+        var branch = TryGetCurrentGitBranch();
+        var version = TrimGssVersionFolder(branch);
+
+        // If current branch is not GSSv*, try latest remote GSSv* branch
+        if (string.IsNullOrWhiteSpace(version))
+        {
+            branch = TryGetLatestGssRemoteBranch();
+            version = TrimGssVersionFolder(branch);
+        }
+
+        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Git branch='{branch ?? "(none)"}' versionFolder='{version ?? "(none)"}'\r\n";
+
+        if (!string.IsNullOrWhiteSpace(version))
+        {
+            var versionDir = Path.Combine(outputRoot, version);
+            Directory.CreateDirectory(versionDir);
+            var folder = Path.Combine(versionDir, sub);
+            Directory.CreateDirectory(folder);
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Output folder: {folder}\r\n";
+            return folder;
+        }
+
+        var flat = Path.Combine(outputRoot, sub);
+        Directory.CreateDirectory(flat);
+        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARN] No GSSv branch — using flat output: {flat}\r\n";
+        return flat;
+    }
+
+
+--------------------------------------------------------------------------------
+STEP 2 — keep TryGetCurrentGitBranch + TrimGssVersionFolder
+--------------------------------------------------------------------------------
+(same as before)
+
+    private string? TryGetCurrentGitBranch()
+    {
+        try
+        {
+            var root = RepoRoot?.Trim();
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+                return null;
+
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = "/c git rev-parse --abbrev-ref HEAD",
+                WorkingDirectory = root,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var p = System.Diagnostics.Process.Start(psi);
+            if (p is null) return null;
+            var stdout = p.StandardOutput.ReadToEnd().Trim();
+            p.WaitForExit(15000);
+            if (p.ExitCode != 0 || string.IsNullOrWhiteSpace(stdout) || stdout == "HEAD")
+                return null;
+            return stdout;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? TrimGssVersionFolder(string? branchName)
+    {
+        if (string.IsNullOrWhiteSpace(branchName))
+            return null;
+
+        var name = branchName.Trim();
+        var slash = name.LastIndexOf('/');
+        if (slash >= 0 && slash < name.Length - 1)
+            name = name[(slash + 1)..];
+
+        if (name.StartsWith("GSSv", StringComparison.OrdinalIgnoreCase))
+            return name[4..];
+
+        if (name.StartsWith("GSS", StringComparison.OrdinalIgnoreCase)
+            && name.Length > 3
+            && char.IsDigit(name[3]))
+            return name[3..];
+
+        return null;
+    }
+
+
+--------------------------------------------------------------------------------
+STEP 3 — ADD TryGetLatestGssRemoteBranch (NEW)
+--------------------------------------------------------------------------------
+Picks the highest origin/GSSv* remote branch (e.g. origin/GSSv8.7 → 8.7).
+
+    private string? TryGetLatestGssRemoteBranch()
+    {
+        try
+        {
+            var root = RepoRoot?.Trim();
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+                return null;
+
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = "/c git branch -r --format=\"%(refname:short)\"",
+                WorkingDirectory = root,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var p = System.Diagnostics.Process.Start(psi);
+            if (p is null) return null;
+            var stdout = p.StandardOutput.ReadToEnd();
+            p.WaitForExit(30000);
+            if (p.ExitCode != 0 || string.IsNullOrWhiteSpace(stdout))
+                return null;
+
+            string? bestBranch = null;
+            Version? bestVer = null;
+
+            foreach (var raw in stdout.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var b = raw.Trim();
+                var verText = TrimGssVersionFolder(b);
+                if (string.IsNullOrWhiteSpace(verText))
+                    continue;
+
+                // "8.7" or "8.3S2" → take numeric prefix for compare
+                var numeric = new string(verText.TakeWhile(c => char.IsDigit(c) || c == '.').ToArray());
+                if (!Version.TryParse(numeric, out var ver))
+                    continue;
+
+                if (bestVer is null || ver > bestVer)
+                {
+                    bestVer = ver;
+                    bestBranch = b;
+                }
+            }
+
+            return bestBranch;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+
+--------------------------------------------------------------------------------
+STEP 4 — also check appsettings still not hardcoding flat path
+--------------------------------------------------------------------------------
+If buildCommand still has:
+
+  PublishDir=\"F:\\\\build-output\\\\GSSApi\\\\\"
+
+MSBuild writes FLAT even when GetAppOutputFolder returns version path.
+Must be:
+
+  PublishDir=\"{outputFolder}\\\\\"
+
+And BuildTab must Replace("{outputFolder}", outputFolder, ...).
+
+
+--------------------------------------------------------------------------------
+STEP 5 — quick test
+--------------------------------------------------------------------------------
+1. Rebuild tool, Build one app
+2. OUTPUT LOG must show one of:
+     Git branch='GSSv8.7' versionFolder='8.7'
+     Output folder: F:\build-output\8.7\GSSApi
+   OR
+     Git branch='(none)' / versionFolder='(none)' → fix RepoRoot / git
+3. Explorer: F:\build-output\8.7\GSSApi\
+
+
+Manual check in PowerShell at Repo Root:
+
+  cd F:\GSS\AppDev\gss-root
+  git rev-parse --abbrev-ref HEAD
+  git branch -r --list "origin/GSSv*"
+
+
+CHECKLIST
+---------
+[ ] Log shows branch + versionFolder (not both none)
+[ ] GetAppOutputFolder has latest-remote fallback
+[ ] buildCommand uses {outputFolder} not hardcoded F:\build-output\App
+[ ] Explorer shows F:\build-output\<version>\<app>\
