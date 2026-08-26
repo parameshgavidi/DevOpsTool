@@ -1,0 +1,322 @@
+================================================================================
+BuildTab.razor — FULL BuildApplication method (FIXED)
+Keep for future — version folder publish works
+================================================================================
+
+BUG FIXED
+---------
+Old code replaced ONLY:
+
+  {projectFile}  → project path
+  {outputSubfolder} → outputFolder   ← WRONG (full path into wrong token)
+
+It NEVER replaced {outputFolder}, so appsettings PublishDir="{outputFolder}\\"
+stayed literal → empty F:\build-output\9.2.1\GSSApi\
+
+
+NEW replacement:
+
+  {projectFile}     → project file path
+  {outputSubfolder} → app.OutputSubfolder (e.g. "GSSApi")
+  {outputFolder}    → GetAppOutputFolder(app) (e.g. F:\build-output\9.2.1\GSSApi)
+
+
+--------------------------------------------------------------------------------
+REPLACE your entire BuildApplication method with this
+--------------------------------------------------------------------------------
+
+    private async Task BuildApplication(string appName, CancellationToken cancellation = default)
+    {
+        var app = BuildApps.FirstOrDefault(a => a.Name == appName);
+        if (app == null) return;
+
+        app.Status = "Building";
+        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Building {appName}...\r\n";
+        await InvokeAsync(StateHasChanged);
+
+        var projectFile = GetProjectFilePath(app);
+        var workingDir = projectFile is null
+            ? GetAppWorkingDirectory(app.Name)
+            : Path.GetDirectoryName(projectFile) ?? RepoRoot;
+
+        var outputFolder = GetAppOutputFolder(app);
+        var isLegacy = IsLegacyDotNetFrameworkProject(app.Type);
+
+        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Output folder: {outputFolder}\r\n";
+
+        // --- verify project file ---
+        if (!string.IsNullOrEmpty(projectFile))
+        {
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Resolved project file: {projectFile}\r\n";
+            if (!File.Exists(projectFile))
+            {
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARNING] Project file does not exist at: {projectFile}\r\n";
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARNING] Verify Repo Root ('{RepoRoot}') and project path ('{app.ProjectPath}')\r\n";
+            }
+        }
+
+        // Get latest is toolbar-only — do NOT call GetLatestFromRepoAsync here
+
+        try
+        {
+            // 2) restore packages before build ---
+            if (!await RestorePackagesAsync(app, projectFile, isLegacy, workingDir, cancellation))
+            {
+                FlushPendingLogs();
+                app.Status = "Failed";
+                StopLogFlushTimer();
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            // 3) clean PrecompiledWeb so ASPNETCOMPILER does not hit ASPRUNTIME
+            if (!await CleanPrecompiledOutputAsync(app, workingDir))
+            {
+                app.Status = "Failed";
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            // 4) msbuild / publish ---
+            string command;
+            if (!string.IsNullOrWhiteSpace(app.BuildCommand))
+            {
+                command = app.BuildCommand
+                    .Replace("{projectFile}", projectFile ?? string.Empty, StringComparison.OrdinalIgnoreCase)
+                    .Replace("{outputSubfolder}", app.OutputSubfolder ?? string.Empty, StringComparison.OrdinalIgnoreCase)
+                    .Replace("{outputFolder}", outputFolder, StringComparison.OrdinalIgnoreCase);
+
+                // Windows: resolve full msbuild path when shell operators present
+                if (OperatingSystem.IsWindows()
+                    && command.StartsWith("msbuild", StringComparison.OrdinalIgnoreCase)
+                    && command.IndexOfAny(new[] { '&', '|', '>', '<', '^', '%' }) >= 0)
+                {
+                    var msbuildPath = BuildService.ResolveMsBuildPath(netFramework: true);
+                    if (!string.IsNullOrWhiteSpace(msbuildPath))
+                        command = $"\"{msbuildPath}\"{command.Substring("msbuild".Length)}";
+                }
+
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Using configured build command for {appName}\r\n";
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Build command: {command}\r\n";
+            }
+            else if (!string.IsNullOrEmpty(projectFile))
+            {
+                if (OperatingSystem.IsWindows() && isLegacy)
+                {
+                    var msbuildPath = BuildService.ResolveMsBuildPath(netFramework: true);
+                    if (!string.IsNullOrWhiteSpace(msbuildPath))
+                        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Using MSBuild: {msbuildPath}\r\n";
+                    command = $"msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true";
+                }
+                else if (OperatingSystem.IsWindows())
+                {
+                    command = $"msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true";
+                }
+                else
+                {
+                    command = $"dotnet build \"{projectFile}\" -c Release";
+                }
+            }
+            else
+            {
+                command = "dotnet build -c Release";
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARNING] Project file not found for {appName}; using fallback build command\r\n";
+            }
+
+            StartLogFlushTimer();
+
+            var exit = await BuildService.RunCommandAsync(workingDir, command, (line) =>
+            {
+                lock (_pendingLogBuffer)
+                {
+                    _pendingLogBuffer.Append(line);
+                }
+                app.LogEntries.Add(line.TrimEnd('\r', '\n'));
+            }, cancellation);
+
+            FlushPendingLogs();
+
+            if (exit == 0)
+            {
+                string? precompiled = null;
+
+                // ---- GSS Web Service (working — keep this) ----
+                // FolderProfile → PrecompiledWeb → copy into outputFolder (versioned)
+                if (string.Equals(app.Name, "GSS Web Service", StringComparison.OrdinalIgnoreCase)
+                    || (string.Equals(app.Type, "AsmxWebService", StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(app.Name, "GSS Web Service", StringComparison.OrdinalIgnoreCase)))
+                {
+                    precompiled = Path.Combine(workingDir, "PrecompiledWeb", app.OutputSubfolder ?? "GSSWebService");
+                    if (!Directory.Exists(precompiled))
+                    {
+                        var precompiledRoot = Path.Combine(workingDir, "PrecompiledWeb");
+                        precompiled = Directory.Exists(precompiledRoot)
+                            ? Directory.GetDirectories(precompiledRoot).FirstOrDefault()
+                            : null;
+                    }
+                }
+                // ---- GSSWeb legacy ASP.NET WebForms ----
+                else if (string.Equals(app.Name, "GSSWeb", StringComparison.OrdinalIgnoreCase)
+                         || string.Equals(app.Type, "AspNetWebForms", StringComparison.OrdinalIgnoreCase))
+                {
+                    precompiled = Path.Combine(workingDir, "PrecompiledWeb", app.OutputSubfolder ?? "GSSWeb");
+                    if (!Directory.Exists(precompiled))
+                        precompiled = Path.Combine(workingDir, "PrecompiledWeb", "gssweb");
+                    if (!Directory.Exists(precompiled))
+                    {
+                        var precompiledRoot = Path.Combine(workingDir, "PrecompiledWeb");
+                        precompiled = Directory.Exists(precompiledRoot)
+                            ? Directory.GetDirectories(precompiledRoot).FirstOrDefault()
+                            : null;
+                    }
+                    if (precompiled is null || !Directory.Exists(precompiled))
+                    {
+                        var siteFolder = Path.Combine(workingDir, "gssweb");
+                        if (Directory.Exists(siteFolder))
+                            precompiled = siteFolder;
+                    }
+                }
+                // ---- Web2ClientBridge / AspNetMvc ----
+                else if (string.Equals(app.Name, "Web2ClientBridge", StringComparison.OrdinalIgnoreCase)
+                         || string.Equals(app.Type, "AspNetMvc", StringComparison.OrdinalIgnoreCase))
+                {
+                    precompiled = Path.Combine(workingDir, "bin", "Release", "Publish");
+                    if (!Directory.Exists(precompiled))
+                        precompiled = Path.Combine(workingDir, "bin", "Release", "PublishOutput");
+                    if (!Directory.Exists(precompiled) && !string.IsNullOrEmpty(projectFile))
+                    {
+                        var projDir = Path.GetDirectoryName(projectFile)!;
+                        precompiled = Path.Combine(projDir, "bin", "Release", "Publish");
+                        if (!Directory.Exists(precompiled))
+                            precompiled = Path.Combine(projDir, "bin", "Release", "PublishOutput");
+                    }
+                }
+
+                // Copy PrecompiledWeb / publish folder → versioned outputFolder
+                // DotNetCoreApi (GSS API / IMC) use PublishDir={outputFolder} directly — no copy needed
+                if (!string.IsNullOrEmpty(precompiled) && Directory.Exists(precompiled))
+                {
+                    // Archive previous build next to app folder (under version folder)
+                    // e.g. F:\build-output\9.2.1\GSSWebService_yyyyMMddHHmmss
+                    if (Directory.Exists(outputFolder) &&
+                        Directory.EnumerateFileSystemEntries(outputFolder).Any())
+                    {
+                        var parent = Path.GetDirectoryName(outputFolder)!;
+                        var appFolderName = Path.GetFileName(
+                            outputFolder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                        var stamp = DateTime.Now.ToString("yyyyMMddHHmmss");
+                        var version = 1;
+                        string archivePath;
+                        do
+                        {
+                            archivePath = Path.Combine(parent, $"{appFolderName}_{stamp}_v{version}");
+                            version++;
+                        } while (Directory.Exists(archivePath));
+
+                        Directory.Move(outputFolder, archivePath);
+                        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Previous build archived to {archivePath}\r\n";
+                    }
+
+                    Directory.CreateDirectory(outputFolder);
+
+                    foreach (var dir in Directory.GetDirectories(precompiled, "*", SearchOption.AllDirectories))
+                    {
+                        var relative = Path.GetRelativePath(precompiled, dir);
+                        if (relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                                .Any(p => p.Equals("packages", StringComparison.OrdinalIgnoreCase)))
+                            continue;
+
+                        Directory.CreateDirectory(Path.Combine(outputFolder, relative));
+                    }
+
+                    foreach (var file in Directory.GetFiles(precompiled, "*", SearchOption.AllDirectories))
+                    {
+                        var ext = Path.GetExtension(file);
+                        if (ext.Equals(".sln", StringComparison.OrdinalIgnoreCase) ||
+                            ext.Equals(".resx", StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        var relative = Path.GetRelativePath(precompiled, file);
+                        if (relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                                .Any(p => p.Equals("packages", StringComparison.OrdinalIgnoreCase)))
+                            continue;
+
+                        var dest = Path.Combine(outputFolder, relative);
+                        Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                        File.Copy(file, dest, overwrite: true);
+                    }
+
+                    LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Published artifacts copied to {outputFolder} (skipped packages, .sln, .resx)\r\n";
+                }
+                else if (string.Equals(app.Type, "DotNetCoreApi", StringComparison.OrdinalIgnoreCase)
+                         || (!string.IsNullOrWhiteSpace(app.BuildCommand)
+                             && app.BuildCommand.Contains("{outputFolder}", StringComparison.OrdinalIgnoreCase)))
+                {
+                    // PublishDir should have written directly into outputFolder
+                    if (Directory.Exists(outputFolder) &&
+                        Directory.EnumerateFileSystemEntries(outputFolder).Any())
+                    {
+                        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Publish output present at {outputFolder}\r\n";
+                    }
+                    else
+                    {
+                        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARN] Build OK but output folder is empty: {outputFolder}. Check PublishDir used {{outputFolder}} and was replaced in the command log.\r\n";
+                    }
+                }
+                else
+                {
+                    LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARN] Publish output not found for {app.Name} under {workingDir}\r\n";
+                }
+            }
+
+            int setupExit = 0;
+            if (exit == 0 && !string.IsNullOrWhiteSpace(app.SetupProjectPath))
+            {
+                Directory.CreateDirectory(outputFolder);
+                setupExit = await BuildSetupProjectAsync(app, outputFolder, cancellation);
+            }
+
+            var overallExit = exit != 0 ? exit : setupExit;
+            app.Status = overallExit == 0 ? "Success" : "Failed";
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Finished {app.Name} with exit code {overallExit}" +
+                         (setupExit != 0 ? $" (setup exit {setupExit})" : "") + "\r\n";
+
+            if (overallExit == 0)
+                await OnBuildSuccessChanged.InvokeAsync(true);
+        }
+        catch (OperationCanceledException)
+        {
+            app.Status = "Cancelled";
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARN] {appName} build cancelled\r\n";
+        }
+        catch (Exception ex)
+        {
+            app.Status = "Failed";
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] {ex.Message}\r\n";
+        }
+        finally
+        {
+            FlushPendingLogs();
+            StopLogFlushTimer();
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+
+--------------------------------------------------------------------------------
+KEEP GetAppOutputFolder + helpers as you already have them
+--------------------------------------------------------------------------------
+Do not remove GetAppOutputFolder / TryGetCurrentGitBranch / TrimGssVersionFolder
+/ TryGetLatestGssRemoteBranch.
+
+
+--------------------------------------------------------------------------------
+VERIFY after paste
+--------------------------------------------------------------------------------
+OUTPUT LOG must contain:
+
+  Output folder: F:\build-output\9.2.1\GSSApi
+  Build command: ... PublishDir="F:\build-output\9.2.1\GSSApi\\" ...
+
+NOT literal {outputFolder}.
+Explorer: F:\build-output\9.2.1\GSSApi has DLLs / publish files.
