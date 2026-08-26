@@ -1,46 +1,27 @@
 ================================================================================
-Build All Dispatcher — final status for YOUR current code
+DeploymentTool.razor — HasSuccessfulBuild compile error on save
 ================================================================================
 
-DeployTab.razor — NO MORE CHANGES NEEDED
-----------------------------------------
-Your forwarder is correct:
+SYMPTOM
+-------
+After uncommenting:
 
-    private Task HandleBuildSuccessChanged(bool success)
-    {
-        return OnBuildSuccessChanged.HasDelegate
-            ? OnBuildSuccessChanged.InvokeAsync(success)
-            : Task.CompletedTask;
-    }
+    HasSuccessfulBuild = HasSuccessfulBuild || hasSuccessfulBuild;
 
-(Only required earlier: [Parameter] public EventCallback<bool> OnBuildSuccessChanged
- — if HasDelegate compiles now, you already have it.)
+Save / build fails (red squiggle on HasSuccessfulBuild).
+
+SelectTab also uses it:
+
+    if (!HasSuccessfulBuild && tabName != "BUILD") return;
 
 
-DeploymentTool.razor — Dispatcher fix is DONE
----------------------------------------------
-This part is correct:
+FIX — declare the field once in DeploymentTool.razor @code
+-----------------------------------------------------------
+Add this with your other private fields (near ActiveTab, etc.):
 
-    return InvokeAsync(StateHasChanged);
+    private bool HasSuccessfulBuild;
 
-That stops the "thread is not associated with the Dispatcher" crash.
-
-
-ONE remaining change in DeploymentTool.razor
---------------------------------------------
-You still use HasSuccessfulBuild in SelectTab:
-
-    private void SelectTab(string tabName)
-    {
-        if (!HasSuccessfulBuild && tabName != "BUILD") return;
-        ActiveTab = tabName;
-    }
-
-But the assignment in HandleBuildSuccessChanged is commented out:
-
-    //HasSuccessfulBuild = HasSuccessfulBuild || hasSuccessfulBuild;
-
-UNCOMMENT it. Final method should be:
+Then HandleBuildSuccessChanged must be:
 
     private Task HandleBuildSuccessChanged(bool hasSuccessfulBuild)
     {
@@ -48,14 +29,27 @@ UNCOMMENT it. Final method should be:
         return InvokeAsync(StateHasChanged);
     }
 
-Why: if that line stays commented, HasSuccessfulBuild never becomes true,
-so SelectTab keeps blocking every tab except BUILD after a successful build.
+And SelectTab stays:
+
+    private void SelectTab(string tabName)
+    {
+        if (!HasSuccessfulBuild && tabName != "BUILD") return;
+        ActiveTab = tabName;
+    }
 
 
-Checklist
+NOTES
+-----
+- Field name: HasSuccessfulBuild (PascalCase) — matches SelectTab.
+- Parameter name: hasSuccessfulBuild (camelCase) — different; that is fine.
+- Do NOT comment out the assignment again; without it tabs stay locked on BUILD.
+- DeployTab needs no HasSuccessfulBuild — only DeploymentTool.
+
+
+CHECKLIST
 ---------
-[x] DeployTab forwarder only (no StateHasChanged there)
-[x] DeploymentTool uses InvokeAsync(StateHasChanged)
-[ ] Uncomment HasSuccessfulBuild = HasSuccessfulBuild || hasSuccessfulBuild;
-[ ] Build All → no Dispatcher exception
-[ ] After Success → other tabs unlock via SelectTab
+[ ] private bool HasSuccessfulBuild; declared in DeploymentTool
+[ ] assignment uncommented in HandleBuildSuccessChanged
+[ ] return InvokeAsync(StateHasChanged);
+[ ] save / build — no red squiggles
+[ ] Build All — no Dispatcher exception; other tabs unlock after Success
