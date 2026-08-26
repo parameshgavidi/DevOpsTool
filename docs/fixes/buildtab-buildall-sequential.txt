@@ -1,0 +1,94 @@
+================================================================================
+BuildTab.razor — Build All sequential fix (NEW FILE)
+Replace parallel BuildAll with one-app-at-a-time
+================================================================================
+
+PROBLEM
+-------
+Individual Build = Success
+Build All = all Failed
+
+Cause: BuildAll uses Task.Run + SemaphoreSlim + Task.WhenAll (parallel).
+Individual Build is sequential.
+
+
+--------------------------------------------------------------------------------
+BuildTab.razor — REPLACE the entire BuildAll() method with this
+--------------------------------------------------------------------------------
+
+    private async Task BuildAll()
+    {
+        if (BuildApps.Count == 0)
+            return;
+
+        _buildCts?.Cancel();
+        _buildCts?.Dispose();
+        _buildCts = new CancellationTokenSource();
+        var token = _buildCts.Token;
+
+        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Build All started for {BuildApps.Count} applications\r\n";
+        await InvokeAsync(StateHasChanged);
+
+        // Same as clicking Build on each app — ONE AT A TIME
+        foreach (var app in BuildApps.ToList())
+        {
+            if (token.IsCancellationRequested)
+                break;
+
+            try
+            {
+                app.Status = "Building";
+                await InvokeAsync(StateHasChanged);
+
+                await BuildApplication(app.Name, token);
+            }
+            catch (OperationCanceledException)
+            {
+                app.Status = "Cancelled";
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARN] Build All cancelled\r\n";
+                break;
+            }
+            catch (Exception ex)
+            {
+                // ONLY this app — never mark every app Failed
+                app.Status = "Failed";
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] Build All error for {app.Name}: {ex.Message}\r\n";
+            }
+
+            await InvokeAsync(StateHasChanged);
+        }
+
+        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Build All finished\r\n";
+        await InvokeAsync(StateHasChanged);
+    }
+
+
+--------------------------------------------------------------------------------
+DELETE from old BuildAll (do not keep)
+--------------------------------------------------------------------------------
+  - foreach setting ALL apps Status = "Building" before builds start
+  - int maxParallel = ...
+  - using var sem = new SemaphoreSlim(...)
+  - tasks.Add(Task.Run(async () => { ... }))
+  - await Task.WhenAll(tasks)
+
+
+--------------------------------------------------------------------------------
+DeployTab.razor — keep (already correct)
+--------------------------------------------------------------------------------
+
+    private Task HandleBuildSuccessChanged(bool success)
+    {
+        return InvokeAsync(() => OnBuildSuccessChanged.HasDelegate
+            ? OnBuildSuccessChanged.InvokeAsync(success)
+            : Task.CompletedTask);
+    }
+
+
+--------------------------------------------------------------------------------
+CHECKLIST
+--------------------------------------------------------------------------------
+[ ] Pasted new BuildAll() into BuildTab.razor
+[ ] Removed Task.Run / SemaphoreSlim / WhenAll
+[ ] Save → rebuild tool → Build All
+[ ] Each app status matches individual Build
