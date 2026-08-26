@@ -1,0 +1,148 @@
+================================================================================
+Build All → ALL apps show Failed (but individual Build = Success)
+================================================================================
+
+SYMPTOM
+-------
+- Click Build on each app → Success
+- Click Build All → every row shows Failed
+
+
+WHY (most common in this tool)
+------------------------------
+Individual Build and Build All call the same BuildApplication — so appsettings /
+msbuild are fine (your Success rows prove that).
+
+Build All fails for a *control-flow* reason, usually one of these:
+
+1) Exception mid-loop (often Dispatcher / OnBuildSuccessChanged)
+   First app finishes → fires OnBuildSuccessChanged → if that still throws
+   InvalidOperationException (Dispatcher), BuildAllAsync jumps to catch and
+   marks EVERY app Failed — even ones that already built OK.
+
+2) Outer catch sets ALL statuses to Failed
+   e.g.
+     catch {
+         foreach (var app in BuildApps)
+             app.Status = "Failed";
+     }
+
+3) Parallel Build All (Task.WhenAll)
+   All apps build at once → shared msbuild / file locks / same output root →
+   many or all fail. Individual Build never hits that.
+
+4) Shared CancellationToken cancelled
+   BuildAll cancels _buildCts at start or on error; token trips every app.
+
+
+--------------------------------------------------------------------------------
+FIX 1 — DeployTab must not throw (required)
+--------------------------------------------------------------------------------
+In DeployTab.razor use:
+
+    private Task HandleBuildSuccessChanged(bool success)
+    {
+        return InvokeAsync(() =>
+            OnBuildSuccessChanged.HasDelegate
+                ? OnBuildSuccessChanged.InvokeAsync(success)
+                : Task.CompletedTask);
+    }
+
+In DeploymentTool.razor use:
+
+    private bool HasSuccessfulBuild;
+
+    private Task HandleBuildSuccessChanged(bool hasSuccessfulBuild)
+    {
+        HasSuccessfulBuild = HasSuccessfulBuild || hasSuccessfulBuild;
+        return InvokeAsync(StateHasChanged);
+    }
+
+If Build All still throws Dispatcher, the loop aborts → all Failed.
+
+
+--------------------------------------------------------------------------------
+FIX 2 — BuildAllAsync: sequential + per-app status only
+--------------------------------------------------------------------------------
+REPLACE a broken BuildAllAsync with this pattern:
+
+    private async Task BuildAllAsync()
+    {
+        if (BuildApps.Count == 0)
+            return;
+
+        _buildCts?.Cancel();
+        _buildCts?.Dispose();
+        _buildCts = new CancellationTokenSource();
+        var token = _buildCts.Token;
+
+        AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Build All — {BuildApps.Count} app(s)\r\n");
+
+        // IMPORTANT: one app at a time (same as clicking Build repeatedly)
+        foreach (var app in BuildApps.ToList())
+        {
+            if (token.IsCancellationRequested)
+                break;
+
+            try
+            {
+                await BuildApplication(app, token);
+            }
+            catch (OperationCanceledException)
+            {
+                app.Status = "Cancelled";
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [WARN] Build cancelled: {app.Name}\r\n");
+                break;
+            }
+            catch (Exception ex)
+            {
+                // ONLY this app — do NOT mark every app Failed
+                app.Status = "Failed";
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Build All error for {app.Name}: {ex.Message}\r\n");
+            }
+
+            await InvokeAsync(StateHasChanged);
+        }
+
+        AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Build All finished\r\n");
+        await InvokeAsync(StateHasChanged);
+    }
+
+DO NOT:
+  - await Task.WhenAll(...) for all apps
+  - foreach (var app in BuildApps) app.Status = "Failed" in a shared catch
+  - cancel the token when one app fails
+
+
+--------------------------------------------------------------------------------
+FIX 3 — BuildOneAsync stays simple
+--------------------------------------------------------------------------------
+    private async Task BuildOneAsync(Application app)
+    {
+        _buildCts?.Cancel();
+        _buildCts?.Dispose();
+        _buildCts = new CancellationTokenSource();
+        await BuildApplication(app, _buildCts.Token);
+        await InvokeAsync(StateHasChanged);
+    }
+
+
+--------------------------------------------------------------------------------
+HOW TO CONFIRM
+--------------------------------------------------------------------------------
+1. Click Build All
+2. Open OUTPUT LOG / View Log
+3. Look for:
+   - Dispatcher / InvalidOperationException  → Fix 1
+   - Build All error for {name}: ...         → Fix 2 catch text
+   - Many apps "Building" at once / file lock → was parallel; use sequential Fix 2
+4. After Fix 1+2: Build All should show the same Success mix as individual Builds
+
+
+CHECKLIST
+---------
+[ ] DeployTab forwards via InvokeAsync(() => ...)
+[ ] DeploymentTool uses InvokeAsync(StateHasChanged)
+[ ] BuildAllAsync is foreach + await (sequential), not WhenAll
+[ ] No catch that sets ALL apps to Failed
+[ ] Build All → statuses match individual Build results
