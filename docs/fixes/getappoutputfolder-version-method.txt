@@ -1,22 +1,42 @@
 ================================================================================
-BuildTab.razor — PASTE: updated GetAppOutputFolder (+ 2 helpers)
+TrimGssVersionFolder red squiggle even though method "exists"
 ================================================================================
 
-FIND your existing method:
+CAUSE
+-----
+Usually the method is OUTSIDE the BuildTab @code class (extra/missing }).
+C# then cannot see TrimGssVersionFolder from GetAppOutputFolder → red underline.
+
+
+FIX — paste ALL THREE methods together inside @code { } of BuildTab.razor
+-------------------------------------------------------------------------
+1. Delete your broken copies of:
+     GetAppOutputFolder
+     TryGetCurrentGitBranch
+     TrimGssVersionFolder
+2. Paste this entire block once, still INSIDE @code { ... }
 
     private string GetAppOutputFolder(Application app)
     {
-        // old: Path.Combine(OutputRoot, app.OutputSubfolder)
-        ...
+        var outputRoot = (OutputRoot ?? string.Empty).Trim();
+        var sub = (app.OutputSubfolder ?? app.Name ?? "app").Trim();
+
+        // Branch GSSv8.7 → folder 8.7 → F:\build-output\8.7\GSSApi
+        var version = TrimGssVersionFolder(TryGetCurrentGitBranch());
+        if (!string.IsNullOrWhiteSpace(version))
+        {
+            var versionDir = Path.Combine(outputRoot, version);
+            Directory.CreateDirectory(versionDir);
+            var folder = Path.Combine(versionDir, sub);
+            Directory.CreateDirectory(folder);
+            return folder;
+        }
+
+        // Fallback — old flat layout
+        var flat = Path.Combine(outputRoot, sub);
+        Directory.CreateDirectory(flat);
+        return flat;
     }
-
-REPLACE that whole method with the GetAppOutputFolder below.
-Also ADD the two helpers if you do not already have them.
-
-
---------------------------------------------------------------------------------
-PASTE 1 — helpers (add near GetAppOutputFolder)
---------------------------------------------------------------------------------
 
     private string? TryGetCurrentGitBranch()
     {
@@ -58,16 +78,13 @@ PASTE 1 — helpers (add near GetAppOutputFolder)
 
         var name = branchName.Trim();
 
-        // origin/GSSv8.7 → GSSv8.7
         var slash = name.LastIndexOf('/');
         if (slash >= 0 && slash < name.Length - 1)
             name = name[(slash + 1)..];
 
-        // GSSv8.7 → 8.7
         if (name.StartsWith("GSSv", StringComparison.OrdinalIgnoreCase))
             return name[4..];
 
-        // GSS8.7 → 8.7
         if (name.StartsWith("GSS", StringComparison.OrdinalIgnoreCase)
             && name.Length > 3
             && char.IsDigit(name[3]))
@@ -77,47 +94,13 @@ PASTE 1 — helpers (add near GetAppOutputFolder)
     }
 
 
---------------------------------------------------------------------------------
-PASTE 2 — REPLACE your GetAppOutputFolder method with this
---------------------------------------------------------------------------------
+CHECK
+-----
+- All three are between @code { and the FINAL closing }
+- None nested inside another method
+- Exact name: TrimGssVersionFolder (same spelling/casing as the call)
+- Hover the red line → Error List should clear after paste + save
 
-    private string GetAppOutputFolder(Application app)
-    {
-        var outputRoot = (OutputRoot ?? string.Empty).Trim();
-        var sub = (app.OutputSubfolder ?? app.Name ?? "app").Trim();
-
-        // Branch GSSv8.7 → folder 8.7 → F:\build-output\8.7\GSSApi
-        var version = TrimGssVersionFolder(TryGetCurrentGitBranch());
-        if (!string.IsNullOrWhiteSpace(version))
-        {
-            var versionDir = Path.Combine(outputRoot, version);
-            Directory.CreateDirectory(versionDir); // exists = OK
-            var folder = Path.Combine(versionDir, sub);
-            Directory.CreateDirectory(folder);
-            return folder;
-        }
-
-        // Fallback — old flat layout (does not break current process)
-        var flat = Path.Combine(outputRoot, sub);
-        Directory.CreateDirectory(flat);
-        return flat;
-    }
-
-
---------------------------------------------------------------------------------
-BuildApplication — KEEP this line (no change)
---------------------------------------------------------------------------------
+BuildApplication line stays:
 
     var outputFolder = GetAppOutputFolder(app);
-
-
-Optional log after that line:
-
-    LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Output folder: {outputFolder}\r\n";
-
-
---------------------------------------------------------------------------------
-CHECK
---------------------------------------------------------------------------------
-Branch GSSv8.7 + Build → F:\build-output\8.7\GSSApi\
-No GSSv branch → F:\build-output\GSSApi\  (old behavior)
