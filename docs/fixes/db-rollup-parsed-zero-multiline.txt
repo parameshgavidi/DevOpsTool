@@ -1,0 +1,251 @@
+================================================================================
+FIX — log shows branches but dropdown count=0 (not binding)
+YOUR LOG:
+  git exit=0 parsed=0
+  raw: origin/GSS8.7
+  origin/GSSv7.7
+  ...
+  origin/HEAD -> origin/main
+  BRANCH-LOAD-V5 dropdown count=0
+================================================================================
+
+ROOT CAUSE
+----------
+BuildService often delivers git stdout as ONE multi-line chunk (not one
+callback per line). V5 did:
+
+  1) treat whole chunk as one token
+  2) strip first "origin/"
+  3) if (t.Contains("HEAD")) return "";   ← KILLS EVERYTHING
+
+Because the chunk also contains "origin/HEAD -> origin/main", Contains("HEAD")
+is true → Normalize returns empty → parsed=0 → dropdown empty.
+
+Raw lines still appear in the log (one AppendLog with embedded newlines),
+so it looks like branches "loaded" but nothing binds to DbBranchOptions.
+
+
+================================================================================
+REPLACE the 3 methods with BRANCH-LOAD-V6 (paste inside @code)
+================================================================================
+DELETE LoadDbBranchesAsync + SplitBranchTokens + NormalizeBranchName.
+PASTE:
+
+    private async Task LoadDbBranchesAsync()
+    {
+        if (_isLoadingBranches)
+            return;
+
+        _isLoadingBranches = true;
+        try
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] BRANCH-LOAD-V6 start");
+
+            if (string.IsNullOrWhiteSpace(RepoRoot))
+            {
+                var s0 = LoadAppSettings();
+                RepoRoot = s0?.Build?.RepoRoot?.Trim() ?? string.Empty;
+            }
+
+            var root = RepoRoot?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] RepoRoot invalid: '{root}'");
+                DbBranchOptions = new List<string>();
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            var settings = LoadAppSettings();
+            var configured = settings?.Build?.DbRollupPullBranchesCommand?.Trim() ?? string.Empty;
+            var command = "git branch -r";
+            if (!string.IsNullOrWhiteSpace(configured)
+                && !configured.Contains("--format", StringComparison.OrdinalIgnoreCase)
+                && !configured.Contains('\''))
+            {
+                command = configured;
+            }
+            else if (!string.IsNullOrWhiteSpace(configured))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [WARN] Ignoring bad command: {configured}");
+            }
+
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] root={root}");
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] cmd={command}");
+            await InvokeAsync(StateHasChanged);
+
+            var lines = new List<string>();
+            var debugLeft = 8;
+
+            var exit = await BuildService.RunCommandAsync(
+                root,
+                command,
+                chunk =>
+                {
+                    // IMPORTANT: split newlines — BuildService may send one big chunk
+                    foreach (var line in SplitBranchLines(chunk))
+                    {
+                        var parsed = ParseRemoteBranch(line);
+                        if (parsed is null)
+                            continue;
+
+                        if (debugLeft > 0)
+                        {
+                            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO]   parse: '{line}' -> '{parsed}'");
+                            debugLeft--;
+                        }
+
+                        if (!lines.Contains(parsed, StringComparer.OrdinalIgnoreCase))
+                            lines.Add(parsed);
+                    }
+                },
+                CancellationToken.None);
+
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] git exit={exit} parsed={lines.Count}");
+
+            if (exit != 0)
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] git failed (exit {exit})");
+                DbBranchOptions = new List<string>();
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            // Prefer GSS* names for DB rollup; if none, keep all
+            var gss = lines
+                .Where(x => x.StartsWith("GSS", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (gss.Count > 0)
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] GSS* filter: {gss.Count} of {lines.Count}");
+                lines = gss;
+            }
+
+            lines.Sort(StringComparer.OrdinalIgnoreCase);
+            DbBranchOptions = lines;
+
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] BRANCH-LOAD-V6 dropdown count={DbBranchOptions.Count}");
+            for (var i = 0; i < Math.Min(8, DbBranchOptions.Count); i++)
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO]   [{i}] {DbBranchOptions[i]}");
+
+            if (DbBranchOptions.Count > 0)
+            {
+                var fromCfg = settings?.Build?.DbRollupFromBranch?.Trim();
+                var toCfg = settings?.Build?.DbRollupToBranch?.Trim();
+
+                DbRollupFromBranch = !string.IsNullOrWhiteSpace(fromCfg)
+                    && DbBranchOptions.Contains(fromCfg, StringComparer.OrdinalIgnoreCase)
+                        ? fromCfg!
+                        : DbBranchOptions[0];
+
+                DbRollupToBranch = !string.IsNullOrWhiteSpace(toCfg)
+                    && DbBranchOptions.Contains(toCfg, StringComparer.OrdinalIgnoreCase)
+                        ? toCfg!
+                        : (DbBranchOptions.Count > 1 ? DbBranchOptions[1] : DbBranchOptions[0]);
+            }
+            else
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Still 0 after parse. See parse: lines above.");
+            }
+
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] BRANCH-LOAD-V6: {ex.Message}");
+            DbBranchOptions = new List<string>();
+            await InvokeAsync(StateHasChanged);
+        }
+        finally
+        {
+            _isLoadingBranches = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    // Split a callback chunk into individual branch lines/tokens
+    private static IEnumerable<string> SplitBranchLines(string? chunk)
+    {
+        var s = chunk ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(s))
+            yield break;
+
+        // Newlines first (fixes multi-line single callback)
+        var parts = s.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+        foreach (var part in parts)
+        {
+            var line = part.Trim();
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
+            if (line.StartsWith(">>>", StringComparison.Ordinal))
+                continue;
+
+            // Quoted blob leftover: 'origin/A' 'origin/B'
+            if ((line.Contains('\'') || line.Contains('"')) && line.Contains(' '))
+            {
+                foreach (var tok in line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var t = tok.Trim().Trim('\'', '"').Trim();
+                    if (!string.IsNullOrWhiteSpace(t))
+                        yield return t;
+                }
+                continue;
+            }
+
+            yield return line.Trim().Trim('\'', '"').Trim();
+        }
+    }
+
+    // origin/GSSv8.7S3 → GSSv8.7S3   (do NOT use Contains("HEAD") on whole chunk)
+    private static string? ParseRemoteBranch(string line)
+    {
+        var t = (line ?? string.Empty).Trim().Trim('\'', '"').Trim();
+        if (string.IsNullOrWhiteSpace(t))
+            return null;
+
+        if (t.StartsWith("*"))
+            t = t.TrimStart('*').Trim().Trim('\'', '"').Trim();
+
+        // symbolic ref line: origin/HEAD -> origin/main
+        if (t.Contains("->", StringComparison.Ordinal))
+            return null;
+
+        if (t.StartsWith("origin/", StringComparison.OrdinalIgnoreCase))
+            t = t.Substring("origin/".Length).Trim().Trim('\'', '"').Trim();
+
+        if (string.IsNullOrWhiteSpace(t))
+            return null;
+        if (string.Equals(t, "origin", StringComparison.OrdinalIgnoreCase))
+            return null;
+        if (string.Equals(t, "HEAD", StringComparison.OrdinalIgnoreCase))
+            return null;
+        if (string.Equals(t, "main", StringComparison.OrdinalIgnoreCase))
+            return null; // optional: drop main from DB rollup list
+
+        return t;
+    }
+
+
+Also keep appsettings:
+
+    "dbRollupPullBranchesCommand": "git branch -r"
+
+
+================================================================================
+VERIFY after Rebuild + Refresh Branches
+================================================================================
+GOOD log:
+
+    [INFO] BRANCH-LOAD-V6 start
+    [INFO] parse: 'origin/GSS8.7' -> 'GSS8.7'
+    [INFO] parse: 'origin/GSSv7.7' -> 'GSSv7.7'
+    [INFO] git exit=0 parsed=40
+    [INFO] BRANCH-LOAD-V6 dropdown count=40
+    [INFO]   [0] GSS8.7
+
+From/To dropdowns enable and show separate names (no origin/).
+
+
+================================================================================
+END
+================================================================================
