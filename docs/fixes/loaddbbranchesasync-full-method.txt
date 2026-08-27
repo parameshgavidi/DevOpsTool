@@ -3,11 +3,27 @@ BuildTab.razor — FULL LoadDbBranchesAsync method (paste-ready)
 Keep for future — From/To DB rollup branch dropdowns
 ================================================================================
 
+FIXES YOUR SCREENSHOT
+---------------------
+Before: FROM/TO show one long string:
+    GSS8.7 'origin/GSSv7.7' 'origin/GSSv7.8' ...
+
+After Refresh Branches: real dropdowns, no origin/, one name per option:
+    GSS8.7
+    GSSv7.7
+    GSSv7.8
+    ...
+
+Also see: docs/fixes/db-rollup-dropdown-strip-origin.txt
+  (markup <select> + short callback/helpers if you only need the small fix)
+
+
 WHAT THIS IS
 ------------
 Complete LoadDbBranchesAsync + helpers in one paste block.
 Uses RepoRoot, reads build:dbRollupPullBranchesCommand from appsettings,
-parses cmd-safe `git branch -r` output, keeps ONLY GSS* branches.
+parses cmd-safe `git branch -r` output, strips origin/, keeps ONLY GSS* branches,
+assigns DbBranchOptions so From/To <select> fills.
 
 
 PREREQ (already in your project — do not recreate)

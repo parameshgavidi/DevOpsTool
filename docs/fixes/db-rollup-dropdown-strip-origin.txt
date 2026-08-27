@@ -1,0 +1,224 @@
+================================================================================
+FIX — From/To show ONE long string with origin/  →  real dropdown of clean names
+Matches your screenshot: GSS8.7 'origin/GSSv7.7' 'origin/GSSv7.8' ...
+================================================================================
+
+WHAT YOU SEE (screenshot)
+-------------------------
+FROM BRANCH and TO BRANCH look like one long value:
+
+    GSS8.7 'origin/GSSv7.7' 'origin/GSSv7.8' 'origin/GSSv7.8PU1' ...
+
+That is ONE DbBranchOptions entry (whole git stdout), so the <select>
+has a single option — not a real list of branches.
+
+
+WHAT YOU WANT
+-------------
+1) Strip "origin/" from every name
+2) Fill From/To DROPDOWNS with separate options:
+
+    GSS8.7
+    GSSv7.7
+    GSSv7.8
+    GSSv7.8PU1
+    ...
+
+
+WHY IT BREAKS
+-------------
+Command under cmd.exe /c often uses:
+    git branch -r --format='%(refname:short)'
+
+Single quotes are LITERAL in cmd.exe. Git prints one blob:
+
+    'origin/GSS8.7' 'origin/GSSv7.7' 'origin/GSSv7.8' ...
+
+Old callback only Trim + strip first origin/ once → one long string → one option.
+
+
+================================================================================
+CHANGE 1 — From/To markup MUST be <select> when options exist
+================================================================================
+In BuildTab.razor DB ROLLUP SCRIPTS section, REPLACE From/To fields with:
+
+        <div class="form-group">
+            <label>From Branch</label>
+            @if (DbBranchOptions.Count > 0)
+            {
+                <select class="form-control" @bind="DbRollupFromBranch">
+                    @foreach (var b in DbBranchOptions)
+                    {
+                        <option value="@b">@b</option>
+                    }
+                </select>
+            }
+            else
+            {
+                <input type="text" class="form-control" @bind="DbRollupFromBranch"
+                       placeholder="e.g. GSSv9.1S2" />
+            }
+        </div>
+
+        <div class="form-group">
+            <label>To Branch</label>
+            @if (DbBranchOptions.Count > 0)
+            {
+                <select class="form-control" @bind="DbRollupToBranch">
+                    @foreach (var b in DbBranchOptions)
+                    {
+                        <option value="@b">@b</option>
+                    }
+                </select>
+            }
+            else
+            {
+                <input type="text" class="form-control" @bind="DbRollupToBranch"
+                       placeholder="e.g. GSSv9.2S2" />
+            }
+        </div>
+
+You already need:
+
+    private List<string> DbBranchOptions { get; set; } = new();
+    private bool _isLoadingBranches;
+
+
+================================================================================
+CHANGE 2 — REPLACE LoadDbBranchesAsync line-callback + ADD helpers
+================================================================================
+Inside LoadDbBranchesAsync, REPLACE the RunCommandAsync line callback with
+this (keep RepoRoot / command / rest of method):
+
+                line =>
+                {
+                    foreach (var raw in SplitBranchTokens(line))
+                    {
+                        var t = NormalizeBranchName(raw);
+                        if (string.IsNullOrWhiteSpace(t))
+                            continue;
+
+                        // ONLY GSS* release branches
+                        if (!t.StartsWith("GSS", StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        if (!lines.Contains(t, StringComparer.OrdinalIgnoreCase))
+                            lines.Add(t);
+                    }
+                },
+
+After exit == 0 you MUST assign the list (this is what fills the dropdown):
+
+            lines.Sort(StringComparer.OrdinalIgnoreCase);
+            DbBranchOptions = lines;
+
+            if (DbBranchOptions.Count > 0)
+            {
+                if (string.IsNullOrWhiteSpace(DbRollupFromBranch)
+                    || !DbBranchOptions.Contains(DbRollupFromBranch, StringComparer.OrdinalIgnoreCase))
+                {
+                    DbRollupFromBranch = DbBranchOptions[0];
+                }
+
+                if (string.IsNullOrWhiteSpace(DbRollupToBranch)
+                    || !DbBranchOptions.Contains(DbRollupToBranch, StringComparer.OrdinalIgnoreCase))
+                {
+                    DbRollupToBranch = DbBranchOptions.Count > 1
+                        ? DbBranchOptions[1]
+                        : DbBranchOptions[0];
+                }
+            }
+
+ADD these two helpers next to LoadDbBranchesAsync (same @code block):
+
+    // 'origin/A' 'origin/B'  →  separate tokens  origin/A , origin/B
+    private static IEnumerable<string> SplitBranchTokens(string? line)
+    {
+        var s = (line ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(s))
+            yield break;
+
+        if (s.StartsWith(">>>", StringComparison.Ordinal))
+            yield break;
+
+        if ((s.Contains('\'') || s.Contains('"')) && s.Contains(' '))
+        {
+            foreach (var p in s.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries))
+                yield return p;
+            yield break;
+        }
+
+        yield return s;
+    }
+
+    // Strip quotes + origin/  →  GSSv7.7
+    private static string NormalizeBranchName(string raw)
+    {
+        var t = (raw ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(t))
+            return string.Empty;
+
+        if (t.StartsWith("*"))
+            t = t.TrimStart('*').Trim();
+
+        if (t.Length >= 2 && t[0] == '\'' && t[^1] == '\'')
+            t = t.Substring(1, t.Length - 2).Trim();
+        if (t.Length >= 2 && t[0] == '"' && t[^1] == '"')
+            t = t.Substring(1, t.Length - 2).Trim();
+        t = t.Trim().Trim('\'', '"');
+
+        if (string.IsNullOrWhiteSpace(t))
+            return string.Empty;
+        if (string.Equals(t, "origin", StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+        if (t.Contains("HEAD", StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+        if (t.StartsWith("origin/", StringComparison.OrdinalIgnoreCase))
+            t = t.Substring("origin/".Length);
+
+        return t.Trim();
+    }
+
+
+FULL paste-ready method (entire LoadDbBranchesAsync + helpers):
+  → docs/fixes/loaddbbranchesasync-full-method.txt
+
+
+================================================================================
+CHANGE 3 — appsettings (recommended)
+================================================================================
+Under "build" use cmd-safe command (no --format quotes):
+
+    "dbRollupPullBranchesCommand": "git branch -r"
+
+LoadDbBranchesAsync must read that key (not hardcode git branch ...).
+
+
+================================================================================
+RESULT AFTER Refresh Branches
+================================================================================
+From Branch dropdown:
+
+    GSS8.7
+    GSSv7.7
+    GSSv7.8
+    ...
+
+To Branch dropdown: same list, pick a different branch.
+No "origin/" prefix. Not one long quoted string.
+
+
+================================================================================
+CHECKLIST
+================================================================================
+[ ] From/To use <select> when DbBranchOptions.Count > 0
+[ ] Callback uses SplitBranchTokens + NormalizeBranchName (strips origin/)
+[ ] DbBranchOptions = lines after load (this fills the dropdown)
+[ ] Rebuild → Refresh Branches
+[ ] From Branch shows MANY separate names (GSSv7.7, GSSv7.8, ...)
+[ ] To Branch same — pick different From/To
+
+
+================================================================================
+END
+================================================================================
