@@ -1,0 +1,220 @@
+================================================================================
+BuildTab.razor — FULL LoadDbBranchesAsync method (paste-ready)
+Keep for future — From/To DB rollup branch dropdowns
+================================================================================
+
+WHAT THIS IS
+------------
+Complete LoadDbBranchesAsync + helpers in one paste block.
+Uses RepoRoot, reads build:dbRollupPullBranchesCommand from appsettings,
+parses cmd-safe `git branch -r` output, keeps ONLY GSS* branches.
+
+
+PREREQ (already in your project — do not recreate)
+--------------------------------------------------
+  - DbBranchOptions / _isLoadingBranches
+  - DbRollupFromBranch / DbRollupToBranch
+  - RepoRoot / AppendLog / BuildService / LoadAppSettings
+  - From/To <select> markup + Refresh Branches button
+  - appsettings "build":
+        "dbRollupPullBranchesCommand": "git branch -r"
+  - BuildSettings.DbRollupPullBranchesCommand
+
+
+--------------------------------------------------------------------------------
+REPLACE your entire LoadDbBranchesAsync (+ helpers) with this block
+Paste INSIDE @code { } of BuildTab.razor
+--------------------------------------------------------------------------------
+
+    private async Task LoadDbBranchesAsync()
+    {
+        if (_isLoadingBranches)
+            return;
+
+        _isLoadingBranches = true;
+        try
+        {
+            var root = RepoRoot?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Repo Root not found: {root}. Select a valid Git repository root first.");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            // MUST come from appsettings.json → build:dbRollupPullBranchesCommand
+            var settings = LoadAppSettings();
+            var command = settings?.Build?.DbRollupPullBranchesCommand?.Trim();
+            if (string.IsNullOrWhiteSpace(command))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] build:dbRollupPullBranchesCommand is missing in appsettings.json.");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            var lines = new List<string>();
+
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Loading DB branches from {root}...");
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Command: {command}");
+            await InvokeAsync(StateHasChanged);
+
+            var exit = await BuildService.RunCommandAsync(
+                root,
+                command,
+                line =>
+                {
+                    foreach (var raw in SplitBranchTokens(line))
+                    {
+                        var t = NormalizeBranchName(raw);
+                        if (string.IsNullOrWhiteSpace(t))
+                            continue;
+
+                        // ONLY GSS* release branches (drops cmd.exe / git / -r / junk)
+                        if (!t.StartsWith("GSS", StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        if (!lines.Contains(t, StringComparer.OrdinalIgnoreCase))
+                            lines.Add(t);
+                    }
+                },
+                CancellationToken.None);
+
+            if (exit != 0)
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Failed to list branches (exit {exit}). Check Repo Root is a Git repo and command is cmd-safe (no --format quotes).");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            lines.Sort(StringComparer.OrdinalIgnoreCase);
+            DbBranchOptions = lines;
+
+            // Keep appsettings From/To when still valid; otherwise pick first remotes
+            if (DbBranchOptions.Count > 0)
+            {
+                if (string.IsNullOrWhiteSpace(DbRollupFromBranch)
+                    || !DbBranchOptions.Contains(DbRollupFromBranch, StringComparer.OrdinalIgnoreCase))
+                {
+                    DbRollupFromBranch = DbBranchOptions[0];
+                }
+
+                if (string.IsNullOrWhiteSpace(DbRollupToBranch)
+                    || !DbBranchOptions.Contains(DbRollupToBranch, StringComparer.OrdinalIgnoreCase))
+                {
+                    DbRollupToBranch = DbBranchOptions.Count > 1
+                        ? DbBranchOptions[1]
+                        : DbBranchOptions[0];
+                }
+            }
+
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Loaded {DbBranchOptions.Count} branch(es). Select From/To, then Bundle Scripts.");
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Load branches failed: {ex.Message}");
+            await InvokeAsync(StateHasChanged);
+        }
+        finally
+        {
+            _isLoadingBranches = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    // Splits one stdout line into branch tokens.
+    // Handles normal "git branch -r" lines AND the broken space-separated
+    // 'origin/A' 'origin/B' blob from --format='...' under cmd.exe.
+    private static IEnumerable<string> SplitBranchTokens(string? line)
+    {
+        var s = (line ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(s))
+            yield break;
+
+        // Ignore BuildService echo / diagnostics if they ever hit the callback
+        if (s.StartsWith(">>>", StringComparison.Ordinal))
+            yield break;
+
+        // Space-separated quoted names on one line
+        if ((s.Contains('\'') || s.Contains('"')) && s.Contains(' '))
+        {
+            var parts = s.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var p in parts)
+                yield return p;
+            yield break;
+        }
+
+        yield return s;
+    }
+
+    private static string NormalizeBranchName(string raw)
+    {
+        var t = (raw ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(t))
+            return string.Empty;
+
+        // git branch -r current marker
+        if (t.StartsWith("*"))
+            t = t.TrimStart('*').Trim();
+
+        // strip quotes left by old --format='...' commands
+        if (t.Length >= 2 && t[0] == '\'' && t[^1] == '\'')
+            t = t.Substring(1, t.Length - 2).Trim();
+        if (t.Length >= 2 && t[0] == '"' && t[^1] == '"')
+            t = t.Substring(1, t.Length - 2).Trim();
+        t = t.Trim().Trim('\'', '"');
+
+        if (string.IsNullOrWhiteSpace(t))
+            return string.Empty;
+        if (string.Equals(t, "origin", StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+        if (t.Contains("HEAD", StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+        if (t.StartsWith("origin/", StringComparison.OrdinalIgnoreCase))
+            t = t.Substring("origin/".Length);
+
+        return t.Trim();
+    }
+
+
+--------------------------------------------------------------------------------
+OPTIONAL — load initially (OnAfterRenderAsync)
+--------------------------------------------------------------------------------
+ADD or merge into existing OnAfterRenderAsync so opening Build tab fills dropdowns:
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+            return;
+
+        if (DbBranchOptions.Count == 0
+            && !string.IsNullOrWhiteSpace(RepoRoot)
+            && Directory.Exists(RepoRoot))
+        {
+            await LoadDbBranchesAsync();
+        }
+    }
+
+
+================================================================================
+DO NOT
+================================================================================
+[ ] Hardcode "git branch ..." inside LoadDbBranchesAsync
+[ ] Put --format='%(refname:short)' back in appsettings
+[ ] Run git against Script Source — use RepoRoot (gss-root)
+[ ] Paste outside @code { }
+
+
+================================================================================
+CHECKLIST
+================================================================================
+[ ] Deleted old LoadDbBranchesAsync / SplitBranchTokens / NormalizeBranchName
+[ ] Pasted this block once inside BuildTab.razor @code
+[ ] appsettings: "dbRollupPullBranchesCommand": "git branch -r"
+[ ] Refresh Branches → From/To show many GSS* names (not one long string)
+[ ] Open Build tab → auto-load if OnAfterRenderAsync added
+
+
+================================================================================
+END
+================================================================================
