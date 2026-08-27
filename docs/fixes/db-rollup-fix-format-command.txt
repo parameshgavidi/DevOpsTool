@@ -1,0 +1,264 @@
+================================================================================
+ROOT CAUSE (from your screenshots) — branches show "No branches loaded"
+================================================================================
+
+Your appsettings.json STILL has:
+
+    "dbRollupPullBranchesCommand": "git branch -r --format='%(refname:short)'"
+
+That --format='...' is INVALID under cmd.exe /c (BuildService).
+Also: if BuildSettings lacks DbRollupPullBranchesCommand, LoadAppSettings
+returns null for the command → your new method exits → empty dropdown.
+
+Old hardcoded git call → one long blob.
+New method reads appsettings → missing/bad command → Count = 0 → "No branches loaded".
+
+
+DO THESE 3 CHANGES (all required), then Rebuild Solution → Refresh Branches
+================================================================================
+
+
+--------------------------------------------------------------------------------
+CHANGE 1 — appsettings.json  (you showed this file — FIX THIS LINE)
+--------------------------------------------------------------------------------
+FIND:
+
+    "dbRollupPullBranchesCommand": "git branch -r --format='%(refname:short)'"
+
+REPLACE WITH:
+
+    "dbRollupPullBranchesCommand": "git branch -r"
+
+Keep your paths as-is:
+
+    "repoRoot": "F:\\GSS\\AppDev\\gss-root"
+    "dbScriptSource": "F:\\db-rollup-scripts"
+    "dbRollupFromBranch": "GSSv8.7S3"
+    "dbRollupToBranch": "GSSv8.9S2"
+
+SAVE appsettings.json.
+
+
+--------------------------------------------------------------------------------
+CHANGE 2 — DeploymentModels.cs / BuildSettings (you have this tab open)
+--------------------------------------------------------------------------------
+On the BuildSettings class, ENSURE this property exists:
+
+    public string DbRollupPullBranchesCommand { get; set; } = "git branch -r";
+
+If missing, JSON key is ignored → command is always null → no branches.
+
+
+--------------------------------------------------------------------------------
+CHANGE 3 — BuildTab.razor — REPLACE the 3 methods with this block
+--------------------------------------------------------------------------------
+DELETE:
+  LoadDbBranchesAsync
+  SplitBranchTokens
+  NormalizeBranchName
+
+PASTE this entire block inside @code { } (keeps your markup / Refresh button):
+
+    private async Task LoadDbBranchesAsync()
+    {
+        if (_isLoadingBranches)
+            return;
+
+        _isLoadingBranches = true;
+        try
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] BRANCH-LOAD-V5 start");
+
+            // Ensure RepoRoot from appsettings if field empty
+            if (string.IsNullOrWhiteSpace(RepoRoot))
+            {
+                var s0 = LoadAppSettings();
+                RepoRoot = s0?.Build?.RepoRoot?.Trim() ?? string.Empty;
+            }
+
+            var root = RepoRoot?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] RepoRoot invalid: '{root}'. Expected F:\\GSS\\AppDev\\gss-root");
+                DbBranchOptions = new List<string>();
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            // ALWAYS use plain git branch -r (ignore --format='...' in appsettings)
+            var settings = LoadAppSettings();
+            var configured = settings?.Build?.DbRollupPullBranchesCommand?.Trim() ?? string.Empty;
+            var command = "git branch -r";
+            if (!string.IsNullOrWhiteSpace(configured)
+                && !configured.Contains("--format", StringComparison.OrdinalIgnoreCase)
+                && !configured.Contains('\''))
+            {
+                command = configured;
+            }
+            else if (!string.IsNullOrWhiteSpace(configured))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [WARN] Ignoring bad command: {configured}");
+            }
+
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] root={root}");
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] cmd={command}");
+            await InvokeAsync(StateHasChanged);
+
+            var lines = new List<string>();
+            var rawSamples = new List<string>();
+
+            var exit = await BuildService.RunCommandAsync(
+                root,
+                command,
+                line =>
+                {
+                    var s = (line ?? string.Empty).Trim();
+                    if (string.IsNullOrWhiteSpace(s) || s.StartsWith(">>>", StringComparison.Ordinal))
+                        return;
+
+                    if (rawSamples.Count < 10)
+                        rawSamples.Add(s);
+
+                    foreach (var raw in SplitBranchTokens(s))
+                    {
+                        var t = NormalizeBranchName(raw);
+                        if (string.IsNullOrWhiteSpace(t))
+                            continue;
+                        if (!lines.Contains(t, StringComparer.OrdinalIgnoreCase))
+                            lines.Add(t);
+                    }
+                },
+                CancellationToken.None);
+
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] git exit={exit} parsed={lines.Count}");
+            foreach (var r in rawSamples)
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO]   raw: {r}");
+
+            if (exit != 0)
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] git failed. Open cmd in {root} and run: git branch -r");
+                DbBranchOptions = new List<string>();
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            // Prefer GSS* ; if none, keep all
+            var gss = lines.Where(x => x.StartsWith("GSS", StringComparison.OrdinalIgnoreCase)).ToList();
+            if (gss.Count > 0)
+                lines = gss;
+
+            lines.Sort(StringComparer.OrdinalIgnoreCase);
+            DbBranchOptions = lines;
+
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] BRANCH-LOAD-V5 dropdown count={DbBranchOptions.Count}");
+            for (var i = 0; i < Math.Min(8, DbBranchOptions.Count); i++)
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO]   [{i}] {DbBranchOptions[i]}");
+
+            if (DbBranchOptions.Count > 0)
+            {
+                // Prefer appsettings From/To when they exist in the list
+                var fromCfg = settings?.Build?.DbRollupFromBranch?.Trim();
+                var toCfg = settings?.Build?.DbRollupToBranch?.Trim();
+
+                DbRollupFromBranch = !string.IsNullOrWhiteSpace(fromCfg)
+                    && DbBranchOptions.Contains(fromCfg, StringComparer.OrdinalIgnoreCase)
+                        ? fromCfg
+                        : DbBranchOptions[0];
+
+                DbRollupToBranch = !string.IsNullOrWhiteSpace(toCfg)
+                    && DbBranchOptions.Contains(toCfg, StringComparer.OrdinalIgnoreCase)
+                        ? toCfg
+                        : (DbBranchOptions.Count > 1 ? DbBranchOptions[1] : DbBranchOptions[0]);
+            }
+            else
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Still 0 branches. Check raw lines / RepoRoot / BuildSettings.DbRollupPullBranchesCommand property.");
+            }
+
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] BRANCH-LOAD-V5: {ex.Message}");
+            DbBranchOptions = new List<string>();
+            await InvokeAsync(StateHasChanged);
+        }
+        finally
+        {
+            _isLoadingBranches = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private static IEnumerable<string> SplitBranchTokens(string? line)
+    {
+        var s = (line ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(s))
+            yield break;
+
+        if (s.Contains('\'') || s.Contains('"'))
+        {
+            foreach (var p in s.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries))
+                yield return p;
+            yield break;
+        }
+
+        yield return s;
+    }
+
+    private static string NormalizeBranchName(string raw)
+    {
+        var t = (raw ?? string.Empty).Trim().Trim('\'', '"').Trim();
+        if (string.IsNullOrWhiteSpace(t))
+            return string.Empty;
+
+        if (t.StartsWith("*"))
+            t = t.TrimStart('*').Trim().Trim('\'', '"').Trim();
+
+        if (string.Equals(t, "origin", StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+        if (t.Contains("HEAD", StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+
+        while (t.StartsWith("origin/", StringComparison.OrdinalIgnoreCase))
+            t = t.Substring("origin/".Length).Trim().Trim('\'', '"').Trim();
+
+        return t;
+    }
+
+
+Your markup is already correct (select + Refresh → LoadDbBranchesAsync).
+Keep OnAfterRenderAsync if you want auto-load; or just click Refresh Branches.
+
+
+================================================================================
+VERIFY
+================================================================================
+After Rebuild + Refresh, OUTPUT LOG must show:
+
+    [INFO] BRANCH-LOAD-V5 start
+    [INFO] root=F:\GSS\AppDev\gss-root
+    [INFO] cmd=git branch -r
+    [INFO] git exit=0 parsed=...
+    [INFO]   raw: origin/GSSv8.7S3
+    [INFO] BRANCH-LOAD-V5 dropdown count=40
+    [INFO]   [0] GSS8.7
+    ...
+
+From/To dropdowns enable (not "No branches loaded").
+
+
+================================================================================
+CHECKLIST
+================================================================================
+[ ] appsettings: "dbRollupPullBranchesCommand": "git branch -r"   ← NO --format
+[ ] BuildSettings has: public string DbRollupPullBranchesCommand { get; set; }
+[ ] Pasted BRANCH-LOAD-V5 (3 methods) inside @code
+[ ] Rebuild Solution (0 errors)
+[ ] Refresh Branches
+[ ] Log shows BRANCH-LOAD-V5 and dropdown count > 0
+
+
+================================================================================
+END
+================================================================================
