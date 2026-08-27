@@ -1,40 +1,106 @@
 ================================================================================
-BuildTab.razor — FULL LoadDbBranchesAsync method (paste-ready)
-Keep for future — From/To DB rollup branch dropdowns
+STILL BROKEN — From/To show ONE long string (your latest screenshot)
+GSS8.7 'origin/GSSv7.7' 'origin/GSSv7.8' ...
 ================================================================================
 
-IF SCREENSHOT STILL SHOWS:
+Your tool STILL has the OLD LoadDbBranchesAsync parser (and maybe no <select>).
+Docs alone do nothing until you paste into BuildTab.razor and rebuild.
+
+
+PROOF it is the old parser
+--------------------------
+Screenshot value:
+
     GSS8.7 'origin/GSSv7.7' 'origin/GSSv7.8' ...
-→ follow docs/fixes/db-rollup-dropdown-still-broken.txt (all 3 steps)
-  You still have the OLD parser and/or plain <input> instead of <select>.
+
+That ONLY happens when the callback does roughly:
+
+    var t = line.Trim().Trim('\'', '"');
+    if (t.StartsWith("origin/")) t = t.Substring("origin/".Length);
+    lines.Add(t);   // ONE add for the WHOLE blob
+
+FIND that pattern in BuildTab.razor and DELETE it.
 
 
-FIXES YOUR SCREENSHOT
----------------------
-Before: FROM/TO show one long string with origin/ and quotes
-After Refresh Branches: real dropdowns, clean names:
-
-    GSS8.7
-    GSSv7.7
-    GSSv7.8
-    ...
-
-
-PREREQ (already in your project — do not recreate)
---------------------------------------------------
-  - DbBranchOptions / _isLoadingBranches
-  - DbRollupFromBranch / DbRollupToBranch
-  - RepoRoot / AppendLog / BuildService / LoadAppSettings
-  - From/To <select> when DbBranchOptions.Count > 0  (REQUIRED)
-  - appsettings "build":
-        "dbRollupPullBranchesCommand": "git branch -r"
-  - BuildSettings.DbRollupPullBranchesCommand
+================================================================================
+DO ALL 3 STEPS — then Rebuild → Refresh Branches
+================================================================================
 
 
 --------------------------------------------------------------------------------
-DELETE old LoadDbBranchesAsync + Split* + Normalize*, then PASTE this block
-Paste INSIDE @code { } of BuildTab.razor — rebuild the app after paste
+STEP 1 — appsettings.json  (under "build")
 --------------------------------------------------------------------------------
+REPLACE value (no --format, no single quotes):
+
+    "dbRollupPullBranchesCommand": "git branch -r"
+
+SAVE the file.
+
+
+--------------------------------------------------------------------------------
+STEP 2 — BuildTab.razor MARKUP — From/To MUST be <select>
+--------------------------------------------------------------------------------
+FIND your current From Branch / To Branch fields (plain <input> showing the
+long string) and REPLACE BOTH with:
+
+        <div class="form-group">
+            <label>From Branch</label>
+            @if (DbBranchOptions.Count > 0)
+            {
+                <select class="form-control" @bind="DbRollupFromBranch">
+                    @foreach (var b in DbBranchOptions)
+                    {
+                        <option value="@b">@b</option>
+                    }
+                </select>
+            }
+            else
+            {
+                <input type="text" class="form-control" @bind="DbRollupFromBranch"
+                       placeholder="Click Refresh Branches" />
+            }
+        </div>
+
+        <div class="form-group">
+            <label>To Branch</label>
+            @if (DbBranchOptions.Count > 0)
+            {
+                <select class="form-control" @bind="DbRollupToBranch">
+                    @foreach (var b in DbBranchOptions)
+                    {
+                        <option value="@b">@b</option>
+                    }
+                </select>
+            }
+            else
+            {
+                <input type="text" class="form-control" @bind="DbRollupToBranch"
+                       placeholder="Click Refresh Branches" />
+            }
+        </div>
+
+Fields you must already have near _isBundling:
+
+    private List<string> DbBranchOptions { get; set; } = new();
+    private bool _isLoadingBranches;
+
+Refresh button must call LoadDbBranchesAsync:
+
+    <button class="btn btn-secondary"
+            disabled="@_isLoadingBranches"
+            @onclick="LoadDbBranchesAsync">
+        @(_isLoadingBranches ? "Loading..." : "Refresh Branches")
+    </button>
+
+
+--------------------------------------------------------------------------------
+STEP 3 — DELETE old LoadDbBranchesAsync + helpers, PASTE this whole block
+--------------------------------------------------------------------------------
+In BuildTab.razor @code { }:
+
+1. DELETE your current LoadDbBranchesAsync method entirely
+2. DELETE any old SplitBranchTokens / SplitQuotedBranches / NormalizeBranchName
+3. PASTE everything below ONCE inside @code { }
 
     private async Task LoadDbBranchesAsync()
     {
@@ -94,6 +160,8 @@ Paste INSIDE @code { } of BuildTab.razor — rebuild the app after paste
             }
 
             lines.Sort(StringComparer.OrdinalIgnoreCase);
+
+            // THIS fills the dropdown — must assign a LIST of separate names
             DbBranchOptions = lines;
 
             if (DbBranchOptions.Count == 0)
@@ -174,6 +242,7 @@ Paste INSIDE @code { } of BuildTab.razor — rebuild the app after paste
         if (t.StartsWith("*"))
             t = t.TrimStart('*').Trim();
 
+        // strip wrapping quotes
         t = t.Trim().Trim('\'', '"').Trim();
 
         if (string.IsNullOrWhiteSpace(t))
@@ -183,6 +252,7 @@ Paste INSIDE @code { } of BuildTab.razor — rebuild the app after paste
         if (t.Contains("HEAD", StringComparison.OrdinalIgnoreCase))
             return string.Empty;
 
+        // strip origin/ (repeat-safe)
         while (t.StartsWith("origin/", StringComparison.OrdinalIgnoreCase))
             t = t.Substring("origin/".Length).Trim().Trim('\'', '"').Trim();
 
@@ -190,35 +260,51 @@ Paste INSIDE @code { } of BuildTab.razor — rebuild the app after paste
     }
 
 
---------------------------------------------------------------------------------
-OPTIONAL — load initially (OnAfterRenderAsync)
---------------------------------------------------------------------------------
-
-    protected override async Task OnAfterRenderAsync(bool firstRender)
-    {
-        if (!firstRender)
-            return;
-
-        if (DbBranchOptions.Count == 0
-            && !string.IsNullOrWhiteSpace(RepoRoot)
-            && Directory.Exists(RepoRoot))
-        {
-            await LoadDbBranchesAsync();
-        }
-    }
-
-
 ================================================================================
-VERIFY after Rebuild + Refresh Branches
+VERIFY (look at OUTPUT LOG after Refresh Branches)
 ================================================================================
-OUTPUT LOG must show:
+GOOD — you must see something like:
 
-    [INFO] Loaded N branch(es) into dropdown.
+    [INFO] Loaded 40 branch(es) into dropdown.
     [INFO]   [0] GSS8.7
     [INFO]   [1] GSSv7.7
+    [INFO]   [2] GSSv7.8
     ...
 
-If you see "Still one quoted blob" → old method still in the file.
+And From/To become real dropdowns (chevron) with one short name each.
+
+BAD — if you still see:
+
+    [ERROR] Still one quoted blob — old parser still running...
+
+then the old method is still in the file (duplicate method, wrong class,
+or paste outside @code). Search BuildTab.razor for:
+    Trim('\'', '"')
+and for a second LoadDbBranchesAsync.
+
+
+================================================================================
+COMMON MISTAKES
+================================================================================
+[ ] Only changed docs / did not paste into BuildTab.razor
+[ ] Left OLD LoadDbBranchesAsync AND added a second copy
+[ ] Pasted helpers outside @code { }
+[ ] From/To still plain <input> (no <select> @if DbBranchOptions.Count > 0)
+[ ] Git command still has --format='%(refname:short)'
+[ ] Running git against Script Source F:\db-rollup-scripts instead of RepoRoot
+
+
+================================================================================
+CHECKLIST
+================================================================================
+[ ] appsettings: "dbRollupPullBranchesCommand": "git branch -r"
+[ ] From/To markup uses <select> when DbBranchOptions.Count > 0
+[ ] Deleted ALL old LoadDbBranchesAsync / Split* / Normalize*
+[ ] Pasted new block once inside @code
+[ ] Rebuild the MAUI app (not just hot reload)
+[ ] Click Refresh Branches
+[ ] OUTPUT LOG shows Loaded N branch(es) with N > 1 and clean names
+[ ] From/To dropdowns show GSS8.7, GSSv7.7, ... (no origin/, no quotes)
 
 
 ================================================================================
