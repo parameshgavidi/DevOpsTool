@@ -1,0 +1,230 @@
+================================================================================
+SAME BUG AGAIN — GSS8.7' 'origin/GSSv7.7' ... in From/To
+GitHub docs do NOT update your MAUI app. You must edit BuildTab.razor.
+================================================================================
+
+YOUR SCREENSHOT PROVES
+----------------------
+Value looks like:
+
+    GSS8.7' 'origin/GSSv7.7' 'origin/GSSv7.8' ...
+
+That is 100% the OLD callback still running:
+
+    var t = line.Trim().Trim('\'', '"');
+    if (t.StartsWith("origin/"))
+        t = t.Substring("origin/".Length);
+    lines.Add(t);   // ONE item = whole blob
+
+The new SplitBranchTokens code is NOT what Refresh Branches is executing.
+
+
+================================================================================
+STEP A — Prove which code is running (30 seconds)
+================================================================================
+In Visual Studio, open BuildTab.razor.
+
+Ctrl+F search for EXACTLY:
+
+    Trim('\'', '"')
+
+OR:
+
+    Substring("origin/".Length)
+
+If you find either inside LoadDbBranchesAsync → that is the broken method.
+You must DELETE that whole method (and any SplitQuotedBranches / old helpers).
+
+
+Also Ctrl+F:
+
+    BRANCH-PARSE-V3
+
+If NOT found → you never pasted the new method (or pasted outside @code).
+
+
+================================================================================
+STEP B — Paste this as the ONLY LoadDbBranchesAsync
+================================================================================
+1. Delete ALL methods named LoadDbBranchesAsync
+2. Delete SplitBranchTokens / SplitQuotedBranches / NormalizeBranchName if present
+3. Paste the block below INSIDE @code { } once
+4. Save → Rebuild (Build → Rebuild Solution) → run app
+5. Click Refresh Branches
+6. Look at OUTPUT LOG for:  [INFO] BRANCH-PARSE-V3
+
+If you do NOT see BRANCH-PARSE-V3 in the log, the new method is not running.
+
+
+    private async Task LoadDbBranchesAsync()
+    {
+        if (_isLoadingBranches)
+            return;
+
+        _isLoadingBranches = true;
+        try
+        {
+            // CANARY — must appear in OUTPUT LOG after Refresh Branches
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] BRANCH-PARSE-V3 running");
+
+            var root = RepoRoot?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Repo Root not found: {root}");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            var settings = LoadAppSettings();
+            var command = settings?.Build?.DbRollupPullBranchesCommand?.Trim();
+            if (string.IsNullOrWhiteSpace(command))
+                command = "git branch -r";
+
+            // Force cmd-safe command even if appsettings still has --format='...'
+            if (command.Contains("--format", StringComparison.OrdinalIgnoreCase)
+                || command.Contains('\''))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [WARN] Ignoring bad command '{command}'. Using: git branch -r");
+                command = "git branch -r";
+            }
+
+            var lines = new List<string>();
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Loading branches. root={root} cmd={command}");
+            await InvokeAsync(StateHasChanged);
+
+            var exit = await BuildService.RunCommandAsync(
+                root,
+                command,
+                line =>
+                {
+                    foreach (var raw in SplitBranchTokens(line))
+                    {
+                        var t = NormalizeBranchName(raw);
+                        if (string.IsNullOrWhiteSpace(t))
+                            continue;
+                        if (!t.StartsWith("GSS", StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        if (!lines.Contains(t, StringComparer.OrdinalIgnoreCase))
+                            lines.Add(t);
+                    }
+                },
+                CancellationToken.None);
+
+            if (exit != 0)
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] git exit {exit}");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            lines.Sort(StringComparer.OrdinalIgnoreCase);
+            DbBranchOptions = lines;
+
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] BRANCH-PARSE-V3 count={DbBranchOptions.Count}");
+            for (var i = 0; i < Math.Min(8, DbBranchOptions.Count); i++)
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO]   [{i}] {DbBranchOptions[i]}");
+
+            if (DbBranchOptions.Count == 1 && DbBranchOptions[0].Contains('\''))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Still one blob — old method still active or helpers missing.");
+            }
+
+            if (DbBranchOptions.Count > 0)
+            {
+                DbRollupFromBranch = DbBranchOptions[0];
+                DbRollupToBranch = DbBranchOptions.Count > 1
+                    ? DbBranchOptions[1]
+                    : DbBranchOptions[0];
+            }
+
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] {ex.Message}");
+            await InvokeAsync(StateHasChanged);
+        }
+        finally
+        {
+            _isLoadingBranches = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private static IEnumerable<string> SplitBranchTokens(string? line)
+    {
+        var s = (line ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(s) || s.StartsWith(">>>", StringComparison.Ordinal))
+            yield break;
+
+        if (s.Contains('\'') || s.Contains('"'))
+        {
+            foreach (var p in s.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries))
+                yield return p;
+            yield break;
+        }
+
+        yield return s;
+    }
+
+    private static string NormalizeBranchName(string raw)
+    {
+        var t = (raw ?? string.Empty).Trim().Trim('\'', '"').Trim();
+        if (string.IsNullOrWhiteSpace(t))
+            return string.Empty;
+        if (t.StartsWith("*"))
+            t = t.TrimStart('*').Trim().Trim('\'', '"').Trim();
+        if (string.Equals(t, "origin", StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+        if (t.Contains("HEAD", StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+        while (t.StartsWith("origin/", StringComparison.OrdinalIgnoreCase))
+            t = t.Substring("origin/".Length).Trim().Trim('\'', '"').Trim();
+        return t;
+    }
+
+
+================================================================================
+STEP C — From/To markup MUST be <select> (not plain <input>)
+================================================================================
+If From/To are always <input @bind="DbRollupFromBranch">, you will NEVER see
+a dropdown even when DbBranchOptions is correct.
+
+Use:
+
+    @if (DbBranchOptions.Count > 0)
+    {
+        <select class="form-control" @bind="DbRollupFromBranch">
+            @foreach (var b in DbBranchOptions)
+            {
+                <option value="@b">@b</option>
+            }
+        </select>
+    }
+    else
+    {
+        <input class="form-control" @bind="DbRollupFromBranch" />
+    }
+
+(same for To Branch / DbRollupToBranch)
+
+
+================================================================================
+HOW TO READ THE RESULT
+================================================================================
+After Refresh Branches:
+
+1) No "BRANCH-PARSE-V3" in OUTPUT LOG
+   → wrong file / didn't rebuild / button not calling this method
+
+2) "BRANCH-PARSE-V3 count=40" and [0] GSS8.7 [1] GSSv7.7
+   → parser OK. If UI still shows long string → markup still plain <input>
+     or you are looking at an old window (close app, rebuild, run again)
+
+3) "BRANCH-PARSE-V3 count=1" + quotes in the name
+   → SplitBranchTokens / NormalizeBranchName missing (not pasted)
+
+
+================================================================================
+END
+================================================================================

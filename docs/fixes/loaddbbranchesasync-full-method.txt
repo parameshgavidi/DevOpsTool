@@ -4,9 +4,11 @@ Keep for future — From/To DB rollup branch dropdowns
 ================================================================================
 
 IF SCREENSHOT STILL SHOWS:
-    GSS8.7 'origin/GSSv7.7' 'origin/GSSv7.8' ...
-→ follow docs/fixes/db-rollup-dropdown-still-broken.txt (all 3 steps)
-  You still have the OLD parser and/or plain <input> instead of <select>.
+    GSS8.7' 'origin/GSSv7.7' 'origin/GSSv7.8' ...
+→ OLD parser is STILL in BuildTab.razor (GitHub docs do not update your app).
+→ Use docs/fixes/db-rollup-same-blob-canary.txt
+  Ctrl+F Trim('\'', '"') — delete that method — paste V3 — Rebuild —
+  Refresh must log: [INFO] BRANCH-PARSE-V3
 
 
 FIXES YOUR SCREENSHOT
