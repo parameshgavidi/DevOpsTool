@@ -1,0 +1,245 @@
+================================================================================
+Branches show "No branches loaded" AFTER replacing the 3 methods
+Your <select> markup is fine — DbBranchOptions stays empty.
+================================================================================
+
+YOUR MARKUP (OK)
+----------------
+From/To use DbBranchOptions. When Count == 0 → "No branches loaded".
+So LoadDbBranchesAsync is returning with an empty list (or never finishes).
+
+
+FIRST — fix the 1 ERROR in Visual Studio
+----------------------------------------
+Status bar shows Errors: 1. Open View → Error List.
+If BuildTab.razor / @code does not compile, Rebuild keeps old/broken behavior.
+
+Common after paste:
+  - duplicate LoadDbBranchesAsync
+  - helper pasted outside @code { }
+  - missing closing brace }
+
+
+THEN — replace the 3 methods with this DIAGNOSTIC version
+---------------------------------------------------------
+DELETE LoadDbBranchesAsync + SplitBranchTokens + NormalizeBranchName.
+PASTE below inside @code { }.
+Rebuild Solution → run → click Refresh Branches.
+READ THE OUTPUT LOG — it tells you exactly why Count is 0.
+
+
+    private async Task LoadDbBranchesAsync()
+    {
+        if (_isLoadingBranches)
+            return;
+
+        _isLoadingBranches = true;
+        try
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] BRANCH-LOAD-V4 start");
+
+            // Prefer RepoRoot; fall back to ScriptSource if needed
+            var root = RepoRoot?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [WARN] RepoRoot invalid: '{root}'. Trying ScriptSource...");
+                root = ScriptSource?.Trim() ?? string.Empty;
+            }
+
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] No valid git folder. Set Repo Root to gss-root (NOT only F:\\db-rollup-scripts).");
+                DbBranchOptions = new List<string>();
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            var gitDir = Path.Combine(root, ".git");
+            if (!Directory.Exists(gitDir) && !File.Exists(gitDir))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Not a git repo (no .git): {root}");
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Script Source F:\\db-rollup-scripts is usually NOT the git root. Use Repo Root = gss-root.");
+                DbBranchOptions = new List<string>();
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            var settings = LoadAppSettings();
+            var command = settings?.Build?.DbRollupPullBranchesCommand?.Trim();
+            if (string.IsNullOrWhiteSpace(command)
+                || command.Contains("--format", StringComparison.OrdinalIgnoreCase)
+                || command.Contains('\''))
+            {
+                if (!string.IsNullOrWhiteSpace(command))
+                    AppendLog($"[{DateTime.Now:HH:mm:ss}] [WARN] Bad/missing command '{command}' → using git branch -r");
+                command = "git branch -r";
+            }
+
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] root={root}");
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] cmd={command}");
+            await InvokeAsync(StateHasChanged);
+
+            var rawLines = new List<string>();
+            var lines = new List<string>();
+            var tokenCount = 0;
+
+            var exit = await BuildService.RunCommandAsync(
+                root,
+                command,
+                line =>
+                {
+                    var s = (line ?? string.Empty).Trim();
+                    if (string.IsNullOrWhiteSpace(s))
+                        return;
+                    if (s.StartsWith(">>>", StringComparison.Ordinal))
+                        return;
+
+                    if (rawLines.Count < 12)
+                        rawLines.Add(s);
+
+                    foreach (var raw in SplitBranchTokens(s))
+                    {
+                        tokenCount++;
+                        var t = NormalizeBranchName(raw);
+                        if (string.IsNullOrWhiteSpace(t))
+                            continue;
+                        if (!lines.Contains(t, StringComparer.OrdinalIgnoreCase))
+                            lines.Add(t);
+                    }
+                },
+                CancellationToken.None);
+
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] git exit={exit} rawSample={rawLines.Count} tokens={tokenCount} parsed={lines.Count}");
+            foreach (var sample in rawLines.Take(8))
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO]   raw: {sample}");
+
+            if (exit != 0)
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] git failed (exit {exit}). Fix Repo Root / git.");
+                DbBranchOptions = new List<string>();
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            // Prefer GSS* names; if that empties the list, keep all parsed names
+            var gss = lines
+                .Where(x => x.StartsWith("GSS", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (gss.Count > 0)
+            {
+                lines = gss;
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Using {lines.Count} GSS* branches");
+            }
+            else
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [WARN] No GSS* names after parse. Keeping all {lines.Count} parsed name(s).");
+            }
+
+            lines.Sort(StringComparer.OrdinalIgnoreCase);
+            DbBranchOptions = lines;
+
+            if (DbBranchOptions.Count == 0)
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] DbBranchOptions still empty. Check raw: lines above. Callback may not be receiving git stdout.");
+            }
+            else
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] BRANCH-LOAD-V4 dropdown count={DbBranchOptions.Count}");
+                for (var i = 0; i < Math.Min(8, DbBranchOptions.Count); i++)
+                    AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO]   [{i}] {DbBranchOptions[i]}");
+
+                DbRollupFromBranch = DbBranchOptions[0];
+                DbRollupToBranch = DbBranchOptions.Count > 1
+                    ? DbBranchOptions[1]
+                    : DbBranchOptions[0];
+            }
+
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] BRANCH-LOAD-V4 exception: {ex.Message}");
+            DbBranchOptions = new List<string>();
+            await InvokeAsync(StateHasChanged);
+        }
+        finally
+        {
+            _isLoadingBranches = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private static IEnumerable<string> SplitBranchTokens(string? line)
+    {
+        var s = (line ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(s))
+            yield break;
+
+        if (s.Contains('\'') || s.Contains('"'))
+        {
+            foreach (var p in s.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries))
+                yield return p;
+            yield break;
+        }
+
+        yield return s;
+    }
+
+    private static string NormalizeBranchName(string raw)
+    {
+        var t = (raw ?? string.Empty).Trim().Trim('\'', '"').Trim();
+        if (string.IsNullOrWhiteSpace(t))
+            return string.Empty;
+
+        if (t.StartsWith("*"))
+            t = t.TrimStart('*').Trim().Trim('\'', '"').Trim();
+
+        if (string.Equals(t, "origin", StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+        if (t.Contains("HEAD", StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+
+        while (t.StartsWith("origin/", StringComparison.OrdinalIgnoreCase))
+            t = t.Substring("origin/".Length).Trim().Trim('\'', '"').Trim();
+
+        return t;
+    }
+
+
+================================================================================
+HOW TO READ OUTPUT LOG after Refresh Branches
+================================================================================
+
+A) No "BRANCH-LOAD-V4 start"
+   → Refresh is not calling this method, or app not rebuilt.
+
+B) "No valid git folder" / "Not a git repo"
+   → Set Repo Root to your real git root (e.g. F:\GSS\AppDev\gss-root).
+     F:\db-rollup-scripts is Script Source only — usually not a git repo.
+
+C) "git exit=1" (or other non-zero)
+   → git failed in that folder. Open cmd there and run: git branch -r
+
+D) "raw:" lines show origin/GSSv... but count=0
+   → paste helpers again (Split/Normalize missing or not compiling).
+
+E) "BRANCH-LOAD-V4 dropdown count=40" + [0] GSS8.7
+   → SUCCESS. Dropdowns should enable and fill.
+
+
+================================================================================
+CHECKLIST
+================================================================================
+[ ] Error List = 0 errors
+[ ] Only ONE LoadDbBranchesAsync in BuildTab.razor
+[ ] Helpers are inside same @code { }
+[ ] Rebuild Solution
+[ ] Repo Root = gss-root (has .git)
+[ ] Click Refresh Branches
+[ ] Log shows BRANCH-LOAD-V4 start + dropdown count > 0
+
+
+================================================================================
+END
+================================================================================
