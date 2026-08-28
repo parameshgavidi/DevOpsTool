@@ -1,0 +1,519 @@
+================================================================================
+USE THIS FILE — Get Latest From Repo Branch (dropdown + Get latest button)
+BuildTab.razor — step-by-step, paste-ready
+================================================================================
+
+GOAL
+----
+1. Load remote branches into "Get Latest From Repo Branch" dropdown
+   (SAME parsing style as DB ROLLUP "From Branch")
+2. Default selected value = latest GSS branch (highest after sort)
+3. NO new appsettings / configuration variable
+4. Click Get latest → checkout that branch at Repo Root → get latest code
+   → show APPLICATIONS grid
+
+
+YOUR SCREENSHOT (red squiggles)
+------------------------------
+You already added markup that references:
+
+    RepoFromBranch
+    RepoBranchOptions
+    _isLoadingRepoBranches
+    LoadRepoBranchesAsync
+
+Those are NOT defined yet — that is why Visual Studio shows red underlines.
+Follow CHANGE 1 → 5 below in order.
+
+
+================================================================================
+CHANGE 1 — ADD fields (inside @code, near RepoRoot / OutputRoot)
+================================================================================
+ADD these only. Do NOT add anything to appsettings.json.
+
+    private string RepoFromBranch { get; set; } = string.Empty;
+    private List<string> RepoBranchOptions { get; set; } = new();
+    private bool _isLoadingRepoBranches;
+    private bool _isGettingLatest;
+    private bool _showApplications;   // false until Get latest finishes
+
+Keep your existing:
+    RepoRoot, OutputRoot, BuildApps, AppendLog, BuildService,
+    GetLatestFromRepoAsync, LoadAppSettings, StartLogFlushTimer, etc.
+
+If you ALREADY have SplitBranchTokens + NormalizeBranchName from
+From Branch (DB rollup) — REUSE them. Do NOT paste duplicates.
+
+
+================================================================================
+CHANGE 2 — REPLACE the "Get Latest From Repo Branch" UI block
+================================================================================
+Put this under Repo Root / Output Root (BUILD CONFIGURATION).
+
+    <div class="config-group">
+        <label>Get Latest From Repo Branch</label>
+        <div class="config-row">
+            <select class="form-control"
+                    @bind="RepoFromBranch"
+                    disabled="@(RepoBranchOptions.Count == 0)">
+                @if (RepoBranchOptions.Count == 0)
+                {
+                    <option value="">No branches loaded</option>
+                }
+                else
+                {
+                    @foreach (var b in RepoBranchOptions)
+                    {
+                        <option value="@b">@b</option>
+                    }
+                }
+            </select>
+            <button class="btn btn-secondary"
+                    disabled="@_isLoadingRepoBranches"
+                    @onclick="LoadRepoBranchesAsync">
+                @(_isLoadingRepoBranches ? "Loading..." : "Refresh")
+            </button>
+        </div>
+    </div>
+
+    <div class="config-actions">
+        <button class="btn btn-primary"
+                disabled="@(_isGettingLatest
+                            || string.IsNullOrWhiteSpace(RepoRoot)
+                            || string.IsNullOrWhiteSpace(RepoFromBranch)
+                            || RepoBranchOptions.Count == 0)"
+                @onclick="GetLatestAndShowAppsAsync">
+            @(_isGettingLatest ? "Getting latest..." : "Get latest")
+        </button>
+    </div>
+
+Notes:
+- Dropdown looks/behaves like From Branch (select + Refresh).
+- Get latest uses the SELECTED RepoFromBranch value — not appsettings.
+
+
+================================================================================
+CHANGE 3 — ADD LoadRepoBranchesAsync (NO config variable)
+================================================================================
+Hardcoded command: git branch -r
+Working directory: RepoRoot (same repo as builds)
+Filter: GSS* only (same as From Branch)
+Default: last sorted name = "latest" branch
+
+PASTE inside @code:
+
+    private async Task LoadRepoBranchesAsync()
+    {
+        if (_isLoadingRepoBranches)
+            return;
+
+        _isLoadingRepoBranches = true;
+        try
+        {
+            var root = RepoRoot?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Repo Root not found: {root}. Browse Repo Root first.");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            // NO appsettings key — hardcoded cmd-safe command (same idea as From Branch)
+            var command = "git branch -r";
+            var lines = new List<string>();
+
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Loading repo branches from {root}...");
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Command: {command}");
+            await InvokeAsync(StateHasChanged);
+
+            var exit = await BuildService.RunCommandAsync(
+                root,
+                command,
+                line =>
+                {
+                    foreach (var raw in SplitBranchTokens(line))
+                    {
+                        var t = NormalizeBranchName(raw);
+                        if (string.IsNullOrWhiteSpace(t))
+                            continue;
+                        // Keep only GSS release branches (drops cmd.exe / git / junk)
+                        if (!t.StartsWith("GSS", StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        if (!lines.Contains(t, StringComparer.OrdinalIgnoreCase))
+                            lines.Add(t);
+                    }
+                },
+                CancellationToken.None);
+
+            if (exit != 0)
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Failed to list repo branches (exit {exit})");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            lines.Sort(StringComparer.OrdinalIgnoreCase);
+            RepoBranchOptions = lines;
+
+            if (RepoBranchOptions.Count == 0)
+            {
+                RepoFromBranch = string.Empty;
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Parsed 0 GSS branches. Check Repo Root is a Git repo.");
+            }
+            else
+            {
+                // Default = LATEST branch (last after sort, e.g. GSSv8.9S2)
+                var latest = RepoBranchOptions[^1];
+                if (string.IsNullOrWhiteSpace(RepoFromBranch)
+                    || !RepoBranchOptions.Contains(RepoFromBranch, StringComparer.OrdinalIgnoreCase))
+                {
+                    RepoFromBranch = latest;
+                }
+
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Loaded {RepoBranchOptions.Count} repo branch(es). Default latest = {RepoFromBranch}");
+                var preview = Math.Min(8, RepoBranchOptions.Count);
+                for (var i = 0; i < preview; i++)
+                    AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO]   [{i}] {RepoBranchOptions[i]}");
+            }
+
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Load repo branches failed: {ex.Message}");
+            await InvokeAsync(StateHasChanged);
+        }
+        finally
+        {
+            _isLoadingRepoBranches = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+
+================================================================================
+CHANGE 4 — Helpers (ONLY if you do NOT already have them from From Branch)
+================================================================================
+If SplitBranchTokens + NormalizeBranchName already exist in BuildTab.razor,
+SKIP this entire CHANGE 4.
+
+If missing, PASTE:
+
+    private static IEnumerable<string> SplitBranchTokens(string? line)
+    {
+        var s = (line ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(s))
+            yield break;
+        if (s.StartsWith(">>>", StringComparison.Ordinal))
+            yield break;
+
+        // BuildService may deliver one multi-line chunk — split on newlines first
+        if (s.Contains('\n') || s.Contains('\r'))
+        {
+            foreach (var part in s.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                foreach (var token in SplitBranchTokens(part))
+                    yield return token;
+            }
+            yield break;
+        }
+
+        // Quoted blob: 'origin/A' 'origin/B'
+        if (s.Contains('\'') || s.Contains('"'))
+        {
+            foreach (var p in s.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries))
+                yield return p;
+            yield break;
+        }
+
+        yield return s;
+    }
+
+    private static string NormalizeBranchName(string raw)
+    {
+        var t = (raw ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(t))
+            return string.Empty;
+
+        if (t.StartsWith("*"))
+            t = t.TrimStart('*').Trim();
+
+        t = t.Trim().Trim('\'', '"').Trim();
+
+        if (string.IsNullOrWhiteSpace(t))
+            return string.Empty;
+        if (string.Equals(t, "origin", StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+
+        // Per-token HEAD check (do NOT use Contains on a multi-line blob)
+        if (t.Contains("HEAD", StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+
+        while (t.StartsWith("origin/", StringComparison.OrdinalIgnoreCase))
+            t = t.Substring("origin/".Length).Trim().Trim('\'', '"').Trim();
+
+        return t.Trim();
+    }
+
+
+================================================================================
+CHANGE 5 — Load branches on first open (optional but recommended)
+================================================================================
+Merge into existing OnAfterRenderAsync, or ADD:
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+            return;
+
+        // Existing DB From/To load (keep if you have it)
+        if (DbBranchOptions.Count == 0
+            && !string.IsNullOrWhiteSpace(RepoRoot)
+            && Directory.Exists(RepoRoot))
+        {
+            await LoadDbBranchesAsync();
+        }
+
+        // NEW — auto-fill Get Latest From Repo Branch dropdown
+        if (RepoBranchOptions.Count == 0
+            && !string.IsNullOrWhiteSpace(RepoRoot)
+            && Directory.Exists(RepoRoot))
+        {
+            await LoadRepoBranchesAsync();
+        }
+    }
+
+If you already have OnAfterRenderAsync, only ADD the RepoBranchOptions block.
+Do NOT create a second OnAfterRenderAsync.
+
+
+================================================================================
+CHANGE 6 — REPLACE GetLatestAndShowAppsAsync
+================================================================================
+Uses selected RepoFromBranch:
+  1) validate Repo Root + selected branch
+  2) git fetch + checkout that branch at Repo Root
+  3) load apps from appsettings
+  4) per-app GetLatestFromRepoAsync (existing gitLatestCommand)
+  5) show APPLICATIONS grid
+
+REPLACE your whole GetLatestAndShowAppsAsync with:
+
+    private async Task GetLatestAndShowAppsAsync()
+    {
+        if (_isGettingLatest)
+            return;
+
+        _isGettingLatest = true;
+        _showApplications = false;
+        try
+        {
+            var root = RepoRoot?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Repo Root not found: {root}");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            var gitDir = Path.Combine(root, ".git");
+            if (!Directory.Exists(gitDir) && !File.Exists(gitDir))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Not a git repo (missing .git): {root}");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            var branch = RepoFromBranch?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(branch))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Select a branch in Get Latest From Repo Branch (click Refresh first).");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            // A) Checkout selected branch at Repo Root (NO appsettings variable)
+            var checkoutCmd =
+                $"git fetch origin && git checkout {branch} && git pull --ff-only";
+
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Switching to branch '{branch}' at {root}...");
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Git: {checkoutCmd}");
+            await InvokeAsync(StateHasChanged);
+
+            StartLogFlushTimer();
+
+            var checkoutExit = await BuildService.RunCommandAsync(
+                root,
+                checkoutCmd,
+                line =>
+                {
+                    lock (_pendingLogBuffer)
+                    {
+                        _pendingLogBuffer.Append(line);
+                        if (!line.EndsWith('\n') && !line.EndsWith('\r'))
+                            _pendingLogBuffer.AppendLine();
+                    }
+                },
+                CancellationToken.None);
+
+            FlushPendingLogs();
+
+            if (checkoutExit != 0)
+            {
+                // Local branch missing — create tracking branch from origin/<branch>
+                var trackCmd =
+                    $"git fetch origin && git checkout -B {branch} origin/{branch}";
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Checkout failed (exit {checkoutExit}). Trying track: {trackCmd}");
+                await InvokeAsync(StateHasChanged);
+
+                checkoutExit = await BuildService.RunCommandAsync(
+                    root,
+                    trackCmd,
+                    line =>
+                    {
+                        lock (_pendingLogBuffer)
+                        {
+                            _pendingLogBuffer.Append(line);
+                            if (!line.EndsWith('\n') && !line.EndsWith('\r'))
+                                _pendingLogBuffer.AppendLine();
+                        }
+                    },
+                    CancellationToken.None);
+
+                FlushPendingLogs();
+
+                if (checkoutExit != 0)
+                {
+                    AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Failed to checkout branch '{branch}' (exit {checkoutExit})");
+                    await InvokeAsync(StateHasChanged);
+                    return;
+                }
+            }
+
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] On branch '{branch}' — getting latest per app...");
+            await InvokeAsync(StateHasChanged);
+
+            // B) Load ALL apps from appsettings
+            await LoadApplicationsFromConfigAsync();
+
+            if (BuildApps.Count == 0)
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] No applications in appsettings (build:applications)");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            var okCount = 0;
+            var failCount = 0;
+
+            // C) Per-app get latest (uses each app's gitLatestCommand)
+            foreach (var app in BuildApps)
+            {
+                app.Status = "Getting latest...";
+                await InvokeAsync(StateHasChanged);
+
+                var ok = await GetLatestFromRepoAsync(app, root, CancellationToken.None);
+                if (ok)
+                {
+                    app.Status = "Ready";
+                    okCount++;
+                }
+                else
+                {
+                    app.Status = "Failed";
+                    failCount++;
+                }
+
+                await InvokeAsync(StateHasChanged);
+            }
+
+            FlushPendingLogs();
+
+            // D) Show grid
+            _showApplications = true;
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Get latest complete on '{branch}' — OK: {okCount}, Failed: {failCount}");
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Get latest failed: {ex.Message}");
+            _showApplications = false;
+            await InvokeAsync(StateHasChanged);
+        }
+        finally
+        {
+            StopLogFlushTimer();
+            _isGettingLatest = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+
+Keep GetLatestFromRepoAsync and LoadApplicationsFromConfigAsync as in
+docs/fixes/GET-LATEST-CURRENT.txt (unchanged).
+
+
+================================================================================
+DO NOT CHANGE / DO NOT ADD
+================================================================================
+[ ] Do NOT add repoFromBranch / latestBranch to appsettings.json
+[ ] Do NOT add dbRollupPullBranchesCommand for this dropdown
+[ ] Do NOT hardcode --format='%(refname:short)' (breaks under cmd.exe)
+[ ] Do NOT call GetLatestFromRepoAsync from Build / Build All
+[ ] Do NOT duplicate SplitBranchTokens if From Branch already has it
+
+
+================================================================================
+STEP-BY-STEP WORK ORDER (do in this order)
+================================================================================
+1. Paste CHANGE 1 fields → Rebuild → red squiggles on fields go away
+2. Paste CHANGE 2 UI (dropdown + Refresh + Get latest button)
+3. Paste CHANGE 3 LoadRepoBranchesAsync
+4. Paste CHANGE 4 helpers ONLY if missing
+5. Paste CHANGE 5 OnAfterRenderAsync merge
+6. Paste CHANGE 6 GetLatestAndShowAppsAsync (replace old method)
+7. Rebuild + run the tool
+8. Set Repo Root → click Refresh (or reopen tab)
+9. Confirm dropdown fills and defaults to latest GSS branch
+10. Click Get latest → OUTPUT LOG shows checkout + per-app git latest
+
+
+================================================================================
+EXPECTED OUTPUT LOG
+================================================================================
+After Refresh / first open:
+
+    [INFO] Loading repo branches from F:\GSS\AppDev\gss-root...
+    [INFO] Command: git branch -r
+    [INFO] Loaded N repo branch(es). Default latest = GSSv8.9S2
+    [INFO]   [0] GSS8.7
+    [INFO]   [1] GSSv7.7
+    ...
+
+After Get latest (selected GSSv8.9S2):
+
+    [INFO] Switching to branch 'GSSv8.9S2' at F:\GSS\AppDev\gss-root...
+    [INFO] Git: git fetch origin && git checkout GSSv8.9S2 && git pull --ff-only
+    [INFO] On branch 'GSSv8.9S2' — getting latest per app...
+    [INFO] Getting latest for GSS Web Service...
+    [INFO] Git latest OK for GSS Web Service
+    ...
+    [INFO] Get latest complete on 'GSSv8.9S2' — OK: N, Failed: 0
+
+
+================================================================================
+CHECKLIST
+================================================================================
+[ ] Fields: RepoFromBranch, RepoBranchOptions, _isLoadingRepoBranches
+[ ] Dropdown + Refresh + Get latest button under BUILD CONFIGURATION
+[ ] LoadRepoBranchesAsync uses hardcoded "git branch -r" (no config)
+[ ] Default RepoFromBranch = last sorted GSS branch (latest)
+[ ] GetLatestAndShowAppsAsync checkouts RepoFromBranch then per-app latest
+[ ] APPLICATIONS grid still wrapped in @if (_showApplications)
+[ ] No new keys in appsettings.json
+[ ] Red squiggles gone after Rebuild
+
+
+================================================================================
+END
+================================================================================

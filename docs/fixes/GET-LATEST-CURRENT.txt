@@ -1,22 +1,45 @@
 ================================================================================
 USE THIS FILE ONLY — Get latest (toolbar) + Build (no git)
-One clear copy-paste for BuildTab.razor
+Pointers + current flow for BuildTab.razor
 ================================================================================
 
-WHAT TO DO
-----------
-1. Click Get latest  → load all apps from appsettings
+CURRENT FLOW (with branch dropdown)
+-----------------------------------
+Full step-by-step paste guide (USE THIS):
+
+    docs/fixes/buildtab-get-latest-from-repo-branch.txt
+
+That guide covers:
+  1. Load GSS branches into "Get Latest From Repo Branch" dropdown
+     (same parsing as DB ROLLUP From Branch)
+  2. Default selected value = latest branch (last after sort)
+  3. NO new appsettings / configuration variable
+  4. Click Get latest → checkout selected branch → per-app gitLatestCommand
+  5. Show APPLICATIONS grid
+  6. Build does NOT run git
+
+
+WHAT TO DO (summary)
+--------------------
+1. Click Refresh (or open Build tab) → LoadRepoBranchesAsync fills dropdown
+   → RepoFromBranch defaults to latest GSS branch
+
+2. Click Get latest → checkout RepoFromBranch at Repo Root
+                     → load all apps from appsettings
                      → for EACH app call GetLatestFromRepoAsync
                      → (uses that app's gitLatestCommand from appsettings)
                      → show APPLICATIONS grid
 
-2. Click Build       → build only. NO git. NO GetLatestFromRepoAsync.
+3. Click Build       → build only. NO git. NO GetLatestFromRepoAsync.
 
 
 --------------------------------------------------------------------------------
-A) Fields to ADD (keep your existing BuildApps / RepoRoot / etc.)
+A) Fields (branch dropdown + Get latest)
 --------------------------------------------------------------------------------
 
+    private string RepoFromBranch { get; set; } = string.Empty;
+    private List<string> RepoBranchOptions { get; set; } = new();
+    private bool _isLoadingRepoBranches;
     private bool _isGettingLatest;
     private bool _showApplications;   // false until Get latest finishes
 
@@ -25,6 +48,7 @@ A) Fields to ADD (keep your existing BuildApps / RepoRoot / etc.)
 B) OnInitialized — KEEP your existing LoadAppSettings (do not change much)
 --------------------------------------------------------------------------------
 Keep loading paths + BuildApps. Do NOT set _showApplications = true.
+Do NOT load RepoFromBranch from appsettings (no config variable).
 
     protected override void OnInitialized()
     {
@@ -44,16 +68,49 @@ Keep loading paths + BuildApps. Do NOT set _showApplications = true.
                 BuildApps = loadedApps;
         }
         // _showApplications stays false
+        // RepoFromBranch filled by LoadRepoBranchesAsync (latest default)
     }
 
 
 --------------------------------------------------------------------------------
-C) Get latest button (under BUILD CONFIGURATION)
+C) Get Latest From Repo Branch UI + Get latest button
 --------------------------------------------------------------------------------
+Full markup: docs/fixes/buildtab-get-latest-from-repo-branch.txt  CHANGE 2
+
+Short version:
+
+    <div class="config-group">
+        <label>Get Latest From Repo Branch</label>
+        <div class="config-row">
+            <select class="form-control"
+                    @bind="RepoFromBranch"
+                    disabled="@(RepoBranchOptions.Count == 0)">
+                @if (RepoBranchOptions.Count == 0)
+                {
+                    <option value="">No branches loaded</option>
+                }
+                else
+                {
+                    @foreach (var b in RepoBranchOptions)
+                    {
+                        <option value="@b">@b</option>
+                    }
+                }
+            </select>
+            <button class="btn btn-secondary"
+                    disabled="@_isLoadingRepoBranches"
+                    @onclick="LoadRepoBranchesAsync">
+                @(_isLoadingRepoBranches ? "Loading..." : "Refresh")
+            </button>
+        </div>
+    </div>
 
     <div class="config-actions">
-        <button class="btn-primary"
-                disabled="@(_isGettingLatest || string.IsNullOrWhiteSpace(RepoRoot))"
+        <button class="btn btn-primary"
+                disabled="@(_isGettingLatest
+                            || string.IsNullOrWhiteSpace(RepoRoot)
+                            || string.IsNullOrWhiteSpace(RepoFromBranch)
+                            || RepoBranchOptions.Count == 0)"
                 @onclick="GetLatestAndShowAppsAsync">
             @(_isGettingLatest ? "Getting latest..." : "Get latest")
         </button>
@@ -130,7 +187,7 @@ E) LoadApplicationsFromConfigAsync — ONE method
 --------------------------------------------------------------------------------
 F) GetLatestFromRepoAsync — KEEP THIS (reads appsettings gitLatestCommand)
 --------------------------------------------------------------------------------
-Used by Get latest button. NOT used by Build.
+Used by Get latest button AFTER branch checkout. NOT used by Build.
 
     private async Task<bool> GetLatestFromRepoAsync(Application app, string workingDir, CancellationToken cancellation)
     {
@@ -177,95 +234,16 @@ Used by Get latest button. NOT used by Build.
 
 
 --------------------------------------------------------------------------------
-G) GetLatestAndShowAppsAsync — REPLACE your old method with THIS
+G) LoadRepoBranchesAsync + GetLatestAndShowAppsAsync
 --------------------------------------------------------------------------------
-NO hardcoded "git fetch && git pull --ff-only".
-Loads all apps, then calls GetLatestFromRepoAsync for each.
+Paste FULL methods from:
 
-    private async Task GetLatestAndShowAppsAsync()
-    {
-        if (_isGettingLatest)
-            return;
+    docs/fixes/buildtab-get-latest-from-repo-branch.txt
 
-        _isGettingLatest = true;
-        _showApplications = false;
-        try
-        {
-            var root = RepoRoot?.Trim() ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
-            {
-                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Repo Root not found: {root}");
-                await InvokeAsync(StateHasChanged);
-                return;
-            }
-
-            var gitDir = Path.Combine(root, ".git");
-            if (!Directory.Exists(gitDir) && !File.Exists(gitDir))
-            {
-                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Not a git repo (missing .git): {root}");
-                await InvokeAsync(StateHasChanged);
-                return;
-            }
-
-            // 1) Load ALL apps from appsettings
-            await LoadApplicationsFromConfigAsync();
-
-            if (BuildApps.Count == 0)
-            {
-                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] No applications in appsettings (build:applications)");
-                await InvokeAsync(StateHasChanged);
-                return;
-            }
-
-            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Get latest for {BuildApps.Count} app(s) using gitLatestCommand from appsettings...");
-            await InvokeAsync(StateHasChanged);
-
-            StartLogFlushTimer();
-
-            var okCount = 0;
-            var failCount = 0;
-
-            // 2) Call GetLatestFromRepoAsync for EACH app
-            foreach (var app in BuildApps)
-            {
-                app.Status = "Getting latest...";
-                await InvokeAsync(StateHasChanged);
-
-                var ok = await GetLatestFromRepoAsync(app, root, CancellationToken.None);
-                if (ok)
-                {
-                    app.Status = "Ready";
-                    okCount++;
-                }
-                else
-                {
-                    app.Status = "Failed";
-                    failCount++;
-                }
-
-                await InvokeAsync(StateHasChanged);
-            }
-
-            FlushPendingLogs();
-
-            // 3) Show grid
-            _showApplications = true;
-            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Get latest complete — OK: {okCount}, Failed: {failCount}");
-            await InvokeAsync(StateHasChanged);
-        }
-        catch (Exception ex)
-        {
-            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Get latest failed: {ex.Message}");
-            _showApplications = false;
-            await InvokeAsync(StateHasChanged);
-        }
-        finally
-        {
-            StopLogFlushTimer();
-            _isGettingLatest = false;
-            await InvokeAsync(StateHasChanged);
-        }
-    }
+  - CHANGE 3 = LoadRepoBranchesAsync (hardcoded "git branch -r", default latest)
+  - CHANGE 4 = SplitBranchTokens / NormalizeBranchName (reuse if From Branch has them)
+  - CHANGE 5 = OnAfterRenderAsync auto-load
+  - CHANGE 6 = GetLatestAndShowAppsAsync (checkout RepoFromBranch, then per-app)
 
 
 --------------------------------------------------------------------------------
@@ -286,6 +264,7 @@ Build goes straight to restore → clean PrecompiledWeb → msbuild.
 --------------------------------------------------------------------------------
 I) appsettings.json — each app MUST have gitLatestCommand
 --------------------------------------------------------------------------------
+NO new branch dropdown keys. Only keep per-app gitLatestCommand.
 
 {
   "name": "GSS Web Service",
@@ -300,14 +279,16 @@ I) appsettings.json — each app MUST have gitLatestCommand
 --------------------------------------------------------------------------------
 J) Checklist
 --------------------------------------------------------------------------------
-[ ] Get latest button calls GetLatestAndShowAppsAsync
-[ ] GetLatestAndShowAppsAsync loads all apps then loops GetLatestFromRepoAsync
-[ ] GetLatestFromRepoAsync uses app.GitLatestCommand (appsettings) — NOT hardcoded pull
+[ ] Follow docs/fixes/buildtab-get-latest-from-repo-branch.txt in order
+[ ] Dropdown loads like From Branch (git branch -r, GSS filter, strip origin/)
+[ ] Default = latest branch (no appsettings variable)
+[ ] Get latest checkouts selected branch then loops GetLatestFromRepoAsync
+[ ] GetLatestFromRepoAsync uses app.GitLatestCommand — NOT hardcoded pull
 [ ] Grid uses BuildApps and @if (_showApplications)
 [ ] BuildApplication does NOT call GetLatestFromRepoAsync
 [ ] Each app in appsettings has gitLatestCommand
 
 
 ================================================================================
-END — use only this file
+END — branch dropdown details live in buildtab-get-latest-from-repo-branch.txt
 ================================================================================
