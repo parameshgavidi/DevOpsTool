@@ -203,12 +203,24 @@ Notes:
 
 
 ================================================================================
-CHANGE 6 — Load folders + version sort + previous From
+CHANGE 6 — DO NOT USE (folder loader — causes obj / Scripts dropdown)
 ================================================================================
-REPLACE LoadDbBranchesAsync (git-based) with LoadDbScriptFoldersAsync.
-You can DELETE old LoadDbBranchesAsync if nothing else calls it.
+SUPERSEDED. Do NOT paste LoadDbScriptFoldersAsync / Directory.GetDirectories.
 
-PASTE:
+Use instead:
+  docs/fixes/db-rollup-git-branches-not-folders.txt
+
+(Old folder-loader text removed from active path — search git history if needed.)
+
+
+================================================================================
+CHANGE 6b — (archived) was: Load folders + version sort + previous From
+================================================================================
+*** SKIP THIS ENTIRE SECTION ***
+If you already pasted LoadDbScriptFoldersAsync, DELETE it and use
+db-rollup-git-branches-not-folders.txt instead.
+
+Archived reference only — LoadDbScriptFoldersAsync started with:
 
     private async Task LoadDbScriptFoldersAsync()
     {
