@@ -66,8 +66,8 @@ Do NOT load RepoFromBranch from appsettings (no config variable).
             ScriptSource = settings.Build.DbScriptSource ?? ScriptSource;
             DbRollupOutputDirectory = settings.Build.DbRollupOutputDirectory ?? DbRollupOutputDirectory;
             DbRollupExePath = settings.Build.DbRollupExePath ?? DbRollupExePath;
-            DbRollupFromBranch = settings.Build.DbRollupFromBranch ?? DbRollupFromBranch;
-            DbRollupToBranch = settings.Build.DbRollupToBranch ?? DbRollupToBranch;
+            // From/To come from Script Source folders — see db-scripts-folders-from-to-get-latest.txt
+            // Do NOT load dbRollupFromBranch / dbRollupToBranch from appsettings
 
             var loadedApps = settings.Build.Applications;
             if (loadedApps is { Count: > 0 })
