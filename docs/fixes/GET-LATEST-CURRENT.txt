@@ -28,9 +28,15 @@ WHAT TO DO (summary)
                      → load all apps from appsettings
                      → for EACH app call GetLatestFromRepoAsync
                      → (uses that app's gitLatestCommand from appsettings)
+                     → ALSO get latest DB project via build:gitLatestCommand
+                       + build:dbScriptSource (…\gss-database\Scripts)
+                       → see docs/fixes/db-scripts-folders-from-to-get-latest.txt
                      → show APPLICATIONS grid
 
 3. Click Build       → build only. NO git. NO GetLatestFromRepoAsync.
+
+DB ROLLUP From/To (folders under Scripts, not appsettings):
+  docs/fixes/db-scripts-folders-from-to-get-latest.txt
 
 
 --------------------------------------------------------------------------------

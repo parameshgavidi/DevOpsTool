@@ -1,0 +1,546 @@
+================================================================================
+USE THIS FILE — DB Script Source folders + Get latest DB + From/To auto
+BuildTab.razor + appsettings.json + DeploymentModels.cs — step-by-step
+================================================================================
+
+GOAL
+----
+1. Script Source = F:\GSS\AppDev\gss-database\Scripts  (build:dbScriptSource)
+2. Existing Get latest button ALSO pulls latest for the DB project
+   using build:gitLatestCommand (NOT inside apps[])
+3. REMOVE dbRollupFromBranch / dbRollupToBranch from appsettings AND
+   remove loading them from OnInitialized / BuildSettings
+4. Populate To/From from FOLDERS under Script Source (not git branches):
+     8.4, 8.5, 8.5.1, 8.6, 8.7, 8.8, 8.8.1, 8.9, 8.21, 8.22, 9.0, 9.1, 9.2, Prod
+5. To Branch = dropdown (default = latest version folder, e.g. 9.2)
+6. From Branch = READONLY previous folder (e.g. To=9.2 → From=9.1)
+7. Changing To Branch always updates From Branch to the previous entry
+
+
+YOUR FOLDER LAYOUT (confirmed)
+------------------------------
+  F:\GSS\AppDev\gss-database\          ← git repo root (.git lives here)
+    Scripts\                           ← Script Source / dbScriptSource
+      8.4\
+      8.5\
+      ...
+      9.1\
+      9.2\                             ← latest version (default To)
+      Prod\
+
+
+================================================================================
+CHANGE 1 — appsettings.json (build section)
+================================================================================
+UPDATE dbScriptSource path. ADD build-level gitLatestCommand.
+DELETE dbRollupFromBranch, dbRollupToBranch, dbRollupPullBranchesCommand.
+
+"build" section should look like:
+
+  {
+    "environment": {
+      "name": "BUILD",
+      "type": "BUILD"
+    },
+    "build": {
+      "repoRoot": "F:\\GSS\\AppDev\\gss-root",
+      "outputRoot": "F:\\build-output",
+      "dbScriptSource": "F:\\GSS\\AppDev\\gss-database\\Scripts",
+      "dbRollupExePath": "F:\\GSS\\AppDev\\gss-utilities\\DBRollupScriptBuilder\\DBRollupScriptBuilder\\bin\\Debug\\net10.0\\DBRollupScriptBuilder.exe",
+      "dbRollupOutputDirectory": "F:\\temp\\scripts",
+      "gitLatestCommand": "git stash push -m \"devops-pre-db\" && git fetch && git pull --ff-only && (git stash pop || ver > nul)",
+      "apps": [
+      ]
+    }
+  }
+
+IMPORTANT:
+- gitLatestCommand is UNDER "build" — same level as dbScriptSource
+- Do NOT put this gitLatestCommand inside apps[]
+- Per-app gitLatestCommand (inside each app) is unchanged / separate
+- DELETE these keys entirely:
+    "dbRollupFromBranch"
+    "dbRollupToBranch"
+    "dbRollupPullBranchesCommand"
+
+
+================================================================================
+CHANGE 2 — DeploymentModels.cs / BuildSettings
+================================================================================
+ADD on BuildSettings (if missing):
+
+    public string GitLatestCommand { get; set; } = string.Empty;
+
+DELETE from BuildSettings (if present):
+
+    public string DbRollupFromBranch { get; set; } = string.Empty;
+    public string DbRollupToBranch { get; set; } = string.Empty;
+    public string DbRollupPullBranchesCommand { get; set; } = string.Empty;
+
+Keep:
+
+    public string DbScriptSource { get; set; } = string.Empty;
+
+
+================================================================================
+CHANGE 3 — BuildTab.razor fields
+================================================================================
+KEEP UI fields (local only — NOT loaded from appsettings):
+
+    private string DbRollupFromBranch { get; set; } = string.Empty;
+    private string DbRollupToBranch { get; set; } = string.Empty;
+    private List<string> DbBranchOptions { get; set; } = new();
+    private bool _isLoadingBranches;
+
+Optional (if you use a backing field for To → sync From):
+
+    // Prefer property setter below in CHANGE 6 instead of extra fields.
+
+
+================================================================================
+CHANGE 4 — OnInitialized / OnInitializedAsync — REMOVE From/To config load
+================================================================================
+DELETE these two lines from your init (your screenshot lines 246–247):
+
+    DbRollupFromBranch = settings.Build.DbRollupFromBranch ?? DbRollupFromBranch;
+    DbRollupToBranch = settings.Build.DbRollupToBranch ?? DbRollupToBranch;
+
+KEEP ScriptSource load from dbScriptSource:
+
+    ScriptSource = settings.Build.DbScriptSource ?? ScriptSource;
+
+Full init pattern:
+
+    protected override async Task OnInitializedAsync()
+    {
+        var settings = LoadAppSettings();
+        if (settings?.Build is not null)
+        {
+            RepoRoot = settings.Build.RepoRoot ?? RepoRoot;
+            OutputRoot = settings.Build.OutputRoot ?? OutputRoot;
+            ScriptSource = settings.Build.DbScriptSource ?? ScriptSource;
+            DbRollupOutputDirectory = settings.Build.DbRollupOutputDirectory ?? DbRollupOutputDirectory;
+            DbRollupExePath = settings.Build.DbRollupExePath ?? DbRollupExePath;
+            // NO DbRollupFromBranch / DbRollupToBranch from appsettings
+
+            var loadedApps = settings.Build.Applications;
+            if (loadedApps is { Count: > 0 })
+                BuildApps = loadedApps;
+            else
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARN] No applications loaded from appsettings.json\r\n";
+        }
+
+        // Fill To/From from Script Source folders
+        await LoadDbScriptFoldersAsync();
+    }
+
+If you still use OnInitialized (sync), call LoadDbScriptFoldersAsync from
+OnAfterRenderAsync(firstRender) instead — do not block sync init with async void.
+
+
+================================================================================
+CHANGE 5 — DB ROLLUP UI: To = dropdown, From = readonly previous
+================================================================================
+REPLACE your From/To markup with:
+
+        <div class="form-group">
+            <label>Script Source</label>
+            <div class="input-with-button">
+                <input type="text" class="form-control" @bind="ScriptSource" readonly />
+                <button class="btn btn-secondary" @onclick="BrowseScripts">Browse</button>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>From Branch</label>
+            <input type="text" class="form-control" value="@DbRollupFromBranch" readonly
+                   placeholder="Previous of To Branch" />
+        </div>
+
+        <div class="form-group">
+            <label>To Branch</label>
+            @if (DbBranchOptions.Count > 0)
+            {
+                <select class="form-control" value="@DbRollupToBranch"
+                        @onchange="OnToBranchChanged">
+                    @foreach (var b in DbBranchOptions)
+                    {
+                        <option value="@b">@b</option>
+                    }
+                </select>
+            }
+            else
+            {
+                <input type="text" class="form-control" value="No folders loaded" readonly />
+            }
+        </div>
+
+        <div class="input-with-button">
+            <button class="btn btn-secondary"
+                    disabled="@_isLoadingBranches"
+                    @onclick="LoadDbScriptFoldersAsync">
+                @(_isLoadingBranches ? "Loading..." : "Refresh Branches")
+            </button>
+            <button class="btn btn-success"
+                    @onclick="BundleDbScriptsAsync"
+                    disabled="@_isBundling">
+                Bundle Scripts
+            </button>
+        </div>
+
+Notes:
+- From Branch has NO @bind — readonly display only
+- To Branch uses @onchange → OnToBranchChanged → sets From = previous
+
+
+================================================================================
+CHANGE 6 — Load folders + version sort + previous From
+================================================================================
+REPLACE LoadDbBranchesAsync (git-based) with LoadDbScriptFoldersAsync.
+You can DELETE old LoadDbBranchesAsync if nothing else calls it.
+
+PASTE:
+
+    private async Task LoadDbScriptFoldersAsync()
+    {
+        if (_isLoadingBranches)
+            return;
+
+        _isLoadingBranches = true;
+        try
+        {
+            var root = ScriptSource?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Script Source not found: {root}. Expected ...\\gss-database\\Scripts");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Loading DB script folders from {root}...");
+            await InvokeAsync(StateHasChanged);
+
+            var folders = Directory.GetDirectories(root)
+                .Select(Path.GetFileName)
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .Cast<string>()
+                .Where(n => !n.StartsWith(".", StringComparison.Ordinal))
+                .ToList();
+
+            folders.Sort(CompareScriptFolderNames);
+            DbBranchOptions = folders;
+
+            if (DbBranchOptions.Count == 0)
+            {
+                DbRollupToBranch = string.Empty;
+                DbRollupFromBranch = string.Empty;
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] No folders under Script Source.");
+            }
+            else
+            {
+                // Default To = latest version folder (skip Prod for default if present)
+                var latest = PickLatestScriptFolder(DbBranchOptions);
+                DbRollupToBranch = latest;
+                DbRollupFromBranch = GetPreviousScriptFolder(DbBranchOptions, latest) ?? string.Empty;
+
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Loaded {DbBranchOptions.Count} folder(s). To={DbRollupToBranch}, From={DbRollupFromBranch}");
+                var preview = Math.Min(8, DbBranchOptions.Count);
+                for (var i = 0; i < preview; i++)
+                    AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO]   [{i}] {DbBranchOptions[i]}");
+            }
+
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Load script folders failed: {ex.Message}");
+            await InvokeAsync(StateHasChanged);
+        }
+        finally
+        {
+            _isLoadingBranches = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private Task OnToBranchChanged(ChangeEventArgs e)
+    {
+        var to = e.Value?.ToString()?.Trim() ?? string.Empty;
+        DbRollupToBranch = to;
+        DbRollupFromBranch = GetPreviousScriptFolder(DbBranchOptions, to) ?? string.Empty;
+        AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] To Branch={DbRollupToBranch} → From Branch={DbRollupFromBranch}");
+        return InvokeAsync(StateHasChanged);
+    }
+
+    /// <summary>
+    /// Version-aware sort: 8.9 &lt; 8.21 &lt; 9.0 &lt; 9.2; non-numeric (Prod) last.
+    /// </summary>
+    private static int CompareScriptFolderNames(string a, string b)
+    {
+        var va = TryParseVersionParts(a);
+        var vb = TryParseVersionParts(b);
+        if (va is not null && vb is not null)
+        {
+            var n = Math.Max(va.Count, vb.Count);
+            for (var i = 0; i < n; i++)
+            {
+                var x = i < va.Count ? va[i] : 0;
+                var y = i < vb.Count ? vb[i] : 0;
+                if (x != y) return x.CompareTo(y);
+            }
+            return 0;
+        }
+        if (va is not null) return -1; // versions before Prod/text
+        if (vb is not null) return 1;
+        return string.Compare(a, b, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static List<int>? TryParseVersionParts(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return null;
+        var parts = name.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0) return null;
+        var list = new List<int>(parts.Length);
+        foreach (var p in parts)
+        {
+            if (!int.TryParse(p, out var n))
+                return null;
+            list.Add(n);
+        }
+        return list;
+    }
+
+    private static string PickLatestScriptFolder(List<string> options)
+    {
+        // Prefer highest numeric version; ignore trailing Prod for default To
+        for (var i = options.Count - 1; i >= 0; i--)
+        {
+            if (TryParseVersionParts(options[i]) is not null)
+                return options[i];
+        }
+        return options[^1];
+    }
+
+    private static string? GetPreviousScriptFolder(List<string> options, string toBranch)
+    {
+        if (options.Count == 0 || string.IsNullOrWhiteSpace(toBranch))
+            return null;
+
+        var idx = options.FindIndex(x =>
+            string.Equals(x, toBranch, StringComparison.OrdinalIgnoreCase));
+        if (idx <= 0)
+            return null; // first item has no previous
+
+        return options[idx - 1];
+    }
+
+
+================================================================================
+CHANGE 7 — BrowseScripts — reload folders after pick
+================================================================================
+REPLACE BrowseScripts with:
+
+    private async Task BrowseScripts()
+    {
+        var folder = await FolderPicker.PickFolderAsync();
+        if (!string.IsNullOrEmpty(folder))
+        {
+            ScriptSource = folder;
+            await LoadDbScriptFoldersAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+
+================================================================================
+CHANGE 8 — BundleDbScriptsAsync — use UI From/To only (no appsettings)
+================================================================================
+KEEP your existing BundleDbScriptsAsync body.
+ONLY change the validation message and ensure From/To come from UI fields.
+
+Around your lines 1111–1118, use:
+
+    var fromBranch = DbRollupFromBranch?.Trim() ?? string.Empty;
+    var toBranch = DbRollupToBranch?.Trim() ?? string.Empty;
+
+    if (string.IsNullOrWhiteSpace(fromBranch) || string.IsNullOrWhiteSpace(toBranch))
+    {
+        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] Select To Branch (From is auto previous). Refresh Branches if empty.\r\n";
+        await InvokeAsync(StateHasChanged);
+        return;
+    }
+
+    // Optional: keep your from < to check, but use version compare if you want
+    // string.Compare is OK for equal-length versions; folders are already ordered.
+
+Do NOT read settings.Build.DbRollupFromBranch / DbRollupToBranch anywhere.
+
+Command stays:
+
+    var command = $"\"\"{exePath}\" -f \"{fromBranch}\" -t \"{toBranch}\"\"";
+
+
+================================================================================
+CHANGE 9 — Get latest button also pulls DB project
+================================================================================
+In GetLatestAndShowAppsAsync (existing Get latest), AFTER RepoRoot checkout
+(or at the start of get-latest work), ADD a call:
+
+    await GetLatestDbProjectAsync();
+
+Or paste this method and call it from GetLatestAndShowAppsAsync before/after apps:
+
+    private async Task<bool> GetLatestDbProjectAsync()
+    {
+        var settings = LoadAppSettings();
+        var scriptSource = ScriptSource?.Trim();
+        if (string.IsNullOrWhiteSpace(scriptSource))
+            scriptSource = settings?.Build?.DbScriptSource?.Trim();
+
+        if (string.IsNullOrWhiteSpace(scriptSource))
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] dbScriptSource / Script Source is empty — cannot get latest DB project.");
+            return false;
+        }
+
+        // Git repo root is parent of Scripts (…\gss-database), or ScriptSource itself if it has .git
+        var gitRoot = ResolveDbGitRoot(scriptSource);
+        if (string.IsNullOrWhiteSpace(gitRoot) || !Directory.Exists(gitRoot))
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] DB git root not found from Script Source: {scriptSource}");
+            return false;
+        }
+
+        var gitCmd = settings?.Build?.GitLatestCommand?.Trim();
+        if (string.IsNullOrWhiteSpace(gitCmd))
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] build:gitLatestCommand missing in appsettings.json (build-level, not under apps).");
+            return false;
+        }
+
+        AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Getting latest DB project...");
+        AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] DB Script Source: {scriptSource}");
+        AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] DB Git root: {gitRoot}");
+        AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Git: {gitCmd}");
+        await InvokeAsync(StateHasChanged);
+
+        var exit = await BuildService.RunCommandAsync(
+            gitRoot,
+            gitCmd,
+            line =>
+            {
+                lock (_pendingLogBuffer)
+                {
+                    _pendingLogBuffer.Append(line);
+                    if (!line.EndsWith('\n') && !line.EndsWith('\r'))
+                        _pendingLogBuffer.AppendLine();
+                }
+            },
+            CancellationToken.None);
+
+        FlushPendingLogs();
+
+        if (exit != 0)
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] DB get latest failed (exit {exit})");
+            await InvokeAsync(StateHasChanged);
+            return false;
+        }
+
+        AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] DB get latest OK");
+
+        // Refresh To/From folder list after pull (new folders may appear)
+        await LoadDbScriptFoldersAsync();
+        await InvokeAsync(StateHasChanged);
+        return true;
+    }
+
+    private static string ResolveDbGitRoot(string scriptSource)
+    {
+        var path = scriptSource.Trim().TrimEnd('\\', '/');
+        if (Directory.Exists(Path.Combine(path, ".git")) || File.Exists(Path.Combine(path, ".git")))
+            return path;
+
+        // …\gss-database\Scripts → …\gss-database
+        var parent = Directory.GetParent(path)?.FullName;
+        if (!string.IsNullOrWhiteSpace(parent)
+            && (Directory.Exists(Path.Combine(parent, ".git")) || File.Exists(Path.Combine(parent, ".git"))))
+            return parent;
+
+        // Fall back to parent even if .git check fails (bare / unusual setups)
+        return parent ?? path;
+    }
+
+
+Where to call it inside GetLatestAndShowAppsAsync
+-------------------------------------------------
+After RepoRoot validation (and optional app-repo checkout), BEFORE or AFTER
+the per-app loop — recommended BEFORE showing the grid:
+
+    // existing: checkout RepoFromBranch / per-app GetLatestFromRepoAsync ...
+
+    // NEW: DB project get latest (build:gitLatestCommand + dbScriptSource)
+    var dbOk = await GetLatestDbProjectAsync();
+    if (!dbOk)
+        AppendLog($"[{DateTime.Now:HH:mm:ss}] [WARN] DB project get latest did not succeed — continue with apps/UI.");
+
+If your Get latest currently only does apps, insert GetLatestDbProjectAsync()
+near the top of the try block after RepoRoot checks.
+
+
+================================================================================
+STEP-BY-STEP WORK ORDER
+================================================================================
+1. appsettings.json — CHANGE 1 (path, gitLatestCommand, delete From/To keys)
+2. DeploymentModels.cs — CHANGE 2 (BuildSettings.GitLatestCommand; delete From/To props)
+3. BuildTab fields — CHANGE 3 (keep local From/To UI fields)
+4. OnInitializedAsync — CHANGE 4 (remove From/To config lines; call LoadDbScriptFoldersAsync)
+5. DB ROLLUP UI — CHANGE 5 (From readonly, To dropdown)
+6. Paste LoadDbScriptFoldersAsync + helpers — CHANGE 6
+7. BrowseScripts — CHANGE 7
+8. BundleDbScriptsAsync validation message — CHANGE 8
+9. GetLatestDbProjectAsync + call from Get latest — CHANGE 9
+10. Rebuild + run
+
+
+================================================================================
+EXPECTED BEHAVIOR
+================================================================================
+On open / Refresh Branches:
+  Script Source = F:\GSS\AppDev\gss-database\Scripts
+  To Branch dropdown = 8.4 … 9.2, Prod
+  Default To = 9.2 (latest numeric)
+  From = 9.1 (readonly)
+
+Select To = 9.0 → From becomes 8.22 (previous in sorted list)
+Select To = 8.5 → From becomes 8.4
+Select To = 8.4 → From empty (no previous) → Bundle should error until To > first
+
+Click Get latest:
+  … existing app repo latest …
+  [INFO] Getting latest DB project...
+  [INFO] DB Script Source: F:\GSS\AppDev\gss-database\Scripts
+  [INFO] DB Git root: F:\GSS\AppDev\gss-database
+  [INFO] Git: git stash push ... && git fetch && git pull --ff-only && ...
+  [INFO] DB get latest OK
+  (folders refreshed)
+
+
+================================================================================
+CHECKLIST
+================================================================================
+[ ] appsettings dbScriptSource ends with \\Scripts
+[ ] appsettings build.gitLatestCommand exists (NOT under apps)
+[ ] appsettings has NO dbRollupFromBranch / dbRollupToBranch
+[ ] BuildSettings has GitLatestCommand; From/To props removed from model
+[ ] OnInitialized does NOT assign From/To from settings
+[ ] From Branch input is readonly
+[ ] To Branch dropdown changes From to previous folder
+[ ] LoadDbScriptFoldersAsync reads Directory.GetDirectories(ScriptSource)
+[ ] Get latest calls GetLatestDbProjectAsync (cwd = gss-database git root)
+[ ] Bundle Scripts still uses UI From/To with -f / -t
+
+
+================================================================================
+END
+================================================================================
