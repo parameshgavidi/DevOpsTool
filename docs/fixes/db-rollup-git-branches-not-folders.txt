@@ -1,0 +1,358 @@
+================================================================================
+FIX NOW — From/To show obj / Schema Objects / Scripts  →  real GIT branches
+Same loading as BEFORE (git branch -r), To=latest, From=previous readonly
+================================================================================
+
+WHAT YOU SEE (screenshot)
+-------------------------
+SCRIPT SOURCE: F:\GSS\AppDev\gss-database
+
+TO BRANCH dropdown:
+  obj
+  Schema Objects
+  Scripts          ← these are FOLDERS, not branches
+
+FROM BRANCH: Schema Objects
+
+That means BuildTab is still calling folder loading
+(LoadDbScriptFoldersAsync / Directory.GetDirectories) on the DB repo root.
+
+
+WHAT YOU WANT (previous behavior)
+---------------------------------
+Load GIT remote branches again (like old From Branch):
+
+  GSS8.7
+  GSSv7.7
+  ...
+  GSSv8.7S3
+  GSSv8.9S2     ← latest default To
+                ← previous = From (readonly)
+
+Command:  git branch -r
+Filter:   GSS* only
+Strip:    origin/
+
+
+================================================================================
+CHANGE 1 — DELETE folder loader (this is the bug)
+================================================================================
+In BuildTab.razor DELETE these if present:
+
+  - LoadDbScriptFoldersAsync
+  - CompareScriptFolderNames
+  - TryParseVersionParts
+  - PickLatestScriptFolder
+  - GetPreviousScriptFolder   (folder version — replace with branch version below)
+
+Also DELETE any call like:
+
+  await LoadDbScriptFoldersAsync();
+
+from OnInitialized / OnInitializedAsync / BrowseScripts / GetLatestDbProjectAsync.
+
+
+================================================================================
+CHANGE 2 — DB ROLLUP UI (keep From readonly + To dropdown)
+================================================================================
+From = readonly. To = select. Refresh calls LoadDbBranchesAsync (GIT).
+
+        <div class="form-group">
+            <label>Script Source</label>
+            <div class="input-with-button">
+                <input type="text" class="form-control" @bind="ScriptSource" readonly />
+                <button class="btn btn-secondary" @onclick="BrowseScripts">Browse</button>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>From Branch</label>
+            <input type="text" class="form-control" value="@DbRollupFromBranch" readonly
+                   placeholder="Previous of To Branch" />
+        </div>
+
+        <div class="form-group">
+            <label>To Branch</label>
+            @if (DbBranchOptions.Count > 0)
+            {
+                <select class="form-control" value="@DbRollupToBranch"
+                        @onchange="OnToBranchChanged">
+                    @foreach (var b in DbBranchOptions)
+                    {
+                        <option value="@b">@b</option>
+                    }
+                </select>
+            }
+            else
+            {
+                <input type="text" class="form-control" value="No branches loaded" readonly />
+            }
+        </div>
+
+        <div class="input-with-button">
+            <button class="btn btn-secondary"
+                    disabled="@_isLoadingBranches"
+                    @onclick="LoadDbBranchesAsync">
+                @(_isLoadingBranches ? "Loading..." : "Refresh Branches")
+            </button>
+            <button class="btn btn-success"
+                    @onclick="BundleDbScriptsAsync"
+                    disabled="@_isBundling">
+                Bundle Scripts
+            </button>
+        </div>
+
+
+================================================================================
+CHANGE 3 — PASTE LoadDbBranchesAsync (GIT — previous way)
+================================================================================
+Uses RepoRoot (gss-root) — SAME as the old working From Branch loader.
+Hardcoded "git branch -r" (no appsettings From/To / pull-command required).
+
+PASTE inside @code:
+
+    private async Task LoadDbBranchesAsync()
+    {
+        if (_isLoadingBranches)
+            return;
+
+        _isLoadingBranches = true;
+        try
+        {
+            // SAME as previous: list branches from Code Repo Root (gss-root)
+            var root = RepoRoot?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Repo Root not found: {root}. Set Repo Root first.");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            // Previous command — hardcoded, cmd-safe (NO --format quotes)
+            var command = "git branch -r";
+            var lines = new List<string>();
+
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Loading DB branches (git) from {root}...");
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Command: {command}");
+            await InvokeAsync(StateHasChanged);
+
+            var exit = await BuildService.RunCommandAsync(
+                root,
+                command,
+                line =>
+                {
+                    foreach (var raw in SplitBranchTokens(line))
+                    {
+                        var t = NormalizeBranchName(raw);
+                        if (string.IsNullOrWhiteSpace(t))
+                            continue;
+                        // ONLY GSS release branches (drops obj / Scripts / cmd junk)
+                        if (!t.StartsWith("GSS", StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        if (!lines.Contains(t, StringComparer.OrdinalIgnoreCase))
+                            lines.Add(t);
+                    }
+                },
+                CancellationToken.None);
+
+            if (exit != 0)
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Failed to list branches (exit {exit})");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            lines.Sort(StringComparer.OrdinalIgnoreCase);
+            DbBranchOptions = lines;
+
+            if (DbBranchOptions.Count == 0)
+            {
+                DbRollupToBranch = string.Empty;
+                DbRollupFromBranch = string.Empty;
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Parsed 0 GSS branches. Check Repo Root is a Git repo.");
+            }
+            else
+            {
+                // Default To = LATEST branch (last after sort)
+                var latest = DbBranchOptions[^1];
+                DbRollupToBranch = latest;
+                DbRollupFromBranch = GetPreviousBranch(DbBranchOptions, latest) ?? string.Empty;
+
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Loaded {DbBranchOptions.Count} branch(es). To={DbRollupToBranch}, From={DbRollupFromBranch}");
+                var preview = Math.Min(8, DbBranchOptions.Count);
+                for (var i = 0; i < preview; i++)
+                    AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO]   [{i}] {DbBranchOptions[i]}");
+            }
+
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Load branches failed: {ex.Message}");
+            await InvokeAsync(StateHasChanged);
+        }
+        finally
+        {
+            _isLoadingBranches = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private Task OnToBranchChanged(ChangeEventArgs e)
+    {
+        var to = e.Value?.ToString()?.Trim() ?? string.Empty;
+        DbRollupToBranch = to;
+        DbRollupFromBranch = GetPreviousBranch(DbBranchOptions, to) ?? string.Empty;
+        AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] To Branch={DbRollupToBranch} → From Branch={DbRollupFromBranch}");
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private static string? GetPreviousBranch(List<string> options, string toBranch)
+    {
+        if (options.Count == 0 || string.IsNullOrWhiteSpace(toBranch))
+            return null;
+
+        var idx = options.FindIndex(x =>
+            string.Equals(x, toBranch, StringComparison.OrdinalIgnoreCase));
+        if (idx <= 0)
+            return null;
+
+        return options[idx - 1];
+    }
+
+
+If SplitBranchTokens / NormalizeBranchName are MISSING, paste from
+docs/fixes/loaddbbranchesasync-full-method.txt (helpers section) OR:
+
+    private static IEnumerable<string> SplitBranchTokens(string? line)
+    {
+        var s = (line ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(s))
+            yield break;
+        if (s.StartsWith(">>>", StringComparison.Ordinal))
+            yield break;
+
+        if (s.Contains('\n') || s.Contains('\r'))
+        {
+            foreach (var part in s.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                foreach (var token in SplitBranchTokens(part))
+                    yield return token;
+            }
+            yield break;
+        }
+
+        if (s.Contains('\'') || s.Contains('"'))
+        {
+            foreach (var p in s.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries))
+                yield return p;
+            yield break;
+        }
+
+        yield return s;
+    }
+
+    private static string NormalizeBranchName(string raw)
+    {
+        var t = (raw ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(t))
+            return string.Empty;
+
+        if (t.StartsWith("*"))
+            t = t.TrimStart('*').Trim();
+
+        t = t.Trim().Trim('\'', '"').Trim();
+
+        if (string.IsNullOrWhiteSpace(t))
+            return string.Empty;
+        if (string.Equals(t, "origin", StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+        if (t.Contains("HEAD", StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+
+        while (t.StartsWith("origin/", StringComparison.OrdinalIgnoreCase))
+            t = t.Substring("origin/".Length).Trim().Trim('\'', '"').Trim();
+
+        return t.Trim();
+    }
+
+
+================================================================================
+CHANGE 4 — Wire init / Browse / Refresh to LoadDbBranchesAsync
+================================================================================
+OnInitializedAsync (or OnAfterRenderAsync firstRender):
+
+    if (DbBranchOptions.Count == 0
+        && !string.IsNullOrWhiteSpace(RepoRoot)
+        && Directory.Exists(RepoRoot))
+    {
+        await LoadDbBranchesAsync();
+    }
+
+BrowseScripts — do NOT call folder loader. Keep:
+
+    private async Task BrowseScripts()
+    {
+        var folder = await FolderPicker.PickFolderAsync();
+        if (!string.IsNullOrEmpty(folder))
+        {
+            ScriptSource = folder;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+Refresh Branches button → @onclick="LoadDbBranchesAsync"
+
+
+================================================================================
+CHANGE 5 — Keep these (do not undo)
+================================================================================
+[ ] Still NO dbRollupFromBranch / dbRollupToBranch in appsettings
+[ ] Still do NOT load From/To from appsettings in OnInitialized
+[ ] From Branch stays readonly; To drives previous From
+[ ] Get latest DB project (build:gitLatestCommand) can stay as in
+    docs/fixes/db-scripts-folders-from-to-get-latest.txt CHANGE 9
+[ ] Bundle Scripts still uses UI DbRollupFromBranch / DbRollupToBranch
+
+
+================================================================================
+DO NOT
+================================================================================
+[ ] Do NOT use Directory.GetDirectories for From/To
+[ ] Do NOT load options from Script Source folders (obj / Scripts / Schema Objects)
+[ ] Do NOT use git branch -r --format='...'  (breaks under cmd.exe)
+[ ] Do NOT put From/To back into appsettings
+
+
+================================================================================
+VERIFY after Rebuild + Refresh Branches
+================================================================================
+OUTPUT LOG must show:
+
+  [INFO] Loading DB branches (git) from F:\GSS\AppDev\gss-root...
+  [INFO] Command: git branch -r
+  [INFO] Loaded N branch(es). To=GSSv8.9S2, From=GSSv8.7S3   (example)
+  [INFO]   [0] GSS8.7
+  [INFO]   [1] GSSv7.7
+  ...
+
+TO BRANCH dropdown must show GSS* names — NOT obj / Schema Objects / Scripts.
+
+If you still see folders → Search BuildTab.razor for GetDirectories or
+LoadDbScriptFoldersAsync — delete it — you still have the folder loader.
+
+
+================================================================================
+CHECKLIST
+================================================================================
+[ ] Deleted LoadDbScriptFoldersAsync / GetDirectories From/To logic
+[ ] Pasted LoadDbBranchesAsync (git branch -r on RepoRoot)
+[ ] Refresh Branches → LoadDbBranchesAsync
+[ ] To = latest GSS branch; From = previous (readonly)
+[ ] Changing To updates From
+[ ] No folder names in dropdown
+
+
+================================================================================
+END
+================================================================================

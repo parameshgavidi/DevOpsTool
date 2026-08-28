@@ -10,11 +10,20 @@ GOAL
    using build:gitLatestCommand (NOT inside apps[])
 3. REMOVE dbRollupFromBranch / dbRollupToBranch from appsettings AND
    remove loading them from OnInitialized / BuildSettings
-4. Populate To/From from FOLDERS under Script Source (not git branches):
-     8.4, 8.5, 8.5.1, 8.6, 8.7, 8.8, 8.8.1, 8.9, 8.21, 8.22, 9.0, 9.1, 9.2, Prod
-5. To Branch = dropdown (default = latest version folder, e.g. 9.2)
-6. From Branch = READONLY previous folder (e.g. To=9.2 → From=9.1)
+4. From/To BRANCHES = GIT remotes again (NOT Script folders)
+   → USE: docs/fixes/db-rollup-git-branches-not-folders.txt
+   (fixes dropdown showing obj / Schema Objects / Scripts)
+5. To Branch = dropdown (default = latest GSS branch)
+6. From Branch = READONLY previous branch
 7. Changing To Branch always updates From Branch to the previous entry
+
+IMPORTANT — From/To loading
+---------------------------
+Do NOT use Directory.GetDirectories / LoadDbScriptFoldersAsync for From/To.
+That caused your screenshot (obj, Schema Objects, Scripts).
+
+Paste the GIT loader from:
+  docs/fixes/db-rollup-git-branches-not-folders.txt
 
 
 YOUR FOLDER LAYOUT (confirmed)
@@ -22,11 +31,11 @@ YOUR FOLDER LAYOUT (confirmed)
   F:\GSS\AppDev\gss-database\          ← git repo root (.git lives here)
     Scripts\                           ← Script Source / dbScriptSource
       8.4\
-      8.5\
       ...
-      9.1\
-      9.2\                             ← latest version (default To)
-      Prod\
+      9.2\
+
+Script folders are for DB scripts on disk — NOT for From/To dropdown.
+From/To come from git branch -r on RepoRoot (gss-root).
 
 
 ================================================================================

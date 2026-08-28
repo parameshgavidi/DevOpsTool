@@ -4,28 +4,22 @@ SUPERSEDED for From/To source — use folder-based guide instead
 
 STATUS
 ------
-From/To no longer come from git remotes or appsettings dbRollupFromBranch /
-dbRollupToBranch.
+From/To are UI-only (not appsettings). Load them as GIT branches again.
 
-USE THIS FILE INSTEAD:
+IF DROPDOWN SHOWS: obj / Schema Objects / Scripts
+→ You are loading folders. FIX:
+    docs/fixes/db-rollup-git-branches-not-folders.txt
 
+Full DB get-latest + remove From/To config:
     docs/fixes/db-scripts-folders-from-to-get-latest.txt
-
-That guide:
-  - Script Source = F:\GSS\AppDev\gss-database\Scripts (dbScriptSource)
-  - Loads folder names (8.4 … 9.2, Prod) into To Branch dropdown
-  - To = latest by default; From = previous (readonly)
-  - Removes dbRollupFromBranch / dbRollupToBranch from appsettings + model load
-  - Get latest also pulls DB project with build-level gitLatestCommand
+  (From/To loading section superseded by git-branches-not-folders)
 
 
-OLD CONTENT BELOW (git branch -r From/To) — DO NOT USE FOR NEW WORK
+OLD CONTENT BELOW — DO NOT USE FOR NEW WORK
 ================================================================================
 
-See git history if you need the previous git-remote dropdown steps.
-For current paste-ready steps, open:
-
-    docs/fixes/db-scripts-folders-from-to-get-latest.txt
+See:
+  docs/fixes/db-rollup-git-branches-not-folders.txt
 
 
 ================================================================================
