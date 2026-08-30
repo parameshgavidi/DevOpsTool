@@ -1,7 +1,12 @@
 ================================================================================
 FIX NOW — From/To show obj / Schema Objects / Scripts  →  real GIT branches
-Same loading as BEFORE (git branch -r), To=latest, From=previous readonly
+Same loading as BEFORE (git branch -r), To=latest, From=previous
 ================================================================================
+
+AFTER branches load correctly, ALSO do folder create / get-latest on load
+and when From/To dropdowns change (From must be < To):
+  docs/fixes/db-rollup-from-to-folder-create-getlatest.txt
+
 
 WHAT YOU SEE (screenshot)
 -------------------------

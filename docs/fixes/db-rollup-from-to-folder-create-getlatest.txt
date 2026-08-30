@@ -1,0 +1,550 @@
+================================================================================
+USE THIS FILE — DB ROLLUP: From/To folders create OR get latest
+On load + when From/To dropdown changes + From must be < To
+BuildTab.razor — paste-ready
+================================================================================
+
+GOAL (matches your screenshots)
+-------------------------------
+1. On load:
+   - Load latest GSS git branches into From/To dropdowns
+   - For selected From Branch + To Branch:
+       folder missing  → CREATE  ScriptSource\{branch}
+       folder exists   → GET LATEST for that branch into the folder
+
+2. From Branch and To Branch are SEPARATE folders.
+   When EITHER dropdown changes → create or get-latest for THAT branch only.
+
+3. From Branch must be LESS THAN To Branch
+   (example: GSSv9.2S1 < GSSv9.2S2). Block Bundle + warn on change.
+
+YOUR FOLDER LAYOUT (expected)
+-----------------------------
+Script Source (parent of branch folders), e.g.:
+
+  F:\GSS\DBRollupScriptBuilder\          ← Script Source
+    GSSv9.1S1\                           ← From Branch folder
+    GSSv9.1S2\                           ← To Branch folder
+    GSSv9.2S1\
+    GSSv9.2S2\
+    net10.0\                             ← exe build output (ignore)
+
+If Script Source only has net10.0 today, this guide CREATES the GSSv*
+folders when you select From/To (or on first load after branches fill).
+
+PREREQ
+------
+Keep git branch loading from:
+  docs/fixes/db-rollup-git-branches-not-folders.txt
+  (LoadDbBranchesAsync + SplitBranchTokens + NormalizeBranchName)
+
+Do NOT go back to Directory.GetDirectories for the dropdown options.
+Dropdowns stay GIT branches; folders are created UNDER Script Source.
+
+
+================================================================================
+CHANGE 1 — UI: BOTH From and To are dropdowns (not From readonly)
+================================================================================
+REPLACE your DB ROLLUP From/To markup with:
+
+        <div class="form-group">
+            <label>Script Source</label>
+            <div class="input-with-button">
+                <input type="text" class="form-control" @bind="ScriptSource" readonly />
+                <button class="btn btn-secondary" @onclick="BrowseScripts">Browse</button>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>From Branch</label>
+            @if (DbBranchOptions.Count > 0)
+            {
+                <select class="form-control" value="@DbRollupFromBranch"
+                        @onchange="OnFromBranchChanged">
+                    @foreach (var b in DbBranchOptions)
+                    {
+                        <option value="@b">@b</option>
+                    }
+                </select>
+            }
+            else
+            {
+                <input type="text" class="form-control" value="No branches loaded" readonly />
+            }
+        </div>
+
+        <div class="form-group">
+            <label>To Branch</label>
+            @if (DbBranchOptions.Count > 0)
+            {
+                <select class="form-control" value="@DbRollupToBranch"
+                        @onchange="OnToBranchChanged">
+                    @foreach (var b in DbBranchOptions)
+                    {
+                        <option value="@b">@b</option>
+                    }
+                </select>
+            }
+            else
+            {
+                <input type="text" class="form-control" value="No branches loaded" readonly />
+            }
+        </div>
+
+        <div class="input-with-button">
+            <button class="btn btn-secondary"
+                    disabled="@_isLoadingBranches"
+                    @onclick="LoadDbBranchesAsync">
+                @(_isLoadingBranches ? "Loading..." : "Refresh Branches")
+            </button>
+            <button class="btn btn-success"
+                    @onclick="BundleDbScriptsAsync"
+                    disabled="@(_isBundling || !IsFromLessThanTo())">
+                Bundle Scripts
+            </button>
+        </div>
+
+Notes:
+- From and To are BOTH selectable
+- Refresh = LoadDbBranchesAsync → sets defaults → EnsureFromAndToBranchFoldersAsync
+- Bundle disabled when From is not < To
+
+
+================================================================================
+CHANGE 2 — After LoadDbBranchesAsync sets defaults, ensure folders
+================================================================================
+FIND the end of the success branch inside LoadDbBranchesAsync where you set:
+
+                var latest = DbBranchOptions[^1];
+                DbRollupToBranch = latest;
+                DbRollupFromBranch = GetPreviousBranch(DbBranchOptions, latest) ?? string.Empty;
+
+REPLACE that block with:
+
+                var latest = DbBranchOptions[^1];
+                DbRollupToBranch = latest;
+                DbRollupFromBranch = GetPreviousBranch(DbBranchOptions, latest) ?? string.Empty;
+
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Loaded {DbBranchOptions.Count} branch(es). To={DbRollupToBranch}, From={DbRollupFromBranch}");
+                var preview = Math.Min(8, DbBranchOptions.Count);
+                for (var i = 0; i < preview; i++)
+                    AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO]   [{i}] {DbBranchOptions[i]}");
+
+                // On load: create folders OR get latest for From + To (separate)
+                await EnsureFromAndToBranchFoldersAsync();
+
+And REMOVE the duplicate AppendLog / preview loop that was already there
+(so you only log once).
+
+
+Refresh button + init should call LoadDbBranchesAsync (which already
+calls EnsureFromAndToBranchFoldersAsync after defaults).
+
+Optional thin wrapper (same thing — do NOT call Ensure twice):
+
+    private Task LoadDbBranchesThenEnsureFoldersAsync()
+        => LoadDbBranchesAsync();
+
+OnInitializedAsync / OnAfterRenderAsync(firstRender) — call:
+
+    if (DbBranchOptions.Count == 0
+        && !string.IsNullOrWhiteSpace(RepoRoot)
+        && Directory.Exists(RepoRoot))
+    {
+        await LoadDbBranchesAsync(); // ends with EnsureFromAndToBranchFoldersAsync
+    }
+
+Refresh Branches @onclick = "LoadDbBranchesAsync"
+(or LoadDbBranchesThenEnsureFoldersAsync — identical).
+
+
+================================================================================
+CHANGE 3 — Dropdown change handlers (separate From / To folders)
+================================================================================
+REPLACE OnToBranchChanged (and ADD OnFromBranchChanged).
+DELETE any handler that auto-sets From = previous of To.
+
+    private async Task OnFromBranchChanged(ChangeEventArgs e)
+    {
+        var from = e.Value?.ToString()?.Trim() ?? string.Empty;
+        DbRollupFromBranch = from;
+
+        if (!IsFromLessThanTo())
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] From Branch must be less than To Branch. From={DbRollupFromBranch}, To={DbRollupToBranch}");
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        // From Branch folder only — create or get latest
+        await EnsureDbBranchFolderAsync(DbRollupFromBranch);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OnToBranchChanged(ChangeEventArgs e)
+    {
+        var to = e.Value?.ToString()?.Trim() ?? string.Empty;
+        DbRollupToBranch = to;
+
+        if (!IsFromLessThanTo())
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] From Branch must be less than To Branch. From={DbRollupFromBranch}, To={DbRollupToBranch}");
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        // To Branch folder only — create or get latest
+        await EnsureDbBranchFolderAsync(DbRollupToBranch);
+        await InvokeAsync(StateHasChanged);
+    }
+
+
+================================================================================
+CHANGE 4 — Ensure folders (create OR get latest)
+================================================================================
+PASTE these methods inside @code:
+
+    private async Task EnsureFromAndToBranchFoldersAsync()
+    {
+        if (!IsFromLessThanTo())
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] From Branch must be less than To Branch. From={DbRollupFromBranch}, To={DbRollupToBranch}");
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        // Separate folders — From then To
+        if (!string.IsNullOrWhiteSpace(DbRollupFromBranch))
+            await EnsureDbBranchFolderAsync(DbRollupFromBranch);
+
+        if (!string.IsNullOrWhiteSpace(DbRollupToBranch)
+            && !string.Equals(DbRollupToBranch, DbRollupFromBranch, StringComparison.OrdinalIgnoreCase))
+            await EnsureDbBranchFolderAsync(DbRollupToBranch);
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    /// <summary>
+    /// Under Script Source: if {branch} folder missing → create + get latest;
+    /// if it exists → get latest only.
+    /// Example: F:\GSS\DBRollupScriptBuilder\GSSv9.2S1
+    /// </summary>
+    private async Task EnsureDbBranchFolderAsync(string branch)
+    {
+        var name = branch?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(name))
+            return;
+
+        var scriptRoot = ScriptSource?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(scriptRoot))
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Script Source is empty — cannot create/get branch folder for {name}");
+            return;
+        }
+
+        if (!Directory.Exists(scriptRoot))
+        {
+            try
+            {
+                Directory.CreateDirectory(scriptRoot);
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Created Script Source: {scriptRoot}");
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Cannot create Script Source {scriptRoot}: {ex.Message}");
+                return;
+            }
+        }
+
+        var folder = Path.Combine(scriptRoot, name);
+        var created = false;
+
+        if (!Directory.Exists(folder))
+        {
+            Directory.CreateDirectory(folder);
+            created = true;
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Created branch folder: {folder}");
+        }
+        else
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Branch folder exists — getting latest: {folder}");
+        }
+
+        await GetLatestIntoBranchFolderAsync(name, folder, created);
+    }
+
+    /// <summary>
+    /// Get latest code for one branch into its Script Source folder.
+    /// Prefers git worktree from RepoRoot (gss-root). Falls back to
+    /// fetch/pull if the folder already has its own .git.
+    /// </summary>
+    private async Task GetLatestIntoBranchFolderAsync(string branch, string folder, bool justCreated)
+    {
+        var repoRoot = RepoRoot?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot))
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [WARN] Repo Root missing — folder ready at {folder} but skipped git get-latest for {branch}");
+            return;
+        }
+
+        var folderGit = Path.Combine(folder, ".git");
+        var hasGit = Directory.Exists(folderGit) || File.Exists(folderGit);
+
+        string command;
+        string cwd;
+
+        if (hasGit)
+        {
+            // Existing checkout/worktree → pull latest on that branch
+            command = $"git fetch origin && git checkout {branch} && git pull --ff-only";
+            cwd = folder;
+        }
+        else if (justCreated || !Directory.EnumerateFileSystemEntries(folder).Any())
+        {
+            // Empty / just-created folder → add as worktree of RepoRoot branch
+            // (worktree fails if branch already checked out elsewhere — then clone)
+            command =
+                $"git fetch origin && " +
+                $"(git worktree add \"{folder}\" \"{branch}\" || " +
+                $"git clone --branch \"{branch}\" --single-branch \"{repoRoot}\" \"{folder}\")";
+            cwd = repoRoot;
+
+            // worktree add wants the target path to NOT exist as a normal dir.
+            // If we already CreateDirectory'd an empty folder, remove it first.
+            try
+            {
+                if (Directory.Exists(folder)
+                    && !Directory.EnumerateFileSystemEntries(folder).Any())
+                {
+                    Directory.Delete(folder);
+                }
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [WARN] Could not clear empty folder before worktree: {ex.Message}");
+            }
+        }
+        else
+        {
+            // Folder has files but no .git — leave contents; do not wipe
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [WARN] Folder has files but no .git — skipped get-latest: {folder}");
+            return;
+        }
+
+        AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Get latest branch '{branch}'...");
+        AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Cwd: {cwd}");
+        AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Git: {command}");
+        await InvokeAsync(StateHasChanged);
+
+        var exit = await BuildService.RunCommandAsync(
+            cwd,
+            command,
+            line =>
+            {
+                lock (_pendingLogBuffer)
+                {
+                    _pendingLogBuffer.Append(line);
+                    if (!line.EndsWith('\n') && !line.EndsWith('\r'))
+                        _pendingLogBuffer.AppendLine();
+                }
+            },
+            CancellationToken.None);
+
+        FlushPendingLogs();
+
+        if (exit != 0)
+        {
+            // Ensure folder still exists even if git failed
+            Directory.CreateDirectory(folder);
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Get latest failed for {branch} (exit {exit}). Folder kept at {folder}");
+            return;
+        }
+
+        AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Get latest OK for {branch} → {folder}");
+    }
+
+
+================================================================================
+CHANGE 5 — From must be less than To (compare GSSv9.2S1 style names)
+================================================================================
+PASTE helpers:
+
+    private bool IsFromLessThanTo()
+    {
+        var from = DbRollupFromBranch?.Trim() ?? string.Empty;
+        var to = DbRollupToBranch?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(from) || string.IsNullOrWhiteSpace(to))
+            return false;
+
+        return CompareGssBranchNames(from, to) < 0;
+    }
+
+    /// <summary>
+    /// GSSv9.1S1 &lt; GSSv9.1S2 &lt; GSSv9.2S1 &lt; GSSv9.2S2
+    /// Strips GSS / GSSv prefix, compares version then sprint number.
+    /// </summary>
+    private static int CompareGssBranchNames(string a, string b)
+    {
+        var pa = ParseGssBranch(a);
+        var pb = ParseGssBranch(b);
+        if (pa is null && pb is null)
+            return string.Compare(a, b, StringComparison.OrdinalIgnoreCase);
+        if (pa is null) return -1;
+        if (pb is null) return 1;
+
+        var n = Math.Max(pa.VersionParts.Count, pb.VersionParts.Count);
+        for (var i = 0; i < n; i++)
+        {
+            var x = i < pa.VersionParts.Count ? pa.VersionParts[i] : 0;
+            var y = i < pb.VersionParts.Count ? pb.VersionParts[i] : 0;
+            if (x != y) return x.CompareTo(y);
+        }
+
+        return pa.Sprint.CompareTo(pb.Sprint);
+    }
+
+    private sealed class GssBranchParts
+    {
+        public List<int> VersionParts { get; init; } = new();
+        public int Sprint { get; init; }
+    }
+
+    private static GssBranchParts? ParseGssBranch(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return null;
+
+        var t = name.Trim();
+        if (t.StartsWith("GSSv", StringComparison.OrdinalIgnoreCase))
+            t = t.Substring(4);
+        else if (t.StartsWith("GSS", StringComparison.OrdinalIgnoreCase))
+            t = t.Substring(3);
+
+        t = t.Trim();
+        if (string.IsNullOrWhiteSpace(t))
+            return null;
+
+        // Split sprint: 9.2S1 → version=9.2, sprint=1
+        var sprint = 0;
+        var sIdx = t.LastIndexOf('S');
+        if (sIdx < 0) sIdx = t.LastIndexOf('s');
+        string versionText;
+        if (sIdx > 0 && sIdx < t.Length - 1
+            && int.TryParse(t[(sIdx + 1)..], out sprint))
+        {
+            versionText = t[..sIdx];
+        }
+        else
+        {
+            versionText = t;
+            sprint = 0;
+        }
+
+        var parts = new List<int>();
+        foreach (var p in versionText.Split('.', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!int.TryParse(p, out var n))
+                return null;
+            parts.Add(n);
+        }
+
+        if (parts.Count == 0)
+            return null;
+
+        return new GssBranchParts { VersionParts = parts, Sprint = sprint };
+    }
+
+
+================================================================================
+CHANGE 6 — BundleDbScriptsAsync validation (From < To)
+================================================================================
+Near the top of BundleDbScriptsAsync, AFTER you read fromBranch / toBranch,
+ADD:
+
+    if (!IsFromLessThanTo())
+    {
+        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] From Branch must be less than To Branch. From={fromBranch}, To={toBranch}\r\n";
+        await InvokeAsync(StateHasChanged);
+        return;
+    }
+
+Keep the existing empty-check and exe command:
+
+    var command = $"\"\"{exePath}\" -f \"{fromBranch}\" -t \"{toBranch}\"\"";
+
+
+================================================================================
+CHANGE 7 — BrowseScripts: after pick, re-ensure current From/To folders
+================================================================================
+REPLACE BrowseScripts with:
+
+    private async Task BrowseScripts()
+    {
+        var folder = await FolderPicker.PickFolderAsync();
+        if (!string.IsNullOrEmpty(folder))
+        {
+            ScriptSource = folder;
+            await EnsureFromAndToBranchFoldersAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+
+================================================================================
+STEP-BY-STEP WORK ORDER
+================================================================================
+1. Keep LoadDbBranchesAsync (git) — do NOT use folder names for dropdown
+2. CHANGE 1 — UI both dropdowns; Refresh → LoadDbBranchesAsync
+3. CHANGE 2 — after defaults set, call EnsureFromAndToBranchFoldersAsync
+4. CHANGE 3 — OnFromBranchChanged / OnToBranchChanged (separate folders)
+5. CHANGE 4 — EnsureDbBranchFolderAsync + GetLatestIntoBranchFolderAsync
+6. CHANGE 5 — IsFromLessThanTo / CompareGssBranchNames
+7. CHANGE 6 — Bundle validates From < To
+8. CHANGE 7 — BrowseScripts re-ensures folders
+9. Rebuild + run
+
+
+================================================================================
+EXPECTED BEHAVIOR
+================================================================================
+On open / Refresh Branches:
+  [INFO] Loading DB branches (git) from F:\GSS\AppDev\gss-root...
+  [INFO] Loaded N branch(es). To=GSSv9.2S2, From=GSSv9.2S1
+  [INFO] Created branch folder: F:\GSS\DBRollupScriptBuilder\GSSv9.2S1
+     (or) Branch folder exists — getting latest: ...
+  [INFO] Get latest OK for GSSv9.2S1 → ...
+  [INFO] Created branch folder: F:\GSS\DBRollupScriptBuilder\GSSv9.2S2
+  [INFO] Get latest OK for GSSv9.2S2 → ...
+
+Change From dropdown → only From folder create/get-latest
+Change To dropdown → only To folder create/get-latest
+
+Select From=GSSv9.2S2 and To=GSSv9.2S1:
+  [ERROR] From Branch must be less than To Branch...
+  Bundle Scripts stays disabled
+
+Explorer under Script Source shows:
+  GSSv9.1S1
+  GSSv9.1S2
+  GSSv9.2S1
+  GSSv9.2S2
+  (plus net10.0 if that is your exe output)
+
+
+================================================================================
+CHECKLIST
+================================================================================
+[ ] From and To are BOTH dropdowns (not From readonly)
+[ ] On load: LoadDbBranchesAsync then Ensure From + To folders
+[ ] From dropdown change → EnsureDbBranchFolderAsync(From) only
+[ ] To dropdown change → EnsureDbBranchFolderAsync(To) only
+[ ] Missing folder → CreateDirectory + get latest
+[ ] Existing folder → get latest (git pull / worktree)
+[ ] From must be < To (GSSv9.2S1 < GSSv9.2S2)
+[ ] Bundle Scripts blocked when From >= To
+[ ] Dropdown options still come from git (not Script Source folder names)
+
+
+================================================================================
+END
+================================================================================

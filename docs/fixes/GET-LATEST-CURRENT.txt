@@ -35,8 +35,12 @@ WHAT TO DO (summary)
 
 3. Click Build       → build only. NO git. NO GetLatestFromRepoAsync.
 
-DB ROLLUP From/To (folders under Scripts, not appsettings):
-  docs/fixes/db-scripts-folders-from-to-get-latest.txt
+DB ROLLUP From/To:
+  Dropdowns = git branches:
+    docs/fixes/db-rollup-git-branches-not-folders.txt
+  On load / dropdown change → create ScriptSource\{branch} OR get latest;
+  From must be < To; both dropdowns:
+    docs/fixes/db-rollup-from-to-folder-create-getlatest.txt
 
 
 --------------------------------------------------------------------------------

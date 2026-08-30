@@ -1,25 +1,21 @@
 ================================================================================
-SUPERSEDED for From/To source — use folder-based guide instead
+DB ROLLUP From/To — current pointer
 ================================================================================
 
 STATUS
 ------
-From/To are UI-only (not appsettings). Load them as GIT branches again.
+From/To are UI-only (not appsettings).
+
+1) Dropdown options = GIT branches (GSS* from RepoRoot)
+   → docs/fixes/db-rollup-git-branches-not-folders.txt
+
+2) NEW — On load + dropdown change: create branch folders under Script Source
+   OR get latest if the folder already exists. From must be < To.
+   BOTH From and To are dropdowns (separate folders).
+   → docs/fixes/db-rollup-from-to-folder-create-getlatest.txt   ← USE THIS
 
 IF DROPDOWN SHOWS: obj / Schema Objects / Scripts
-→ You are loading folders. FIX:
-    docs/fixes/db-rollup-git-branches-not-folders.txt
-
-Full DB get-latest + remove From/To config:
-    docs/fixes/db-scripts-folders-from-to-get-latest.txt
-  (From/To loading section superseded by git-branches-not-folders)
-
-
-OLD CONTENT BELOW — DO NOT USE FOR NEW WORK
-================================================================================
-
-See:
-  docs/fixes/db-rollup-git-branches-not-folders.txt
+→ You are loading folders into the dropdown. FIX with (1) first, then (2).
 
 
 ================================================================================
