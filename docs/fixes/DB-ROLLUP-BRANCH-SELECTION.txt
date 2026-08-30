@@ -4,18 +4,20 @@ DB ROLLUP From/To — current pointer
 
 STATUS
 ------
-From/To are UI-only (not appsettings).
+Two different paths — do not mix them:
 
-1) Dropdown options = GIT branches (GSS* from RepoRoot)
+1) dbScriptSource = F:\GSS\AppDev\gss-database
+   → Get latest gss-database only (build:gitLatestCommand)
+
+2) dbRollupBranchRoot = F:\GSS\DBRollupScript
+   → From Branch / To Branch folders live here
+   → On load + dropdown change: create folder OR git pull that branch
+   → From must be < To
+   → Paste guide:
+      docs/fixes/db-rollup-from-to-folder-create-getlatest.txt   ← USE THIS
+
+3) Dropdown options = GIT branches (GSS* from RepoRoot / gss-root)
    → docs/fixes/db-rollup-git-branches-not-folders.txt
-
-2) NEW — On load + dropdown change: create branch folders under Script Source
-   OR get latest if the folder already exists. From must be < To.
-   BOTH From and To are dropdowns (separate folders).
-   → docs/fixes/db-rollup-from-to-folder-create-getlatest.txt   ← USE THIS
-
-IF DROPDOWN SHOWS: obj / Schema Objects / Scripts
-→ You are loading folders into the dropdown. FIX with (1) first, then (2).
 
 
 ================================================================================

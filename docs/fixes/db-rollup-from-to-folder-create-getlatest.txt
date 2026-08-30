@@ -1,57 +1,125 @@
 ================================================================================
-USE THIS FILE — DB ROLLUP: From/To folders create OR get latest
-On load + when From/To dropdown changes + From must be < To
-BuildTab.razor — paste-ready
+USE THIS FILE — DB ROLLUP: separate branch-folder root + create OR pull
+dbScriptSource = gss-database get-latest ONLY
+dbRollupBranchRoot = F:\GSS\DBRollupScript  (From/To folders live here)
+BuildTab.razor + appsettings.json + DeploymentModels.cs — paste-ready
 ================================================================================
 
-GOAL (matches your screenshots)
--------------------------------
-1. On load:
-   - Load latest GSS git branches into From/To dropdowns
-   - For selected From Branch + To Branch:
-       folder missing  → CREATE  ScriptSource\{branch}
-       folder exists   → GET LATEST for that branch into the folder
+GOAL (your clarification)
+-------------------------
+1. dbScriptSource (F:\GSS\AppDev\gss-database)
+   → ONLY for Get latest gss-database (build:gitLatestCommand)
+   → Do NOT put From/To branch folders under this path
 
-2. From Branch and To Branch are SEPARATE folders.
-   When EITHER dropdown changes → create or get-latest for THAT branch only.
+2. NEW path dbRollupBranchRoot = F:\GSS\DBRollupScript
+   → Parent folder for From Branch and To Branch folders
+   → On load / when From or To dropdown changes:
+        folder missing  → CREATE  F:\GSS\DBRollupScript\{branch}
+        folder exists   → git PULL / checkout that branch into the folder
 
-3. From Branch must be LESS THAN To Branch
-   (example: GSSv9.2S1 < GSSv9.2S2). Block Bundle + warn on change.
+3. From and To are SEPARATE folders under dbRollupBranchRoot
+4. From Branch must be LESS THAN To Branch (GSSv9.2S1 < GSSv9.2S2)
 
-YOUR FOLDER LAYOUT (expected)
------------------------------
-Script Source (parent of branch folders), e.g.:
 
-  F:\GSS\DBRollupScriptBuilder\          ← Script Source
-    GSSv9.1S1\                           ← From Branch folder
-    GSSv9.1S2\                           ← To Branch folder
-    GSSv9.2S1\
-    GSSv9.2S2\
-    net10.0\                             ← exe build output (ignore)
+FOLDER LAYOUT
+-------------
+  F:\GSS\AppDev\gss-database\            ← dbScriptSource (get latest DB repo)
+  F:\GSS\DBRollupScript\                 ← dbRollupBranchRoot (NEW)
+    GSSv9.2S1\                           ← From Branch working copy
+    GSSv9.2S2\                           ← To Branch working copy
 
-If Script Source only has net10.0 today, this guide CREATES the GSSv*
-folders when you select From/To (or on first load after branches fill).
+Git source for From/To pulls = gss-database (dbScriptSource), NOT gss-root.
+
 
 PREREQ
 ------
-Keep git branch loading from:
+Keep git branch dropdown loading from:
   docs/fixes/db-rollup-git-branches-not-folders.txt
-  (LoadDbBranchesAsync + SplitBranchTokens + NormalizeBranchName)
+  (LoadDbBranchesAsync lists branches from RepoRoot / gss-root)
 
-Do NOT go back to Directory.GetDirectories for the dropdown options.
-Dropdowns stay GIT branches; folders are created UNDER Script Source.
+Keep DB get-latest (gss-database) from:
+  docs/fixes/db-scripts-folders-from-to-get-latest.txt  CHANGE 9
+  (GetLatestDbProjectAsync uses dbScriptSource + build:gitLatestCommand)
 
 
 ================================================================================
-CHANGE 1 — UI: BOTH From and To are dropdowns (not From readonly)
+CHANGE 0 — appsettings.json (ADD dbRollupBranchRoot; keep dbScriptSource)
 ================================================================================
-REPLACE your DB ROLLUP From/To markup with:
+Under "build", KEEP dbScriptSource for gss-database.
+ADD dbRollupBranchRoot for From/To folders:
+
+  {
+    "build": {
+      "repoRoot": "F:\\GSS\\AppDev\\gss-root",
+      "outputRoot": "F:\\build-output",
+
+      "dbScriptSource": "F:\\GSS\\AppDev\\gss-database",
+      "gitLatestCommand": "git stash push -m \"devops-pre-db\" && git fetch && git pull --ff-only && (git stash pop || ver > nul)",
+
+      "dbRollupBranchRoot": "F:\\GSS\\DBRollupScript",
+
+      "dbRollupExePath": "F:\\GSS\\DBRollupScriptBuilder\\net10.0\\DBRollupScriptBuilder.exe",
+      "dbRollupOutputDirectory": "F:\\temp\\scripts",
+
+      "apps": [ ]
+    }
+  }
+
+IMPORTANT:
+- dbScriptSource     = gss-database only (get latest DB)
+- dbRollupBranchRoot = F:\GSS\DBRollupScript (From/To branch folders)
+- Do NOT set dbScriptSource to F:\GSS\DBRollupScript
+- Do NOT put From/To folders under gss-database
+
+
+================================================================================
+CHANGE 0b — DeploymentModels.cs / BuildSettings
+================================================================================
+ADD:
+
+    public string DbRollupBranchRoot { get; set; } = @"F:\GSS\DBRollupScript";
+
+KEEP (unchanged):
+
+    public string DbScriptSource { get; set; } = string.Empty;
+    public string GitLatestCommand { get; set; } = string.Empty;
+
+
+================================================================================
+CHANGE 0c — BuildTab.razor fields + load from config
+================================================================================
+ADD field:
+
+    private string DbRollupBranchRoot { get; set; } = @"F:\GSS\DBRollupScript";
+
+In OnInitialized / OnInitializedAsync with other build settings:
+
+    ScriptSource = settings.Build.DbScriptSource ?? ScriptSource;
+    DbRollupBranchRoot = settings.Build.DbRollupBranchRoot ?? DbRollupBranchRoot;
+    // ScriptSource / dbScriptSource = gss-database get-latest ONLY
+    // DbRollupBranchRoot = From/To folder parent
+
+Do NOT load From/To branch names from appsettings.
+
+
+================================================================================
+CHANGE 1 — UI: Script Source + Branch Root + both dropdowns
+================================================================================
+REPLACE your DB ROLLUP section with:
 
         <div class="form-group">
-            <label>Script Source</label>
+            <label>Script Source (gss-database)</label>
             <div class="input-with-button">
                 <input type="text" class="form-control" @bind="ScriptSource" readonly />
                 <button class="btn btn-secondary" @onclick="BrowseScripts">Browse</button>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>DB Rollup Branch Root</label>
+            <div class="input-with-button">
+                <input type="text" class="form-control" @bind="DbRollupBranchRoot" readonly />
+                <button class="btn btn-secondary" @onclick="BrowseDbRollupBranchRoot">Browse</button>
             </div>
         </div>
 
@@ -105,21 +173,22 @@ REPLACE your DB ROLLUP From/To markup with:
         </div>
 
 Notes:
+- Script Source = gss-database (get latest DB) — NOT branch folders
+- DB Rollup Branch Root = F:\GSS\DBRollupScript — From/To folders
 - From and To are BOTH selectable
-- Refresh = LoadDbBranchesAsync → sets defaults → EnsureFromAndToBranchFoldersAsync
 - Bundle disabled when From is not < To
 
 
 ================================================================================
-CHANGE 2 — After LoadDbBranchesAsync sets defaults, ensure folders
+CHANGE 2 — After LoadDbBranchesAsync sets defaults, ensure From/To folders
 ================================================================================
-FIND the end of the success branch inside LoadDbBranchesAsync where you set:
+FIND where LoadDbBranchesAsync sets:
 
                 var latest = DbBranchOptions[^1];
                 DbRollupToBranch = latest;
                 DbRollupFromBranch = GetPreviousBranch(DbBranchOptions, latest) ?? string.Empty;
 
-REPLACE that block with:
+REPLACE that success block with:
 
                 var latest = DbBranchOptions[^1];
                 DbRollupToBranch = latest;
@@ -130,22 +199,12 @@ REPLACE that block with:
                 for (var i = 0; i < preview; i++)
                     AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO]   [{i}] {DbBranchOptions[i]}");
 
-                // On load: create folders OR get latest for From + To (separate)
+                // On load: create OR pull under dbRollupBranchRoot (NOT dbScriptSource)
                 await EnsureFromAndToBranchFoldersAsync();
 
-And REMOVE the duplicate AppendLog / preview loop that was already there
-(so you only log once).
+Remove any duplicate AppendLog / preview loop above this.
 
-
-Refresh button + init should call LoadDbBranchesAsync (which already
-calls EnsureFromAndToBranchFoldersAsync after defaults).
-
-Optional thin wrapper (same thing — do NOT call Ensure twice):
-
-    private Task LoadDbBranchesThenEnsureFoldersAsync()
-        => LoadDbBranchesAsync();
-
-OnInitializedAsync / OnAfterRenderAsync(firstRender) — call:
+OnInitializedAsync / OnAfterRenderAsync(firstRender):
 
     if (DbBranchOptions.Count == 0
         && !string.IsNullOrWhiteSpace(RepoRoot)
@@ -154,12 +213,9 @@ OnInitializedAsync / OnAfterRenderAsync(firstRender) — call:
         await LoadDbBranchesAsync(); // ends with EnsureFromAndToBranchFoldersAsync
     }
 
-Refresh Branches @onclick = "LoadDbBranchesAsync"
-(or LoadDbBranchesThenEnsureFoldersAsync — identical).
-
 
 ================================================================================
-CHANGE 3 — Dropdown change handlers (separate From / To folders)
+CHANGE 3 — Dropdown change handlers (separate From / To under Branch Root)
 ================================================================================
 REPLACE OnToBranchChanged (and ADD OnFromBranchChanged).
 DELETE any handler that auto-sets From = previous of To.
@@ -176,7 +232,7 @@ DELETE any handler that auto-sets From = previous of To.
             return;
         }
 
-        // From Branch folder only — create or get latest
+        // From Branch folder only under DbRollupBranchRoot
         await EnsureDbBranchFolderAsync(DbRollupFromBranch);
         await InvokeAsync(StateHasChanged);
     }
@@ -193,14 +249,14 @@ DELETE any handler that auto-sets From = previous of To.
             return;
         }
 
-        // To Branch folder only — create or get latest
+        // To Branch folder only under DbRollupBranchRoot
         await EnsureDbBranchFolderAsync(DbRollupToBranch);
         await InvokeAsync(StateHasChanged);
     }
 
 
 ================================================================================
-CHANGE 4 — Ensure folders (create OR get latest)
+CHANGE 4 — Ensure folders under dbRollupBranchRoot (create OR pull)
 ================================================================================
 PASTE these methods inside @code:
 
@@ -213,7 +269,7 @@ PASTE these methods inside @code:
             return;
         }
 
-        // Separate folders — From then To
+        // Separate folders under DbRollupBranchRoot — From then To
         if (!string.IsNullOrWhiteSpace(DbRollupFromBranch))
             await EnsureDbBranchFolderAsync(DbRollupFromBranch);
 
@@ -225,9 +281,10 @@ PASTE these methods inside @code:
     }
 
     /// <summary>
-    /// Under Script Source: if {branch} folder missing → create + get latest;
-    /// if it exists → get latest only.
-    /// Example: F:\GSS\DBRollupScriptBuilder\GSSv9.2S1
+    /// Under dbRollupBranchRoot (F:\GSS\DBRollupScript):
+    /// if {branch} folder missing → create + pull that branch from gss-database;
+    /// if it exists → pull latest for that branch.
+    /// Example: F:\GSS\DBRollupScript\GSSv9.2S1
     /// </summary>
     private async Task EnsureDbBranchFolderAsync(string branch)
     {
@@ -235,28 +292,29 @@ PASTE these methods inside @code:
         if (string.IsNullOrWhiteSpace(name))
             return;
 
-        var scriptRoot = ScriptSource?.Trim() ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(scriptRoot))
+        // MUST use DbRollupBranchRoot — NOT ScriptSource / dbScriptSource
+        var branchRoot = DbRollupBranchRoot?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(branchRoot))
         {
-            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Script Source is empty — cannot create/get branch folder for {name}");
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] build:dbRollupBranchRoot is empty — set F:\\GSS\\DBRollupScript in appsettings.");
             return;
         }
 
-        if (!Directory.Exists(scriptRoot))
+        if (!Directory.Exists(branchRoot))
         {
             try
             {
-                Directory.CreateDirectory(scriptRoot);
-                AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Created Script Source: {scriptRoot}");
+                Directory.CreateDirectory(branchRoot);
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Created DB Rollup Branch Root: {branchRoot}");
             }
             catch (Exception ex)
             {
-                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Cannot create Script Source {scriptRoot}: {ex.Message}");
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Cannot create Branch Root {branchRoot}: {ex.Message}");
                 return;
             }
         }
 
-        var folder = Path.Combine(scriptRoot, name);
+        var folder = Path.Combine(branchRoot, name);
         var created = false;
 
         if (!Directory.Exists(folder))
@@ -267,23 +325,30 @@ PASTE these methods inside @code:
         }
         else
         {
-            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Branch folder exists — getting latest: {folder}");
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Branch folder exists — pulling: {folder}");
         }
 
-        await GetLatestIntoBranchFolderAsync(name, folder, created);
+        await PullBranchIntoFolderAsync(name, folder, created);
     }
 
     /// <summary>
-    /// Get latest code for one branch into its Script Source folder.
-    /// Prefers git worktree from RepoRoot (gss-root). Falls back to
-    /// fetch/pull if the folder already has its own .git.
+    /// Pull one branch into F:\GSS\DBRollupScript\{branch}.
+    /// Git source = dbScriptSource (gss-database), NOT gss-root / RepoRoot.
     /// </summary>
-    private async Task GetLatestIntoBranchFolderAsync(string branch, string folder, bool justCreated)
+    private async Task PullBranchIntoFolderAsync(string branch, string folder, bool justCreated)
     {
-        var repoRoot = RepoRoot?.Trim() ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot))
+        // Source repo for DB branch content = gss-database
+        var dbRepo = ScriptSource?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(dbRepo) || !Directory.Exists(dbRepo))
         {
-            AppendLog($"[{DateTime.Now:HH:mm:ss}] [WARN] Repo Root missing — folder ready at {folder} but skipped git get-latest for {branch}");
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [WARN] dbScriptSource / Script Source missing — folder ready at {folder} but skipped git pull for {branch}");
+            return;
+        }
+
+        var dbGit = Path.Combine(dbRepo, ".git");
+        if (!Directory.Exists(dbGit) && !File.Exists(dbGit))
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Not a git repo (dbScriptSource): {dbRepo}");
             return;
         }
 
@@ -301,16 +366,14 @@ PASTE these methods inside @code:
         }
         else if (justCreated || !Directory.EnumerateFileSystemEntries(folder).Any())
         {
-            // Empty / just-created folder → add as worktree of RepoRoot branch
-            // (worktree fails if branch already checked out elsewhere — then clone)
+            // Empty / just-created → worktree (or clone) THIS branch from gss-database
             command =
                 $"git fetch origin && " +
                 $"(git worktree add \"{folder}\" \"{branch}\" || " +
-                $"git clone --branch \"{branch}\" --single-branch \"{repoRoot}\" \"{folder}\")";
-            cwd = repoRoot;
+                $"git clone --branch \"{branch}\" --single-branch \"{dbRepo}\" \"{folder}\")";
+            cwd = dbRepo;
 
-            // worktree add wants the target path to NOT exist as a normal dir.
-            // If we already CreateDirectory'd an empty folder, remove it first.
+            // worktree add needs the target path to not exist as a normal dir
             try
             {
                 if (Directory.Exists(folder)
@@ -326,12 +389,13 @@ PASTE these methods inside @code:
         }
         else
         {
-            // Folder has files but no .git — leave contents; do not wipe
-            AppendLog($"[{DateTime.Now:HH:mm:ss}] [WARN] Folder has files but no .git — skipped get-latest: {folder}");
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [WARN] Folder has files but no .git — skipped pull: {folder}");
             return;
         }
 
-        AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Get latest branch '{branch}'...");
+        AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Pull branch '{branch}' into rollup folder...");
+        AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] DB source (dbScriptSource): {dbRepo}");
+        AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Branch folder: {folder}");
         AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Cwd: {cwd}");
         AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Git: {command}");
         await InvokeAsync(StateHasChanged);
@@ -354,13 +418,12 @@ PASTE these methods inside @code:
 
         if (exit != 0)
         {
-            // Ensure folder still exists even if git failed
             Directory.CreateDirectory(folder);
-            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Get latest failed for {branch} (exit {exit}). Folder kept at {folder}");
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Pull failed for {branch} (exit {exit}). Folder kept at {folder}");
             return;
         }
 
-        AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Get latest OK for {branch} → {folder}");
+        AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Pull OK for {branch} → {folder}");
     }
 
 
@@ -381,7 +444,6 @@ PASTE helpers:
 
     /// <summary>
     /// GSSv9.1S1 &lt; GSSv9.1S2 &lt; GSSv9.2S1 &lt; GSSv9.2S2
-    /// Strips GSS / GSSv prefix, compares version then sprint number.
     /// </summary>
     private static int CompareGssBranchNames(string a, string b)
     {
@@ -424,7 +486,6 @@ PASTE helpers:
         if (string.IsNullOrWhiteSpace(t))
             return null;
 
-        // Split sprint: 9.2S1 → version=9.2, sprint=1
         var sprint = 0;
         var sIdx = t.LastIndexOf('S');
         if (sIdx < 0) sIdx = t.LastIndexOf('s');
@@ -474,16 +535,26 @@ Keep the existing empty-check and exe command:
 
 
 ================================================================================
-CHANGE 7 — BrowseScripts: after pick, re-ensure current From/To folders
+CHANGE 7 — Browse helpers (do NOT mix the two roots)
 ================================================================================
-REPLACE BrowseScripts with:
-
     private async Task BrowseScripts()
     {
+        // dbScriptSource = gss-database only (get latest DB)
         var folder = await FolderPicker.PickFolderAsync();
         if (!string.IsNullOrEmpty(folder))
         {
             ScriptSource = folder;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task BrowseDbRollupBranchRoot()
+    {
+        // Parent of From/To branch folders (F:\GSS\DBRollupScript)
+        var folder = await FolderPicker.PickFolderAsync();
+        if (!string.IsNullOrEmpty(folder))
+        {
+            DbRollupBranchRoot = folder;
             await EnsureFromAndToBranchFoldersAsync();
             await InvokeAsync(StateHasChanged);
         }
@@ -493,56 +564,59 @@ REPLACE BrowseScripts with:
 ================================================================================
 STEP-BY-STEP WORK ORDER
 ================================================================================
-1. Keep LoadDbBranchesAsync (git) — do NOT use folder names for dropdown
-2. CHANGE 1 — UI both dropdowns; Refresh → LoadDbBranchesAsync
-3. CHANGE 2 — after defaults set, call EnsureFromAndToBranchFoldersAsync
-4. CHANGE 3 — OnFromBranchChanged / OnToBranchChanged (separate folders)
-5. CHANGE 4 — EnsureDbBranchFolderAsync + GetLatestIntoBranchFolderAsync
-6. CHANGE 5 — IsFromLessThanTo / CompareGssBranchNames
-7. CHANGE 6 — Bundle validates From < To
-8. CHANGE 7 — BrowseScripts re-ensures folders
-9. Rebuild + run
+1. appsettings — ADD dbRollupBranchRoot = F:\GSS\DBRollupScript
+               KEEP dbScriptSource = F:\GSS\AppDev\gss-database
+2. DeploymentModels — ADD DbRollupBranchRoot
+3. BuildTab field + load DbRollupBranchRoot from settings
+4. CHANGE 1 — UI (Script Source + Branch Root + both dropdowns)
+5. CHANGE 2 — after LoadDbBranchesAsync defaults → EnsureFromAndToBranchFoldersAsync
+6. CHANGE 3 — OnFromBranchChanged / OnToBranchChanged
+7. CHANGE 4 — EnsureDbBranchFolderAsync + PullBranchIntoFolderAsync
+              (pull FROM gss-database INTO F:\GSS\DBRollupScript\{branch})
+8. CHANGE 5 — IsFromLessThanTo
+9. CHANGE 6 — Bundle validates From < To
+10. CHANGE 7 — BrowseScripts vs BrowseDbRollupBranchRoot
+11. Rebuild + run
 
 
 ================================================================================
 EXPECTED BEHAVIOR
 ================================================================================
+appsettings:
+  dbScriptSource      = F:\GSS\AppDev\gss-database     (get latest DB)
+  dbRollupBranchRoot  = F:\GSS\DBRollupScript          (From/To folders)
+
 On open / Refresh Branches:
   [INFO] Loading DB branches (git) from F:\GSS\AppDev\gss-root...
   [INFO] Loaded N branch(es). To=GSSv9.2S2, From=GSSv9.2S1
-  [INFO] Created branch folder: F:\GSS\DBRollupScriptBuilder\GSSv9.2S1
-     (or) Branch folder exists — getting latest: ...
-  [INFO] Get latest OK for GSSv9.2S1 → ...
-  [INFO] Created branch folder: F:\GSS\DBRollupScriptBuilder\GSSv9.2S2
-  [INFO] Get latest OK for GSSv9.2S2 → ...
+  [INFO] Created branch folder: F:\GSS\DBRollupScript\GSSv9.2S1
+  [INFO] Pull branch 'GSSv9.2S1' into rollup folder...
+  [INFO] DB source (dbScriptSource): F:\GSS\AppDev\gss-database
+  [INFO] Pull OK for GSSv9.2S1 → F:\GSS\DBRollupScript\GSSv9.2S1
+  [INFO] Created branch folder: F:\GSS\DBRollupScript\GSSv9.2S2
+  [INFO] Pull OK for GSSv9.2S2 → F:\GSS\DBRollupScript\GSSv9.2S2
 
-Change From dropdown → only From folder create/get-latest
-Change To dropdown → only To folder create/get-latest
+Change From dropdown → only pull/create that From folder under DBRollupScript
+Change To dropdown   → only pull/create that To folder under DBRollupScript
 
-Select From=GSSv9.2S2 and To=GSSv9.2S1:
-  [ERROR] From Branch must be less than To Branch...
-  Bundle Scripts stays disabled
-
-Explorer under Script Source shows:
-  GSSv9.1S1
-  GSSv9.1S2
-  GSSv9.2S1
-  GSSv9.2S2
-  (plus net10.0 if that is your exe output)
+Get latest (toolbar) still updates gss-database via dbScriptSource + gitLatestCommand
+— it does NOT create folders under DBRollupScript (that is From/To dropdown / load).
 
 
 ================================================================================
 CHECKLIST
 ================================================================================
-[ ] From and To are BOTH dropdowns (not From readonly)
-[ ] On load: LoadDbBranchesAsync then Ensure From + To folders
+[ ] appsettings has dbRollupBranchRoot = F:\\GSS\\DBRollupScript
+[ ] appsettings dbScriptSource stays F:\\GSS\\AppDev\\gss-database
+[ ] BuildSettings.DbRollupBranchRoot added
+[ ] From/To folders use DbRollupBranchRoot — NOT ScriptSource
+[ ] Pull source for From/To = gss-database (dbScriptSource)
+[ ] On load: Ensure From + To folders under DBRollupScript
 [ ] From dropdown change → EnsureDbBranchFolderAsync(From) only
 [ ] To dropdown change → EnsureDbBranchFolderAsync(To) only
-[ ] Missing folder → CreateDirectory + get latest
-[ ] Existing folder → get latest (git pull / worktree)
-[ ] From must be < To (GSSv9.2S1 < GSSv9.2S2)
-[ ] Bundle Scripts blocked when From >= To
-[ ] Dropdown options still come from git (not Script Source folder names)
+[ ] Missing folder → create + pull; existing → pull
+[ ] From must be < To; Bundle blocked when From >= To
+[ ] Dropdown options still from git (RepoRoot), not folder names
 
 
 ================================================================================

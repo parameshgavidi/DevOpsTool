@@ -38,8 +38,8 @@ WHAT TO DO (summary)
 DB ROLLUP From/To:
   Dropdowns = git branches:
     docs/fixes/db-rollup-git-branches-not-folders.txt
-  On load / dropdown change → create ScriptSource\{branch} OR get latest;
-  From must be < To; both dropdowns:
+  dbScriptSource = gss-database get-latest ONLY.
+  dbRollupBranchRoot = F:\GSS\DBRollupScript (From/To folders; create or pull):
     docs/fixes/db-rollup-from-to-folder-create-getlatest.txt
 
 
