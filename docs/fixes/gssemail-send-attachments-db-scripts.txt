@@ -1,0 +1,310 @@
+================================================================================
+ANSWER + PASTE GUIDE — SendEmailByNetV2 + DB script attachments
+GSSEmail.cs + BuildTab.razor
+================================================================================
+
+SHORT ANSWER
+------------
+NO — the current SendEmailByNetV2 cannot send attachments as written.
+
+Your method (screenshot):
+
+  public static void SendEmailByNetV2(
+      string sFromEmail,
+      string sToEmail,
+      string sMailSubject,
+      string sEmailBody,
+      string sGSSConnectionString,
+      bool isBodyHtml = false)
+
+- No attachment parameter
+- Never calls objMM.Attachments.Add(...)
+- MailMessage supports attachments, but this method never uses them
+
+To send DB script files you MUST either:
+  A) Extend SendEmailByNetV2 with an optional attachment paths parameter
+     (recommended — existing callers keep working), OR
+  B) Add a new overload SendEmailByNetV2(..., string[] attachmentPaths)
+
+Earlier BuildTab email guides said "do not edit GSSEmail.cs" for decrypt /
+SqlClient fixes. Attachments are different — MailMessage.Attachments only
+exists inside GSSEmail, so a small GSSEmail change is required.
+
+
+WHERE DB SCRIPT FILES COME FROM
+-------------------------------
+After Bundle Scripts, files are typically under:
+
+  {outputRoot}\db-scripts\          e.g. F:\build-output\db-scripts\
+  OR build:dbRollupOutputDirectory  e.g. F:\temp\scripts\
+
+From/To working copies under F:\GSS\DBRollupScript\{branch} are source
+checkouts — usually attach the BUNDLED output (db-scripts), not whole repos.
+
+
+================================================================================
+CHANGE 1 — GSSEmail.cs — optional attachments (backward compatible)
+================================================================================
+File: GSSEmail.cs  (GSS.GSSEmail / GSSEmailComponent)
+
+REPLACE the method signature with (add ONE optional parameter at the end):
+
+    public static void SendEmailByNetV2(
+        string sFromEmail,
+        string sToEmail,
+        string sMailSubject,
+        string sEmailBody,
+        string sGSSConnectionString,
+        bool isBodyHtml = false,
+        IEnumerable<string>? attachmentPaths = null)
+
+Existing callers that omit the last argument still compile and behave the same.
+
+
+AFTER you set subject/body (your lines ~159–160), and BEFORE creating SmtpClient
+(your line ~162), PASTE:
+
+                // Optional file attachments (DB scripts, logs, etc.)
+                if (attachmentPaths != null)
+                {
+                    foreach (var path in attachmentPaths)
+                    {
+                        if (string.IsNullOrWhiteSpace(path))
+                            continue;
+                        if (!File.Exists(path))
+                        {
+                            ExceptionHandling.GenerateSystemLogFileEntry(
+                                "Email Component",
+                                $"Attachment not found (skipped): {path}",
+                                "SendEmailByNetV2",
+                                sGSSConnectionString);
+                            continue;
+                        }
+
+                        // Attachment opens the file — dispose MailMessage after Send
+                        objMM.Attachments.Add(new Attachment(path));
+                    }
+                }
+
+Full block context (Subject/Body → Attachments → SmtpClient):
+
+                objMM.IsBodyHtml = isBodyHtml;
+
+                //Set subject and body
+                objMM.Subject = sMailSubject;
+                objMM.Body = sEmailBody;
+
+                // Optional attachments
+                if (attachmentPaths != null)
+                {
+                    foreach (var path in attachmentPaths)
+                    {
+                        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                            continue;
+                        objMM.Attachments.Add(new Attachment(path));
+                    }
+                }
+
+                //Send Email
+                SmtpClient smtpClient = new SmtpClient(server, Int32.Parse(port));
+                ...
+
+ALSO wrap Send in using so attachments release file locks:
+
+                using (objMM)
+                using (smtpClient)
+                {
+                    ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+                    smtpClient.Send(objMM);
+                }
+
+If you already create smtpClient without using, at minimum dispose attachments:
+
+                try
+                {
+                    ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+                    smtpClient.Send(objMM);
+                }
+                finally
+                {
+                    objMM.Attachments.Dispose();
+                    objMM.Dispose();
+                    smtpClient.Dispose();
+                }
+
+Need:
+
+    using System.Net.Mail;          // already there (MailMessage, Attachment)
+    using System.Collections.Generic; // IEnumerable — if missing
+
+
+================================================================================
+CHANGE 1b — ALTERNATE: new overload (leave old method untouched)
+================================================================================
+If you prefer zero signature change on the existing method, ADD this overload
+next to SendEmailByNetV2 and put the attachment loop only here.
+Have the old method call the new one with attachmentPaths: null.
+
+    public static void SendEmailByNetV2(
+        string sFromEmail,
+        string sToEmail,
+        string sMailSubject,
+        string sEmailBody,
+        string sGSSConnectionString,
+        bool isBodyHtml,
+        IEnumerable<string> attachmentPaths)
+    {
+        // Same body as SendEmailByNetV2, including Attachments loop above
+        // ...
+    }
+
+Or keep one method with optional last arg (CHANGE 1) — simpler.
+
+
+================================================================================
+CHANGE 2 — BuildTab.razor — attach bundled DB scripts after Bundle
+================================================================================
+After Bundle Scripts copies files to destDir ({outputRoot}\db-scripts),
+collect paths and pass them into SendEmailByNetV2.
+
+Helper (paste in @code):
+
+    private static List<string> CollectDbScriptAttachmentPaths(string folder, int maxFiles = 20)
+    {
+        var list = new List<string>();
+        if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
+            return list;
+
+        var files = Directory.GetFiles(folder, "*.*", SearchOption.AllDirectories)
+            .Where(f =>
+            {
+                var ext = Path.GetExtension(f);
+                return ext.Equals(".sql", StringComparison.OrdinalIgnoreCase)
+                       || ext.Equals(".txt", StringComparison.OrdinalIgnoreCase)
+                       || ext.Equals(".prc", StringComparison.OrdinalIgnoreCase)
+                       || ext.Equals(".zip", StringComparison.OrdinalIgnoreCase);
+            })
+            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+            .Take(maxFiles)
+            .ToList();
+
+        list.AddRange(files);
+        return list;
+    }
+
+In BundleDbScriptsAsync success path (after "Bundle Scripts complete"),
+ADD email with attachments (decrypt CS first — same as other email guides):
+
+            // Email bundled DB scripts as attachments
+            try
+            {
+                var settings = LoadAppSettings();
+
+                var fromEmail = string.IsNullOrWhiteSpace(settings.FromEmail)
+                    ? "GSSHelp@usps.gov"
+                    : settings.FromEmail;
+
+                var recipients = settings.EmailRecipients;
+                var toEmails = (recipients != null && recipients.Count > 0)
+                    ? string.Join(";", recipients)
+                    : "devi.s.lam@usps.gov";
+
+                // Decrypt GSS connection string BEFORE SendEmailByNetV2
+                // (see docs/fixes/buildtab-decrypt-before-sendemail.txt)
+                var encryptedCs = settings.ConnectionString;
+                if (string.IsNullOrWhiteSpace(encryptedCs))
+                    throw new InvalidOperationException("GSS connection string missing in appsettings.");
+
+                var crypto = new Encryption.Crypto();
+                var plainCs = crypto.DecryptString(encryptedCs); // use DecryptString, not Decrypt
+
+                var attachments = CollectDbScriptAttachmentPaths(destDir);
+                if (attachments.Count == 0)
+                    AppendLog($"[{DateTime.Now:HH:mm:ss}] [WARN] No DB script files to attach from {destDir}");
+
+                var mailSubject =
+                    $"DevOps Tool — DB scripts bundled ({DbRollupFromBranch} → {DbRollupToBranch})";
+                var mailBody =
+                    $"<html><body>" +
+                    $"<p>DB rollup scripts bundled successfully.</p>" +
+                    $"<p>From: {DbRollupFromBranch}<br/>To: {DbRollupToBranch}</p>" +
+                    $"<p>Output: {destDir}</p>" +
+                    $"<p>Attachments: {attachments.Count} file(s)</p>" +
+                    $"<p>Timestamp: {DateTime.Now:yyyy-MM-dd HH:mm:ss}</p>" +
+                    $"</body></html>";
+
+                GSS.GSSEmail.SendEmailByNetV2(
+                    fromEmail,
+                    toEmails,
+                    mailSubject,
+                    mailBody,
+                    plainCs,
+                    true,
+                    attachments);   // NEW — attachment paths
+
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Email with {attachments.Count} attachment(s) sent to {toEmails}");
+            }
+            catch (Exception emailEx)
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [WARN] Email with attachments failed: {emailEx.Message}");
+            }
+
+
+If your settings property is GssConnectionString not ConnectionString, use that name.
+If DecryptString is not the Crypto API you use, match IntelliSense
+(see docs/fixes/buildtab-decrypt-before-sendemail.txt).
+
+
+================================================================================
+CHANGE 3 — Optional: zip first if many / large scripts
+================================================================================
+SMTP size limits often fail with many .sql files. Prefer one zip:
+
+    private static string? ZipDbScriptsFolder(string folder, string zipPath)
+    {
+        if (!Directory.Exists(folder))
+            return null;
+        if (File.Exists(zipPath))
+            File.Delete(zipPath);
+        System.IO.Compression.ZipFile.CreateFromDirectory(folder, zipPath);
+        return File.Exists(zipPath) ? zipPath : null;
+    }
+
+Then:
+
+    var zip = Path.Combine(Path.GetTempPath(),
+        $"db-scripts-{DbRollupFromBranch}-to-{DbRollupToBranch}-{DateTime.Now:yyyyMMddHHmmss}.zip");
+    var zipPath = ZipDbScriptsFolder(destDir, zip);
+    var attachments = zipPath != null
+        ? new List<string> { zipPath }
+        : CollectDbScriptAttachmentPaths(destDir);
+
+    GSS.GSSEmail.SendEmailByNetV2(..., plainCs, true, attachments);
+
+Need: using System.IO.Compression;
+
+
+================================================================================
+DO NOT / LIMITS
+--------------
+[ ] Do NOT pass whole F:\GSS\DBRollupScript\{branch} trees (huge / may include .git)
+[ ] Attach bundled output under {outputRoot}\db-scripts\ (or a zip of it)
+[ ] Keep decrypt-before-send (plain CS into SendEmailByNetV2)
+[ ] Watch mailbox / SMTP max size (zip if needed)
+[ ] Dispose MailMessage so attachment file locks are released
+
+
+================================================================================
+CHECKLIST
+================================================================================
+[ ] SendEmailByNetV2 has optional attachmentPaths parameter (or new overload)
+[ ] objMM.Attachments.Add(new Attachment(path)) before smtpClient.Send
+[ ] Existing callers without attachments still work
+[ ] Bundle Scripts success → CollectDbScriptAttachmentPaths(destDir)
+[ ] Decrypt connection string before SendEmailByNetV2
+[ ] Rebuild GSSEmailComponent + DevOps tool; send a test with 1 small .sql
+
+
+================================================================================
+END
+================================================================================

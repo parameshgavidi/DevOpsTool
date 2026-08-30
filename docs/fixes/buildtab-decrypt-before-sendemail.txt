@@ -1,7 +1,14 @@
 ================================================================================
 BuildTab.razor — UPDATE email notification block (decrypt CS before send)
-NO changes to GSSEmail.cs
+NO changes to GSSEmail.cs  (for decrypt only)
 ================================================================================
+
+ATTACHMENTS?
+------------
+Decrypt-only fixes do NOT add attachments.
+To email DB scripts as attachments you MUST extend SendEmailByNetV2:
+  docs/fixes/gssemail-send-attachments-db-scripts.txt
+
 
 WHY
 ---

@@ -3,6 +3,11 @@ Bundle Scripts — DBRollupScriptBuilder.exe with required -f / -t
 Settings from appsettings.json (no hardcoded paths)
 ================================================================================
 
+AFTER BUNDLE — email scripts as attachments:
+  docs/fixes/gssemail-send-attachments-db-scripts.txt
+  (extend SendEmailByNetV2; attach files from {outputRoot}\db-scripts\)
+
+
 FLOW
 ----
 1. Click Bundle Scripts
