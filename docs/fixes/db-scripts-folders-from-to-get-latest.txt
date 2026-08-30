@@ -7,25 +7,25 @@ SUPERSEDED PARTS
 ----------------
 - From/To dropdown source: use GIT branches, NOT Script folders
   → docs/fixes/db-rollup-git-branches-not-folders.txt
-- On load + From/To dropdown change: create OR get-latest branch folders;
-  both From and To are dropdowns; From must be < To
+- From/To FOLDERS: use NEW path dbRollupBranchRoot = F:\GSS\DBRollupScript
+  (NOT under dbScriptSource / gss-database). Create or pull on load/change.
   → docs/fixes/db-rollup-from-to-folder-create-getlatest.txt   ← USE FOR THAT
 
-Keep this file for: dbScriptSource path, build:gitLatestCommand,
-GetLatestDbProjectAsync, and removing From/To from appsettings.
+Keep this file for: dbScriptSource = gss-database get-latest,
+build:gitLatestCommand, GetLatestDbProjectAsync,
+and removing From/To names from appsettings.
 
 
 GOAL
 ----
-1. Script Source = F:\GSS\AppDev\gss-database\Scripts  (build:dbScriptSource)
+1. dbScriptSource = F:\GSS\AppDev\gss-database  (get latest DB only)
 2. Existing Get latest button ALSO pulls latest for the DB project
    using build:gitLatestCommand (NOT inside apps[])
 3. REMOVE dbRollupFromBranch / dbRollupToBranch from appsettings AND
    remove loading them from OnInitialized / BuildSettings
 4. From/To BRANCHES = GIT remotes again (NOT Script folders)
    → USE: docs/fixes/db-rollup-git-branches-not-folders.txt
-   (fixes dropdown showing obj / Schema Objects / Scripts)
-5. Branch FOLDERS under Script Source: create or get-latest on load / change
+5. From/To FOLDERS under dbRollupBranchRoot = F:\GSS\DBRollupScript
    → USE: docs/fixes/db-rollup-from-to-folder-create-getlatest.txt
 6. (OLD) To Branch = dropdown (default = latest GSS branch)
 7. (OLD) From Branch = READONLY previous branch
