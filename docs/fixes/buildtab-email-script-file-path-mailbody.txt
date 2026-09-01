@@ -134,6 +134,8 @@ DO NOT
     (docs/fixes/buildtab-decrypt-before-sendemail.txt)
 [ ] Attachments (optional): docs/fixes/gssemail-send-attachments-db-scripts.txt
     This guide = PATHS in mail BODY only
+[ ] Clear destDir before copy so email does not list stale files:
+    docs/fixes/bundle-clear-db-scripts-before-copy.txt
 
 
 --------------------------------------------------------------------------------
@@ -142,6 +144,7 @@ CHECKLIST
 [ ] Directory.GetFiles(destDir, "*.*", ...) — no FirstOrDefault
 [ ] mailBody lists every full path under db-scripts
 [ ] Email shows combined.sql AND combined_Scripts.sql AND combined_Unknown.sql
+[ ] destDir cleared before each copy (no leftover files from prior runs)
 [ ] Rebuild → Bundle Scripts → verify all file paths in received email
 
 

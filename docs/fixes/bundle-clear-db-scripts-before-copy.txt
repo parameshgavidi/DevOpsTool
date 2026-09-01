@@ -1,0 +1,165 @@
+================================================================================
+BuildTab.razor — CLEAR db-scripts folder before copying new generated files
+Bundle Scripts / BundleDbScriptsAsync
+================================================================================
+
+YES — you need this.
+---------------------
+overwrite: true only replaces files with the SAME name.
+Old files that are no longer generated stay in the folder.
+
+Example problem:
+  Previous run left:  mkscript.txt
+  New run creates:    combined.sql, combined_Scripts.sql, combined_Unknown.sql
+  Without clear → email / folder still shows mkscript.txt (stale)
+
+Because the email lists ALL files under destDir, clear first so the folder
+and the mail body match only THIS run's output.
+
+
+WHERE
+-----
+BuildTab.razor → BundleDbScriptsAsync
+Find the copy block (after scriptFiles is built, before File.Copy):
+
+            Directory.CreateDirectory(destDir);
+            var copied = 0;
+            foreach (var file in scriptFiles)
+            {
+                ...
+                File.Copy(file, dest, overwrite: true);
+            }
+
+
+--------------------------------------------------------------------------------
+PASTE — clear existing files, then recreate folder, then copy
+--------------------------------------------------------------------------------
+REPLACE:
+
+            Directory.CreateDirectory(destDir);
+            var copied = 0;
+            foreach (var file in scriptFiles)
+            {
+                var relative = Path.GetRelativePath(builderOutputDir, file);
+                var dest = Path.Combine(destDir, relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                File.Copy(file, dest, overwrite: true);
+                copied++;
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Copied {relative}\r\n";
+            }
+
+WITH:
+
+            // Clear previous generated scripts so stale files are not left behind
+            // (overwrite alone does NOT remove renamed/removed scripts).
+            if (Directory.Exists(destDir))
+            {
+                var existing = Directory.GetFiles(destDir, "*.*", SearchOption.AllDirectories);
+                foreach (var oldFile in existing)
+                {
+                    try
+                    {
+                        File.Delete(oldFile);
+                        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Deleted old script: {oldFile}\r\n";
+                    }
+                    catch (Exception delEx)
+                    {
+                        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARN] Could not delete {oldFile}: {delEx.Message}\r\n";
+                    }
+                }
+
+                // Remove empty subfolders left after file deletes (if any)
+                foreach (var sub in Directory.GetDirectories(destDir, "*", SearchOption.AllDirectories)
+                             .OrderByDescending(d => d.Length)) // deepest first
+                {
+                    try
+                    {
+                        if (!Directory.EnumerateFileSystemEntries(sub).Any())
+                            Directory.Delete(sub, recursive: false);
+                    }
+                    catch { /* best-effort */ }
+                }
+            }
+
+            Directory.CreateDirectory(destDir);
+            var copied = 0;
+            foreach (var file in scriptFiles)
+            {
+                var relative = Path.GetRelativePath(builderOutputDir, file);
+                var dest = Path.Combine(destDir, relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                File.Copy(file, dest, overwrite: true);
+                copied++;
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Copied {relative}\r\n";
+            }
+
+
+--------------------------------------------------------------------------------
+SHORTER ALTERNATE — delete + recreate the whole folder
+--------------------------------------------------------------------------------
+Simpler if destDir is ONLY generated scripts (recommended for
+F:\build-output\db-scripts):
+
+            if (Directory.Exists(destDir))
+            {
+                Directory.Delete(destDir, recursive: true);
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Cleared script folder: {destDir}\r\n";
+            }
+            Directory.CreateDirectory(destDir);
+
+            var copied = 0;
+            foreach (var file in scriptFiles)
+            {
+                var relative = Path.GetRelativePath(builderOutputDir, file);
+                var dest = Path.Combine(destDir, relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                File.Copy(file, dest, overwrite: true);
+                copied++;
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Copied {relative}\r\n";
+            }
+
+Prefer this shorter version when destDir is dedicated output only
+(e.g. {outputRoot}\db-scripts). Do NOT use if that folder also holds
+hand-maintained files you must keep.
+
+
+--------------------------------------------------------------------------------
+ALSO clear builder temp output? (optional)
+--------------------------------------------------------------------------------
+If DBRollupScriptBuilder writes to build:dbRollupOutputDirectory
+(e.g. F:\temp\scripts) and that folder can accumulate stale files too,
+clear it BEFORE running the exe (same pattern):
+
+            if (Directory.Exists(builderOutputDir))
+            {
+                Directory.Delete(builderOutputDir, recursive: true);
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Cleared builder output: {builderOutputDir}\r\n";
+            }
+            Directory.CreateDirectory(builderOutputDir);
+
+Only do this if that folder is dedicated temp output for the builder.
+
+
+--------------------------------------------------------------------------------
+ORDER OF OPERATIONS
+-------------------
+1. Run DBRollupScriptBuilder.exe
+2. Collect new scriptFiles from builderOutputDir
+3. CLEAR destDir (delete existing files / recreate folder)   ← this fix
+4. Copy new files into destDir
+5. Email lists ALL files now in destDir (current run only)
+
+
+--------------------------------------------------------------------------------
+CHECKLIST
+--------------------------------------------------------------------------------
+[ ] Clear destDir BEFORE File.Copy
+[ ] After Bundle Scripts, Explorer shows ONLY this run's files
+    (combined.sql, combined_Scripts.sql, combined_Unknown.sql — no leftovers)
+[ ] Email path list matches Explorer exactly
+[ ] Related: docs/fixes/buildtab-email-script-file-path-mailbody.txt
+
+
+================================================================================
+END
+================================================================================

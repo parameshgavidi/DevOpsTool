@@ -3,6 +3,10 @@ Bundle Scripts — DBRollupScriptBuilder.exe with required -f / -t
 Settings from appsettings.json (no hardcoded paths)
 ================================================================================
 
+BEFORE COPY — clear old files in db-scripts (required):
+  docs/fixes/bundle-clear-db-scripts-before-copy.txt
+  (delete existing files under {outputRoot}\db-scripts before copying new ones)
+
 AFTER BUNDLE — email generated script PATH in mail body:
   docs/fixes/buildtab-email-script-file-path-mailbody.txt
   (add full path e.g. F:\build-output\db-scripts\combined.sql to mailBody)
@@ -17,8 +21,9 @@ FLOW
 1. Click Bundle Scripts
 2. Run: DBRollupScriptBuilder.exe -f <FromBranch> -t <ToBranch>
 3. Exe writes scripts to dbRollupOutputDirectory (e.g. F:\temp\scripts)
-4. Copy script files to {outputRoot}\db-scripts\
-5. Errors → OUTPUT LOG
+4. CLEAR {outputRoot}\db-scripts\ (delete old files — overwrite alone is not enough)
+5. Copy script files to {outputRoot}\db-scripts\
+6. Errors → OUTPUT LOG
 
 
 --------------------------------------------------------------------------------
@@ -187,6 +192,13 @@ Optional UI (next to Script Source):
                 return;
             }
 
+            // Clear previous generated scripts first (overwrite does NOT remove
+            // renamed/removed files). See docs/fixes/bundle-clear-db-scripts-before-copy.txt
+            if (Directory.Exists(destDir))
+            {
+                Directory.Delete(destDir, recursive: true);
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Cleared script folder: {destDir}\r\n";
+            }
             Directory.CreateDirectory(destDir);
             var copied = 0;
             foreach (var file in scriptFiles)
