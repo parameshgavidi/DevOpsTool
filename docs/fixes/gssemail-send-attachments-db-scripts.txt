@@ -41,6 +41,11 @@ After Bundle Scripts, files are typically under:
 From/To working copies under F:\GSS\DBRollupScript\{branch} are source
 checkouts — usually attach the BUNDLED output (db-scripts), not whole repos.
 
+PATH IN MAIL BODY ONLY (no attachments / no GSSEmail.cs change):
+  docs/fixes/buildtab-email-script-file-path-mailbody.txt
+  Put full generated script path(s) into mailBody, e.g.:
+    F:\build-output\db-scripts\combined.sql
+
 
 ================================================================================
 CHANGE 1 — GSSEmail.cs — optional attachments (backward compatible)

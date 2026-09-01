@@ -1,0 +1,227 @@
+================================================================================
+BuildTab.razor — include GENERATED SCRIPT FILE PATH(S) in email body
+DB Rollup Bundle Complete notification
+NO GSSEmail.cs changes required
+================================================================================
+
+GOAL
+----
+After Bundle Scripts, the success email must show the generated script file
+location path(s) in the HTML mail body — not only the destination folder.
+
+Your Explorer path (example):
+
+  F:\build-output\db-scripts\combined.sql
+  F:\build-output\db-scripts\combined_Scripts.sql
+  F:\build-output\db-scripts\mkscript.txt
+
+Folder alone (Destination / destDir) is already in the email. Add an explicit
+"Generated Script(s)" line with full file path(s).
+
+
+WHERE
+-----
+BuildTab.razor — BundleDbScriptsAsync success path.
+Find the email block that sets:
+
+  mailSubject = $"DB Rollup Bundle Complete - {fromBranch} to {toBranch}"
+
+Around your lines ~1258–1281 (screenshot).
+
+
+--------------------------------------------------------------------------------
+OLD (folder only — missing file path)
+--------------------------------------------------------------------------------
+
+            try
+            {
+                var settings = LoadAppSettings();
+                var connectionString = settings.ConnectionString;
+                var fromEmail = string.IsNullOrWhiteSpace(settings.FromEmail)
+                    ? "GSSHelp@usps.gov"
+                    : settings.FromEmail;
+                var recipients = settings.EmailRecipients;
+                var toEmails = (recipients != null && recipients.Count > 0)
+                    ? string.Join(";", recipients)
+                    : "devi.s.lam@usps.gov";
+
+                var mailSubject = $"DB Rollup Bundle Complete - {fromBranch} to {toBranch}";
+                var mailBody =
+                    $"<html><body>" +
+                    $"<p>DB rollup scripts bundled successfully.</p>" +
+                    $"<p>From Branch: {fromBranch}<br/>" +
+                    $"To Branch: {toBranch}<br/>" +
+                    $"Files Copied: {copied}<br/>" +
+                    $"Destination: {destDir}<br/>" +
+                    $"Timestamp: {DateTime.Now:yyyy-MM-dd HH:mm:ss}</p>" +
+                    $"</body></html>";
+
+                GSS.GSSEmail.SendEMailByNetV2(fromEmail, toEmails, mailSubject, mailBody, connectionString, true);
+
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Email notification sent to {toEmails}\r\n";
+            }
+            catch (Exception emailEx)
+            {
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARN] Failed to send email notification: {emailEx.Message}\r\n";
+            }
+
+
+--------------------------------------------------------------------------------
+NEW — MINIMAL (one primary generated script path)
+--------------------------------------------------------------------------------
+Use when you mainly care about combined.sql (or the first .sql under destDir).
+
+REPLACE only the mailBody construction (keep your from/to/subject/Send call).
+Insert BEFORE mailSubject / mailBody:
+
+                // Full path(s) of generated script file(s) under destDir
+                // Example: F:\build-output\db-scripts\combined.sql
+                var primaryScriptPath = Directory.Exists(destDir)
+                    ? Directory.GetFiles(destDir, "combined.sql", SearchOption.TopDirectoryOnly)
+                        .FirstOrDefault()
+                      ?? Directory.GetFiles(destDir, "*.sql", SearchOption.TopDirectoryOnly)
+                        .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+                        .FirstOrDefault()
+                    : null;
+                if (string.IsNullOrWhiteSpace(primaryScriptPath))
+                    primaryScriptPath = destDir; // fallback: folder path
+
+Then REPLACE mailBody with:
+
+                var mailSubject = $"DB Rollup Bundle Complete - {fromBranch} to {toBranch}";
+                var mailBody =
+                    $"<html><body>" +
+                    $"<p>DB rollup scripts bundled successfully.</p>" +
+                    $"<p>From Branch: {fromBranch}<br/>" +
+                    $"To Branch: {toBranch}<br/>" +
+                    $"Files Copied: {copied}<br/>" +
+                    $"Destination: {destDir}<br/>" +
+                    $"Generated Script: {primaryScriptPath}<br/>" +
+                    $"Timestamp: {DateTime.Now:yyyy-MM-dd HH:mm:ss}</p>" +
+                    $"</body></html>";
+
+
+Expected email line:
+
+  Generated Script: F:\build-output\db-scripts\combined.sql
+
+
+--------------------------------------------------------------------------------
+NEW — FULL (list ALL generated script file paths)  ← recommended
+--------------------------------------------------------------------------------
+Paste this block in place of your existing email try/catch.
+Keeps Destination folder AND lists every generated file path.
+
+            // Send success notification email via GSSEmailComponent
+            try
+            {
+                var settings = LoadAppSettings();
+                var connectionString = settings.ConnectionString;
+                var fromEmail = string.IsNullOrWhiteSpace(settings.FromEmail)
+                    ? "GSSHelp@usps.gov"
+                    : settings.FromEmail;
+                var recipients = settings.EmailRecipients;
+                var toEmails = (recipients != null && recipients.Count > 0)
+                    ? string.Join(";", recipients)
+                    : "devi.s.lam@usps.gov";
+
+                // Collect generated script file full paths (e.g. F:\build-output\db-scripts\combined.sql)
+                var scriptPaths = new List<string>();
+                if (!string.IsNullOrWhiteSpace(destDir) && Directory.Exists(destDir))
+                {
+                    scriptPaths = Directory.GetFiles(destDir, "*.*", SearchOption.AllDirectories)
+                        .Where(f =>
+                        {
+                            var ext = Path.GetExtension(f);
+                            return ext.Equals(".sql", StringComparison.OrdinalIgnoreCase)
+                                   || ext.Equals(".txt", StringComparison.OrdinalIgnoreCase)
+                                   || ext.Equals(".prc", StringComparison.OrdinalIgnoreCase);
+                        })
+                        .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                }
+
+                var scriptPathsHtml = scriptPaths.Count > 0
+                    ? string.Join("<br/>", scriptPaths.Select(p => System.Net.WebUtility.HtmlEncode(p)))
+                    : "(no script files found under destination)";
+
+                var mailSubject = $"DB Rollup Bundle Complete - {fromBranch} to {toBranch}";
+                var mailBody =
+                    $"<html><body>" +
+                    $"<p>DB rollup scripts bundled successfully.</p>" +
+                    $"<p>From Branch: {System.Net.WebUtility.HtmlEncode(fromBranch)}<br/>" +
+                    $"To Branch: {System.Net.WebUtility.HtmlEncode(toBranch)}<br/>" +
+                    $"Files Copied: {copied}<br/>" +
+                    $"Destination: {System.Net.WebUtility.HtmlEncode(destDir)}<br/>" +
+                    $"Generated Script File Location(s):<br/>{scriptPathsHtml}<br/>" +
+                    $"Timestamp: {DateTime.Now:yyyy-MM-dd HH:mm:ss}</p>" +
+                    $"</body></html>";
+
+                GSS.GSSEmail.SendEMailByNetV2(fromEmail, toEmails, mailSubject, mailBody, connectionString, true);
+
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Email notification sent to {toEmails}\r\n";
+            }
+            catch (Exception emailEx)
+            {
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARN] Failed to send email notification: {emailEx.Message}\r\n";
+            }
+
+
+Expected email body excerpt:
+
+  Destination: F:\build-output\db-scripts
+  Generated Script File Location(s):
+  F:\build-output\db-scripts\combined.sql
+  F:\build-output\db-scripts\combined_Scripts.sql
+  F:\build-output\db-scripts\mkscript.txt
+
+
+--------------------------------------------------------------------------------
+MINIMAL DIFF (one line add — if paths already known)
+--------------------------------------------------------------------------------
+If you already have the copied file paths in a list (e.g. scriptFiles / dest
+paths from the copy loop), you can skip Directory.GetFiles and build from that.
+
+Inside the copy loop, collect destinations:
+
+                var generatedScriptPaths = new List<string>();
+                ...
+                foreach (var file in scriptFiles)
+                {
+                    var relative = Path.GetRelativePath(builderOutputDir, file);
+                    var dest = Path.Combine(destDir, relative);
+                    Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                    File.Copy(file, dest, overwrite: true);
+                    generatedScriptPaths.Add(dest);   // FULL path of generated file
+                    copied++;
+                }
+
+Then in mailBody:
+
+                    $"Generated Script File Location(s):<br/>" +
+                    $"{string.Join("<br/>", generatedScriptPaths.Select(System.Net.WebUtility.HtmlEncode))}<br/>" +
+
+
+--------------------------------------------------------------------------------
+NOTES
+-----
+[ ] destDir is already {outputRoot}\db-scripts  (e.g. F:\build-output\db-scripts)
+[ ] Method name may be SendEMailByNetV2 or SendEmailByNetV2 — keep YOUR spelling
+[ ] If you decrypt CS before send, keep that decrypt block
+    (docs/fixes/buildtab-decrypt-before-sendemail.txt)
+[ ] Attachments (optional, separate): docs/fixes/gssemail-send-attachments-db-scripts.txt
+    This guide only adds PATHS into the mail BODY — no GSSEmail.cs change
+
+
+--------------------------------------------------------------------------------
+CHECKLIST
+--------------------------------------------------------------------------------
+[ ] Email body has "Generated Script" / "Generated Script File Location(s)"
+[ ] Path is FULL (drive + folder + filename), e.g. F:\build-output\db-scripts\combined.sql
+[ ] Destination folder line can stay for clarity
+[ ] Rebuild GssDevOpsAutomationTool → Bundle Scripts → check received email body
+
+
+================================================================================
+END
+================================================================================

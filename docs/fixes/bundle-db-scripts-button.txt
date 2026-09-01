@@ -3,6 +3,10 @@ Bundle Scripts — DBRollupScriptBuilder.exe with required -f / -t
 Settings from appsettings.json (no hardcoded paths)
 ================================================================================
 
+AFTER BUNDLE — email generated script PATH in mail body:
+  docs/fixes/buildtab-email-script-file-path-mailbody.txt
+  (add full path e.g. F:\build-output\db-scripts\combined.sql to mailBody)
+
 AFTER BUNDLE — email scripts as attachments:
   docs/fixes/gssemail-send-attachments-db-scripts.txt
   (extend SendEmailByNetV2; attach files from {outputRoot}\db-scripts\)
