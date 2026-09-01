@@ -7,6 +7,10 @@ BEFORE COPY — clear old files in db-scripts (required):
   docs/fixes/bundle-clear-db-scripts-before-copy.txt
   (delete existing files under {outputRoot}\db-scripts before copying new ones)
 
+IF FILES NOT DELETED (Directory.Delete fails / locked / readonly):
+  docs/fixes/bundle-db-scripts-clear-not-deleting.txt
+  (file-by-file delete + clear ReadOnly + verify remaining=0)
+
 AFTER BUNDLE — email generated script PATH in mail body:
   docs/fixes/buildtab-email-script-file-path-mailbody.txt
   (add full path e.g. F:\build-output\db-scripts\combined.sql to mailBody)

@@ -122,6 +122,10 @@ Prefer this shorter version when destDir is dedicated output only
 (e.g. {outputRoot}\db-scripts). Do NOT use if that folder also holds
 hand-maintained files you must keep.
 
+IF Directory.Delete DOES NOT REMOVE FILES:
+  docs/fixes/bundle-db-scripts-clear-not-deleting.txt
+  Use file-by-file File.Delete + clear ReadOnly instead.
+
 
 --------------------------------------------------------------------------------
 ALSO clear builder temp output? (optional)

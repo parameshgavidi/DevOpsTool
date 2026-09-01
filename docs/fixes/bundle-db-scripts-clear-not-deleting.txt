@@ -1,0 +1,228 @@
+================================================================================
+BuildTab.razor — FIX: db-scripts files NOT deleted
+Replace Directory.Delete(destDir, recursive: true)
+================================================================================
+
+SYMPTOM
+-------
+You pasted:
+
+    if (Directory.Exists(destDir))
+    {
+        Directory.Delete(destDir, recursive: true);
+        LogOutput += $"[INFO] Cleared script folder: {destDir}";
+    }
+
+But Explorer still shows files under F:\build-output\db-scripts
+(combined.sql, combined_Scripts.sql, combined_Unknown.sql).
+
+
+WHY Directory.Delete OFTEN FAILS ON WINDOWS
+-------------------------------------------
+Directory.Delete(path, recursive: true) throws (and skips clear) when:
+
+  1. Any file is LOCKED (open in SSMS / VS / Notepad / Explorer preview)
+  2. File has ReadOnly attribute
+  3. Antivirus briefly locks the .sql
+  4. Another process holds a handle on the folder
+
+If it throws, your OUTER catch logs:
+  [ERROR] Bundle Scripts Failed: ... Access denied / file in use ...
+and nothing is cleared.
+
+Even when Delete "works", the copy loop immediately recreates files —
+Explorer will show files again. That is expected AFTER a successful clear+copy.
+Stale = same OLD file still there with OLD timestamp / name not in this run.
+
+
+--------------------------------------------------------------------------------
+REPLACE the clear block with this robust version
+--------------------------------------------------------------------------------
+DELETE your current:
+
+            if (Directory.Exists(destDir))
+            {
+                Directory.Delete(destDir, recursive: true);
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Cleared script folder: {destDir}\r\n";
+            }
+            Directory.CreateDirectory(destDir);
+
+PASTE this instead (file-by-file + clear ReadOnly + verify):
+
+            // Robust clear — Directory.Delete(recursive) often fails on locked/readonly files
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Clearing script folder: {destDir}\r\n";
+            await InvokeAsync(StateHasChanged);
+
+            if (Directory.Exists(destDir))
+            {
+                var existing = Directory.GetFiles(destDir, "*.*", SearchOption.AllDirectories);
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Found {existing.Length} existing file(s) to delete\r\n";
+
+                var deleted = 0;
+                var failed = 0;
+                foreach (var oldFile in existing)
+                {
+                    try
+                    {
+                        // Clear ReadOnly so File.Delete can succeed
+                        var attrs = File.GetAttributes(oldFile);
+                        if ((attrs & FileAttributes.ReadOnly) != 0)
+                            File.SetAttributes(oldFile, attrs & ~FileAttributes.ReadOnly);
+
+                        File.Delete(oldFile);
+                        deleted++;
+                        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Deleted: {oldFile}\r\n";
+                    }
+                    catch (Exception delEx)
+                    {
+                        failed++;
+                        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARN] Could not delete {oldFile}: {delEx.Message}\r\n";
+                    }
+                }
+
+                // Remove empty subfolders (deepest first)
+                foreach (var sub in Directory.GetDirectories(destDir, "*", SearchOption.AllDirectories)
+                             .OrderByDescending(d => d.Length))
+                {
+                    try
+                    {
+                        if (!Directory.EnumerateFileSystemEntries(sub).Any())
+                            Directory.Delete(sub, recursive: false);
+                    }
+                    catch { /* best-effort */ }
+                }
+
+                // VERIFY — if anything remains, STOP (do not copy on top of stale files)
+                var remaining = Directory.Exists(destDir)
+                    ? Directory.GetFiles(destDir, "*.*", SearchOption.AllDirectories)
+                    : Array.Empty<string>();
+
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Clear result: deleted={deleted}, failed={failed}, remaining={remaining.Length}\r\n";
+
+                if (remaining.Length > 0)
+                {
+                    LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] Could not clear script folder. Close files in Explorer/SSMS/VS and retry.\r\n";
+                    foreach (var r in remaining)
+                        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] Still locked: {r}\r\n";
+                    await InvokeAsync(StateHasChanged);
+                    return;
+                }
+            }
+
+            Directory.CreateDirectory(destDir);
+            var copied = 0;
+            foreach (var file in scriptFiles)
+            {
+                var relative = Path.GetRelativePath(builderOutputDir, file);
+                var dest = Path.Combine(destDir, relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                File.Copy(file, dest, overwrite: true);
+                copied++;
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Copied {relative}\r\n";
+            }
+
+
+--------------------------------------------------------------------------------
+OPTIONAL helper method (cleaner)
+--------------------------------------------------------------------------------
+Paste in @code:
+
+    private int ClearFolderContents(string folder, Action<string> log)
+    {
+        if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
+            return 0;
+
+        var deleted = 0;
+        foreach (var oldFile in Directory.GetFiles(folder, "*.*", SearchOption.AllDirectories))
+        {
+            var attrs = File.GetAttributes(oldFile);
+            if ((attrs & FileAttributes.ReadOnly) != 0)
+                File.SetAttributes(oldFile, attrs & ~FileAttributes.ReadOnly);
+            File.Delete(oldFile);
+            deleted++;
+            log($"Deleted: {oldFile}");
+        }
+
+        foreach (var sub in Directory.GetDirectories(folder, "*", SearchOption.AllDirectories)
+                     .OrderByDescending(d => d.Length))
+        {
+            try
+            {
+                if (!Directory.EnumerateFileSystemEntries(sub).Any())
+                    Directory.Delete(sub, recursive: false);
+            }
+            catch { }
+        }
+
+        return deleted;
+    }
+
+Then call:
+
+            if (Directory.Exists(destDir))
+            {
+                var n = ClearFolderContents(destDir, msg =>
+                    LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] {msg}\r\n");
+                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Cleared {n} file(s) from {destDir}\r\n";
+
+                var remaining = Directory.GetFiles(destDir, "*.*", SearchOption.AllDirectories);
+                if (remaining.Length > 0)
+                {
+                    LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] Folder not empty after clear — close locked files and retry\r\n";
+                    return;
+                }
+            }
+            Directory.CreateDirectory(destDir);
+
+
+--------------------------------------------------------------------------------
+CHECK LOG OUTPUT after Bundle Scripts
+--------------------------------------------------------------------------------
+You MUST see lines like:
+
+  [INFO] Clearing script folder: F:\build-output\db-scripts
+  [INFO] Found 3 existing file(s) to delete
+  [INFO] Deleted: F:\build-output\db-scripts\combined.sql
+  [INFO] Deleted: F:\build-output\db-scripts\combined_Scripts.sql
+  [INFO] Deleted: F:\build-output\db-scripts\combined_Unknown.sql
+  [INFO] Clear result: deleted=3, failed=0, remaining=0
+  [INFO] Copied combined.sql
+  ...
+
+If you see:
+  [WARN] Could not delete ... The process cannot access the file ...
+→ Close the file in SSMS / VS / Explorer preview, then retry.
+
+If you NEVER see "Clearing script folder" / "Deleted:":
+→ App was not rebuilt, or clear block is not on the path that ran.
+→ Rebuild GssDevOpsAutomationTool, restart, Bundle Scripts again.
+
+If you see Deleted then Copied for the SAME names:
+→ Clear WORKED. Files in Explorer after the run are the NEW copies (expected).
+
+
+--------------------------------------------------------------------------------
+CONFIRM destDir PATH
+--------------------------------------------------------------------------------
+Log destDir before clear. It must be exactly:
+
+  F:\build-output\db-scripts
+
+Not F:\build-output\db_scripts (underscore) and not a different outputRoot.
+
+
+--------------------------------------------------------------------------------
+CHECKLIST
+--------------------------------------------------------------------------------
+[ ] Replaced Directory.Delete(recursive) with file-by-file File.Delete
+[ ] Clears ReadOnly attribute before delete
+[ ] Logs each Deleted: path
+[ ] Stops if remaining > 0
+[ ] Rebuild + restart app
+[ ] Close any open .sql in that folder before Bundle Scripts
+[ ] OUTPUT LOG shows deleted=N, remaining=0
+
+
+================================================================================
+END
+================================================================================
