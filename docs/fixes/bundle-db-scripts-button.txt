@@ -196,12 +196,28 @@ Optional UI (next to Script Source):
                 return;
             }
 
-            // Clear previous generated scripts first (overwrite does NOT remove
-            // renamed/removed files). See docs/fixes/bundle-clear-db-scripts-before-copy.txt
+            // Clear previous generated scripts first.
+            // Prefer file-by-file delete — Directory.Delete(recursive) often fails
+            // on locked/readonly .sql files (see bundle-db-scripts-clear-not-deleting.txt).
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Clearing script folder: {destDir}\r\n";
             if (Directory.Exists(destDir))
             {
-                Directory.Delete(destDir, recursive: true);
-                LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Cleared script folder: {destDir}\r\n";
+                foreach (var oldFile in Directory.GetFiles(destDir, "*.*", SearchOption.AllDirectories))
+                {
+                    var attrs = File.GetAttributes(oldFile);
+                    if ((attrs & FileAttributes.ReadOnly) != 0)
+                        File.SetAttributes(oldFile, attrs & ~FileAttributes.ReadOnly);
+                    File.Delete(oldFile);
+                    LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Deleted: {oldFile}\r\n";
+                }
+
+                var remaining = Directory.GetFiles(destDir, "*.*", SearchOption.AllDirectories);
+                if (remaining.Length > 0)
+                {
+                    LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] Could not clear script folder ({remaining.Length} file(s) still locked). Close Explorer/SSMS/VS and retry.\r\n";
+                    await InvokeAsync(StateHasChanged);
+                    return;
+                }
             }
             Directory.CreateDirectory(destDir);
             var copied = 0;
