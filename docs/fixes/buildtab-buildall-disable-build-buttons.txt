@@ -1,0 +1,162 @@
+================================================================================
+BuildTab.razor — Click Build All → disable ALL Build buttons
+================================================================================
+
+PROBLEM
+-------
+While Build All is running, each row still shows an enabled Build button.
+User can click individual Build (or Build All again) and start overlapping builds.
+
+GOAL
+----
+On Build All click: disable every Action "Build" button (and Build All itself)
+until Build All finishes.
+
+
+--------------------------------------------------------------------------------
+1) BuildTab.razor — ADD field (near _isGettingLatest / _buildCts)
+--------------------------------------------------------------------------------
+
+    private bool _isBuilding;
+
+
+--------------------------------------------------------------------------------
+2) BuildTab.razor — UI: disable ALL Build buttons + Build All
+--------------------------------------------------------------------------------
+In the APPLICATIONS Action column, REPLACE the Build button with:
+
+                                    <button class="btn-primary"
+                                            disabled="@(_isGettingLatest || _isBuilding)"
+                                            @onclick="() => BuildOneAsync(app)">
+                                        Build
+                                    </button>
+
+Build All button — REPLACE disabled / onclick with:
+
+                <button class="btn-primary"
+                        disabled="@(BuildApps.Count == 0 || _isGettingLatest || _isBuilding)"
+                        @onclick="BuildAllAsync">
+                    Build All
+                </button>
+
+If your method is named BuildAll (not BuildAllAsync), keep your name —
+only add _isBuilding to disabled.
+
+
+--------------------------------------------------------------------------------
+3) BuildTab.razor — BuildAll / BuildAllAsync: set _isBuilding
+--------------------------------------------------------------------------------
+At the START of BuildAll / BuildAllAsync (after the empty-list guard),
+BEFORE the foreach, ADD:
+
+        if (_isBuilding)
+            return;
+
+        _isBuilding = true;
+        await InvokeAsync(StateHasChanged);
+
+WRAP the rest of the method so _isBuilding is cleared even on error.
+Example (keeps your sequential BuildApplication loop):
+
+    private async Task BuildAllAsync()
+    {
+        if (BuildApps.Count == 0)
+            return;
+
+        if (_isBuilding)
+            return;
+
+        _buildCts?.Cancel();
+        _buildCts?.Dispose();
+        _buildCts = new CancellationTokenSource();
+        var token = _buildCts.Token;
+
+        _isBuilding = true;
+        LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Build All started for {BuildApps.Count} applications\r\n";
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            // Same as clicking Build on each app — ONE AT A TIME
+            foreach (var app in BuildApps.ToList())
+            {
+                if (token.IsCancellationRequested)
+                    break;
+
+                try
+                {
+                    app.Status = "Building";
+                    await InvokeAsync(StateHasChanged);
+
+                    await BuildApplication(app.Name, token);
+                }
+                catch (OperationCanceledException)
+                {
+                    app.Status = "Cancelled";
+                    LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARN] Build All cancelled\r\n";
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    // ONLY this app — never mark every app Failed
+                    app.Status = "Failed";
+                    LogOutput += $"[{DateTime.Now:HH:mm:ss}] [ERROR] Build All error for {app.Name}: {ex.Message}\r\n";
+                }
+
+                await InvokeAsync(StateHasChanged);
+            }
+
+            LogOutput += $"[{DateTime.Now:HH:mm:ss}] [INFO] Build All finished\r\n";
+        }
+        finally
+        {
+            _isBuilding = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+If you already have sequential BuildAll from
+docs/fixes/buildtab-buildall-sequential.txt — do NOT replace the whole
+method again. Only ADD:
+  - if (_isBuilding) return;
+  - _isBuilding = true; + StateHasChanged before the loop
+  - try/finally with _isBuilding = false in finally
+
+
+--------------------------------------------------------------------------------
+4) OPTIONAL — also disable during single Build
+--------------------------------------------------------------------------------
+Same flag so one Build cannot overlap another:
+
+    private async Task BuildOneAsync(Application app)
+    {
+        if (_isBuilding || _isGettingLatest)
+            return;
+
+        _isBuilding = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            await BuildApplication(app.Name, CancellationToken.None);
+        }
+        finally
+        {
+            _isBuilding = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+Adapt to your BuildOne / BuildApplication signature if different.
+
+
+--------------------------------------------------------------------------------
+CHECKLIST
+--------------------------------------------------------------------------------
+[ ] Added private bool _isBuilding;
+[ ] Every row Build button: disabled="@(_isGettingLatest || _isBuilding)"
+[ ] Build All button: disabled includes _isBuilding
+[ ] Build All sets _isBuilding = true at start, false in finally
+[ ] Save → rebuild tool → Get latest → click Build All
+[ ] All four Build buttons go grey/disabled immediately
+[ ] Build All button also disabled while running
+[ ] After Build All finishes, Build buttons enabled again
