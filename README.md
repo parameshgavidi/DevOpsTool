@@ -12,3 +12,11 @@ workflow (BUILD → SIT → CAT → PROD, with backup, DB script deploy, and log
 ![DevOps deployment flow](docs/deployment-flow.png)
 
 Plain-text Mermaid source for copy-paste: [`docs/deployment-flow.txt`](docs/deployment-flow.txt)
+
+## Architecture — split BuildTab into class files
+
+BuildTab `@code` should stay thin (UI only). Move git, build, DB rollup, email,
+and logging into `Services/` classes:
+
+- Guide: [`docs/architecture/BUILDTAB-CLASS-STRUCTURE.txt`](docs/architecture/BUILDTAB-CLASS-STRUCTURE.txt)
+- Copy-paste skeletons: [`docs/architecture/skeletons/`](docs/architecture/skeletons/)

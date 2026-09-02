@@ -1,0 +1,519 @@
+================================================================================
+BuildTab.razor — move inline @code into structured class files
+Paste-ready architecture guide for the .NET MAUI Blazor Hybrid DevOps Tool
+================================================================================
+
+WHY
+---
+BuildTab.razor @code has grown into a "god file": git, build, publish copy,
+DB rollup, email, day-wise logs, MSI setup, migration folders, process runners.
+
+Goal:
+  - BuildTab.razor     → markup + thin UI event handlers only
+  - BuildTab.razor.cs  → UI state fields + injects services + calls them
+  - Services/*.cs      → real work (one responsibility per class)
+
+
+================================================================================
+TARGET FOLDER LAYOUT (in your MAUI app project — NOT this docs repo)
+================================================================================
+
+  YourMauiApp/
+  ├── Components/
+  │   └── Pages/
+  │       ├── BuildTab.razor              ← markup only
+  │       └── BuildTab.razor.cs           ← partial class, UI state + wiring
+  ├── Models/
+  │   └── DeploymentModels.cs             ← already exists (BuildSettings, Application, …)
+  ├── Services/
+  │   ├── Process/
+  │   │   └── ProcessRunner.cs            ← RunCommandAsync / RunProcessCaptureAsync
+  │   ├── Git/
+  │   │   ├── GitService.cs               ← fetch/pull/get-latest, load branches
+  │   │   └── BranchNameHelper.cs         ← Normalize / Split / Parse / Compare
+  │   ├── Build/
+  │   │   ├── BuildOrchestrator.cs        ← BuildApplication / BuildAll / Restore
+  │   │   ├── PublishCopyService.cs       ← PrecompiledWeb / publish → output
+  │   │   ├── SetupProjectBuilder.cs      ← BuildSetupProjectAsync (devenv MSI)
+  │   │   └── OutputPathService.cs        ← GetAppOutputFolder / branch version folder
+  │   ├── DbRollup/
+  │   │   ├── DbRollupService.cs          ← BundleDbScripts / EnsureBranchFolders
+  │   │   └── DbBranchService.cs          ← LoadDbBranchesAsync
+  │   ├── Logging/
+  │   │   └── DayWiseLogService.cs        ← AppendLog / ViewTodayLog / paths
+  │   ├── Email/
+  │   │   └── BuildNotificationService.cs ← SendEmail after bundle / attachments
+  │   └── Migration/
+  │       └── MigrationFolderService.cs   ← EnsureMigrationFolders / copy to share
+
+
+================================================================================
+METHOD → CLASS MAP (everything currently living in BuildTab @code)
+================================================================================
+
+--- ProcessRunner.cs ---
+  RunCommandAsync(...)
+  RunProcessCaptureAsync(...)
+
+--- BranchNameHelper.cs (static helpers, no DI needed) ---
+  NormalizeBranchName
+  SplitBranchTokens
+  ParseRemoteBranch
+  ParseGssBranch / GssBranchParts
+  CompareGssBranchNames
+  GetPreviousBranch
+  TrimGssVersionFolder
+  CompareScriptFolderNames / TryParseVersionParts / PickLatestScriptFolder
+  GetPreviousScriptFolder
+  ResolveDbGitRoot
+
+--- GitService.cs ---
+  GetLatestAndShowAppsAsync          (or: GetLatestFromRepoAsync + LoadApps)
+  GetLatestFromRepoAsync
+  LoadRepoBranchesAsync
+  TryGetCurrentGitBranch
+  PullBranchIntoFolderAsync
+  GetLatestDbProjectAsync
+
+--- OutputPathService.cs ---
+  GetAppOutputFolder
+  ResolveAppOutputFolder
+  (uses TryGetCurrentGitBranch + TrimGssVersionFolder)
+
+--- BuildOrchestrator.cs ---
+  BuildApplication / BuildOneAsync
+  BuildAll / BuildAllAsync
+  RestorePackagesAsync
+  CleanPrecompiledOutputAsync
+
+--- PublishCopyService.cs ---
+  Copy published / PrecompiledWeb / Mailer / GSSApi artifacts into GetAppOutputFolder
+  (the big if (exit == 0) block from BuildApplication)
+
+--- SetupProjectBuilder.cs ---
+  BuildSetupProjectAsync             (Web2ClientBridge setup.vdproj / devenv)
+
+--- DbBranchService.cs ---
+  LoadDbBranchesAsync
+
+--- DbRollupService.cs ---
+  BundleDbScriptsAsync
+  EnsureFromAndToBranchFoldersAsync
+  EnsureDbBranchFolderAsync
+  ClearFolderContents
+  CollectDbScriptAttachmentPaths / ZipDbScriptsFolder  (if kept in tool)
+
+--- DayWiseLogService.cs ---
+  GetLogsDirectory
+  GetTodayLogFilePath
+  AppendLog / AppendLogAsync
+  FlushPendingLogs
+  ViewTodayLogAsync  (returns text for LogOutput)
+
+--- BuildNotificationService.cs ---
+  SendBundleCompleteEmail(...)       (plaintext CS + attachments + mail body paths)
+
+--- MigrationFolderService.cs ---
+  GetSprintPackageRoot
+  GetServerApplicationDir / GetServerDatabaseDir / GetServerWebDir
+  EnsureMigrationFolders
+  CopyBuildToMigrationShareAsync
+
+--- STAY IN BuildTab.razor.cs (UI only) ---
+  fields: LogOutput, BuildApps, RepoRoot, FromBranch, ToBranch, _isBuilding,
+          _isGettingLatest, _buildCts, ShowApps, selected repo branch, …
+  OnInitialized / OnInitializedAsync / OnAfterRenderAsync
+  OnFromBranchChanged / OnToBranchChanged
+  BrowseScripts / BrowseDbRollupBranchRoot
+  SelectTab / HandleBuildSuccessChanged
+  LoadApplicationsFromConfigAsync   (reads IConfiguration → BuildApps list)
+  thin wrappers that call services then StateHasChanged
+
+
+================================================================================
+STEP 0 — Create BuildTab.razor.cs (code-behind) FIRST
+================================================================================
+Do this before extracting services. Zero behavior change.
+
+1. In Solution Explorer → BuildTab.razor → Add → Class → name: BuildTab.razor.cs
+2. Move EVERYTHING inside @code { } into that file as a partial class.
+3. Leave BuildTab.razor with markup only (no @code block).
+
+BuildTab.razor.cs skeleton:
+
+    using Microsoft.AspNetCore.Components;
+    // … other usings …
+
+    namespace YourApp.Components.Pages;
+
+    public partial class BuildTab : ComponentBase
+    {
+        // paste all fields + methods that were inside @code { }
+    }
+
+4. Rebuild. Confirm Build / Get latest / Bundle / DB dropdowns still work.
+5. Only THEN extract services (below).
+
+
+================================================================================
+STEP 1 — ProcessRunner.cs
+================================================================================
+File: Services/Process/ProcessRunner.cs
+
+    namespace YourApp.Services.Process;
+
+    public class ProcessRunner
+    {
+        public async Task<int> RunAsync(
+            string fileName,
+            string arguments,
+            string workingDirectory,
+            Action<string> onStdout,
+            Action<string> onStderr,
+            CancellationToken cancellation = default)
+        {
+            // MOVE body of RunProcessCaptureAsync / RunCommandAsync here
+            // Call onStdout/onStderr instead of touching LogOutput directly
+        }
+    }
+
+BuildTab keeps:
+    await _process.RunAsync(..., line => AppendToUiLog(line), ...);
+
+
+================================================================================
+STEP 2 — BranchNameHelper.cs (pure static — easiest win)
+================================================================================
+File: Services/Git/BranchNameHelper.cs
+
+    namespace YourApp.Services.Git;
+
+    public static class BranchNameHelper
+    {
+        public static string NormalizeBranchName(string raw) { … }
+        public static IEnumerable<string> SplitBranchTokens(string? line) { … }
+        public static string? ParseRemoteBranch(string line) { … }
+        public static int CompareGssBranchNames(string a, string b) { … }
+        // … rest of pure string helpers from the map above
+    }
+
+Delete the private static copies from BuildTab. Call BranchNameHelper.X everywhere.
+
+
+================================================================================
+STEP 3 — DayWiseLogService.cs
+================================================================================
+File: Services/Logging/DayWiseLogService.cs
+
+    namespace YourApp.Services.Logging;
+
+    public class DayWiseLogService
+    {
+        public string GetLogsDirectory(string? repoRoot) { … }
+        public string GetTodayLogFilePath(string? repoRoot) { … }
+        public void Append(string? repoRoot, string text) { … }
+        public Task AppendAsync(string? repoRoot, string text) { … }
+        public string ReadToday(string? repoRoot) { … }   // for View Log
+    }
+
+BuildTab:
+    private void AppendToUiLog(string text)
+    {
+        LogOutput += text;
+        _logs.Append(RepoRoot, text);
+        // flush / InvokeAsync(StateHasChanged) as you do today
+    }
+
+
+================================================================================
+STEP 4 — OutputPathService.cs
+================================================================================
+File: Services/Build/OutputPathService.cs
+
+    public class OutputPathService
+    {
+        public string GetAppOutputFolder(
+            Application app,
+            string outputRoot,
+            string? repoRoot) { … }
+
+        // moves GetAppOutputFolder + TryGetCurrentGitBranch + TrimGssVersionFolder
+    }
+
+
+================================================================================
+STEP 5 — GitService.cs
+================================================================================
+File: Services/Git/GitService.cs
+
+    public class GitService
+    {
+        private readonly ProcessRunner _process;
+
+        public GitService(ProcessRunner process) => _process = process;
+
+        public async Task<bool> GetLatestFromRepoAsync(
+            Application app,
+            string workingDir,
+            Action<string> log,
+            CancellationToken cancellation) { … }
+
+        public async Task<List<string>> LoadRemoteBranchesAsync(
+            string repoRoot,
+            string gitBranchesCommand,
+            Action<string> log,
+            CancellationToken cancellation = default) { … }
+
+        public async Task PullBranchIntoFolderAsync(
+            string branch, string folder, bool justCreated,
+            string repoRoot, Action<string> log) { … }
+    }
+
+LoadDbBranchesAsync becomes a thin BuildTab wrapper:
+
+    private async Task LoadDbBranchesAsync()
+    {
+        DbBranchOptions = await _git.LoadRemoteBranchesAsync(
+            RepoRoot, BuildSettings.GitBranchesCommand, AppendToUiLog);
+        await InvokeAsync(StateHasChanged);
+    }
+
+
+================================================================================
+STEP 6 — DbRollupService.cs + DbBranchService.cs
+================================================================================
+File: Services/DbRollup/DbRollupService.cs
+
+    public class DbRollupService
+    {
+        private readonly ProcessRunner _process;
+        private readonly GitService _git;
+
+        public async Task BundleAsync(
+            string exePath,
+            string fromBranch,
+            string toBranch,
+            string tempOutputDir,
+            string destDbScriptsDir,
+            Action<string> log,
+            CancellationToken cancellation = default)
+        {
+            // 1) run DBRollupScriptBuilder.exe -f/-t
+            // 2) ClearFolderContents(dest)
+            // 3) copy new files
+        }
+
+        public int ClearFolderContents(string folder, Action<string> log) { … }
+
+        public async Task EnsureBranchFoldersAsync(
+            string branchRoot, string from, string to,
+            string repoRoot, Action<string> log) { … }
+    }
+
+
+================================================================================
+STEP 7 — BuildOrchestrator.cs + PublishCopyService.cs + SetupProjectBuilder.cs
+================================================================================
+This is the biggest move. Do it AFTER ProcessRunner + OutputPath + Git work.
+
+BuildOrchestrator.BuildApplication:
+  1. RestorePackagesAsync
+  2. CleanPrecompiledOutputAsync (AspNetWebForms / Asmx)
+  3. Run buildCommand via ProcessRunner
+  4. if exit==0 → PublishCopyService.CopyArtifacts(...)
+  5. if Web2ClientBridge → SetupProjectBuilder.BuildSetupProjectAsync(...)
+  6. optional MigrationFolderService.CopyBuildToMigrationShareAsync(...)
+
+BuildTab.BuildOneAsync / BuildAllAsync stay thin:
+
+    private async Task BuildOneAsync(Application app)
+    {
+        await _build.BuildApplicationAsync(app, BuildContextFromUi(), AppendToUiLog, _buildCts.Token);
+        await InvokeAsync(StateHasChanged);
+    }
+
+
+================================================================================
+STEP 8 — BuildNotificationService.cs
+================================================================================
+Wrap the email try/catch (plaintext connection string, mail body listing
+db-scripts files, attachments). BuildTab calls it AFTER Bundle succeeds.
+
+    await _notify.SendDbScriptsEmailAsync(settings, destDir, AppendToUiLog);
+
+
+================================================================================
+STEP 9 — Register DI in MauiProgram.cs
+================================================================================
+
+    builder.Services.AddSingleton<ProcessRunner>();
+    builder.Services.AddSingleton<DayWiseLogService>();
+    builder.Services.AddSingleton<OutputPathService>();
+    builder.Services.AddSingleton<GitService>();
+    builder.Services.AddSingleton<DbRollupService>();
+    builder.Services.AddSingleton<DbBranchService>();
+    builder.Services.AddSingleton<PublishCopyService>();
+    builder.Services.AddSingleton<SetupProjectBuilder>();
+    builder.Services.AddSingleton<BuildOrchestrator>();
+    builder.Services.AddSingleton<BuildNotificationService>();
+    builder.Services.AddSingleton<MigrationFolderService>();
+
+BuildTab.razor.cs inject:
+
+    [Inject] private ProcessRunner Process { get; set; } = default!;
+    [Inject] private GitService Git { get; set; } = default!;
+    [Inject] private BuildOrchestrator Build { get; set; } = default!;
+    [Inject] private DbRollupService DbRollup { get; set; } = default!;
+    [Inject] private DayWiseLogService Logs { get; set; } = default!;
+    [Inject] private BuildNotificationService Notify { get; set; } = default!;
+    [Inject] private OutputPathService OutputPaths { get; set; } = default!;
+    [Inject] private MigrationFolderService Migration { get; set; } = default!;
+    [Inject] private IConfiguration Config { get; set; } = default!;
+
+
+================================================================================
+WHAT BuildTab.razor.cs LOOKS LIKE AFTER (thin)
+================================================================================
+
+    public partial class BuildTab : ComponentBase
+    {
+        // --- injects (see STEP 9) ---
+
+        // --- UI state only ---
+        private string LogOutput = "";
+        private List<Application> BuildApps = new();
+        private string RepoRoot = "";
+        private string FromBranch = "";
+        private string ToBranch = "";
+        private List<string> DbBranchOptions = new();
+        private bool _isBuilding;
+        private bool _isGettingLatest;
+        private bool _showApps;
+        private CancellationTokenSource? _buildCts;
+
+        private async Task GetLatestClicked()
+        {
+            _isGettingLatest = true;
+            await InvokeAsync(StateHasChanged);
+            try
+            {
+                await Git.GetLatestRepoRootAsync(RepoRoot, AppendToUiLog);
+                await LoadApplicationsFromConfigAsync();
+                _showApps = true;
+            }
+            finally
+            {
+                _isGettingLatest = false;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+
+        private async Task BuildAllAsync()
+        {
+            if (_isBuilding || BuildApps.Count == 0) return;
+            _isBuilding = true;
+            await InvokeAsync(StateHasChanged);
+            try
+            {
+                foreach (var app in BuildApps)
+                    await Build.BuildApplicationAsync(app, /* context */, AppendToUiLog, _buildCts!.Token);
+            }
+            finally
+            {
+                _isBuilding = false;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+
+        private async Task BundleClicked()
+        {
+            await DbRollup.BundleAsync(/* settings from UI */, AppendToUiLog);
+            await Notify.SendDbScriptsEmailAsync(/* … */, AppendToUiLog);
+        }
+
+        private void AppendToUiLog(string text)
+        {
+            LogOutput += text;
+            Logs.Append(RepoRoot, text);
+        }
+    }
+
+
+================================================================================
+SAFE MIGRATION ORDER (do one PR / one rebuild at a time)
+================================================================================
+
+  [1] BuildTab.razor.cs code-behind only          ← no logic change
+  [2] BranchNameHelper (static)                   ← delete private static copies
+  [3] ProcessRunner                               ← all Process.Start go here
+  [4] DayWiseLogService
+  [5] OutputPathService
+  [6] GitService + DbBranchService
+  [7] DbRollupService
+  [8] PublishCopyService + SetupProjectBuilder
+  [9] BuildOrchestrator
+  [10] BuildNotificationService + MigrationFolderService
+
+After EACH step: Rebuild → smoke test Get latest / one Build / Bundle Scripts.
+
+
+================================================================================
+RULES WHILE REFACTORING
+================================================================================
+
+1. Services must NOT call StateHasChanged or touch Blazor UI controls.
+   Pass Action<string> log / return data; BuildTab updates UI.
+
+2. Do NOT put IConfiguration reads inside every method — load BuildSettings
+   once (OnInitialized) and pass values / a settings object into services.
+
+3. Keep Application / BuildSettings in Models/DeploymentModels.cs (already).
+
+4. One class = one job. If a method needs git + process + paths, inject those
+   services — do not copy-paste Process.Start again.
+
+5. Prefer moving the EXACT working method body first (cut/paste), then clean
+   naming. Do not rewrite and move in the same step.
+
+6. After extraction, delete the old private method from BuildTab so there is
+   only ONE implementation (same lesson as LoadDbBranchesAsync duplicates).
+
+
+================================================================================
+OPTIONAL LATER (SIT / CAT / PROD tabs)
+================================================================================
+Same pattern when those tabs grow:
+
+  Services/Deploy/BackupService.cs
+  Services/Deploy/FileCopyDeployService.cs
+  Services/Deploy/MsiInstallService.cs
+  Services/Deploy/DbScriptDeployService.cs
+  Services/Deploy/LoadBalancerDrainService.cs   (PROD health.gif ↔ health.dat)
+
+Shared ProcessRunner / DayWiseLogService / GitService stay singleton.
+
+
+================================================================================
+CHECKLIST
+================================================================================
+
+[ ] BuildTab.razor has NO @code block (markup only)
+[ ] BuildTab.razor.cs is partial class with UI state + thin handlers
+[ ] Branch helpers are in BranchNameHelper (no duplicate private statics)
+[ ] Process.Start / cmd.exe only inside ProcessRunner
+[ ] Build / Bundle / Get latest / LoadDbBranches call services
+[ ] Services registered in MauiProgram.cs
+[ ] Rebuild + smoke test after each extraction step
+[ ] No second copy of LoadDbBranchesAsync / BuildApplication left behind
+
+
+RELATED FIX DOCS (behavior stays the same; only location of code changes)
+------------------------------------------------------------------------
+  docs/fixes/loaddbbranchesasync-full-method.txt
+  docs/fixes/buildapplication-full-method-outputfolder.txt
+  docs/fixes/buildtab-get-latest-show-apps.txt
+  docs/fixes/bundle-db-scripts-button.txt
+  docs/fixes/daywise-logs-viewlog-remove-sidebar.txt
+  docs/fixes/web-to-client-bridge-setup-msi-devenv-process.txt
+  docs/fixes/MIGRATION-FOLDER-MAINTENANCE.txt
+  docs/fixes/gssemail-send-attachments-db-scripts.txt
