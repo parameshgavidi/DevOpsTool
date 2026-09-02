@@ -1,24 +1,22 @@
 // ============================================================
-// COPY into your MAUI app next to BuildTab.razor as BuildTab.razor.cs
-// After moving @code here, delete the @code block from the .razor file.
-// Then replace method bodies with service calls (see BUILDTAB-CLASS-STRUCTURE.txt).
+// COPY next to BuildTab.razor as BuildTab.razor.cs
 // ============================================================
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.Configuration;
-using YourApp.Services.Build;
-using YourApp.Services.DbRollup;
-using YourApp.Services.Email;
-using YourApp.Services.Git;
-using YourApp.Services.Logging;
-using YourApp.Services.Migration;
-using YourApp.Services.Process;
+using GssDevOpsAutomationTool.Services;
+using GssDevOpsAutomationTool.Services.Build;
+using GssDevOpsAutomationTool.Services.DbRollup;
+using GssDevOpsAutomationTool.Services.Email;
+using GssDevOpsAutomationTool.Services.Git;
+using GssDevOpsAutomationTool.Services.Logging;
+using GssDevOpsAutomationTool.Services.Migration;
 
-namespace YourApp.Components.Pages;
+namespace GssDevOpsAutomationTool.Components.Pages;
 
 public partial class BuildTab : ComponentBase
 {
     [Inject] private IConfiguration Config { get; set; } = default!;
-    [Inject] private ProcessRunner Process { get; set; } = default!;
+    [Inject] private IBuildService BuildSvc { get; set; } = default!;
     [Inject] private GitService Git { get; set; } = default!;
     [Inject] private BuildOrchestrator Build { get; set; } = default!;
     [Inject] private DbRollupService DbRollup { get; set; } = default!;
@@ -27,7 +25,6 @@ public partial class BuildTab : ComponentBase
     [Inject] private OutputPathService OutputPaths { get; set; } = default!;
     [Inject] private MigrationFolderService Migration { get; set; } = default!;
 
-    // --- UI state (keep in the page) ---
     private string LogOutput = "";
     private bool _isBuilding;
     private bool _isGettingLatest;
@@ -38,15 +35,11 @@ public partial class BuildTab : ComponentBase
     private List<string> DbBranchOptions = new();
     private CancellationTokenSource? _buildCts;
 
-    // PASTE remaining fields from your current @code (BuildApps, settings, …)
-
     private void AppendToUiLog(string text)
     {
         LogOutput += text;
         Logs.Append(RepoRoot, text);
     }
-
-    // Example thin handlers — wire onclick to these names in the .razor markup:
 
     private async Task GetLatestClicked()
     {
@@ -55,7 +48,6 @@ public partial class BuildTab : ComponentBase
         try
         {
             // await Git.GetLatestFromRepoAsync(...);
-            // await LoadApplicationsFromConfigAsync();
             _showApps = true;
         }
         finally
@@ -83,14 +75,11 @@ public partial class BuildTab : ComponentBase
 
     private async Task BundleClicked()
     {
-        // await DbRollup.BundleAsync(...);
-        // await Notify.SendDbScriptsEmailAsync(...);
         await Task.CompletedTask;
     }
 
     private async Task LoadDbBranchesAsync()
     {
-        // DbBranchOptions = await Git.LoadRemoteBranchesAsync(...);
         await InvokeAsync(StateHasChanged);
     }
 }

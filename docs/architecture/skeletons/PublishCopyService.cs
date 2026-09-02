@@ -1,7 +1,7 @@
 // ============================================================
-// COPY into your MAUI app: Services/Build/PublishCopyService.cs
+// COPY into: Services/Build/PublishCopyService.cs
 // ============================================================
-namespace YourApp.Services.Build;
+namespace GssDevOpsAutomationTool.Services.Build;
 
 public class PublishCopyService
 {
@@ -15,8 +15,7 @@ public class PublishCopyService
         string outputRoot,
         Action<string> log)
     {
-        // PASTE the if (exit == 0) PrecompiledWeb / publish / Mailer / GSSApi
-        // copy block from BuildApplication (buildtab-gss-webservice-and-gssweb-full)
+        // PASTE the if (exit == 0) PrecompiledWeb / publish / Mailer / GSSApi copy block
         await Task.CompletedTask;
         throw new NotImplementedException();
     }

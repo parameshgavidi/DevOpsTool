@@ -1,7 +1,7 @@
 // ============================================================
-// COPY into your MAUI app: Services/Build/OutputPathService.cs
+// COPY into: Services/Build/OutputPathService.cs
 // ============================================================
-namespace YourApp.Services.Build;
+namespace GssDevOpsAutomationTool.Services.Build;
 
 public class OutputPathService
 {
@@ -11,7 +11,6 @@ public class OutputPathService
         string? currentBranchOrVersion)
     {
         // PASTE GetAppOutputFolder / ResolveAppOutputFolder
-        // outputRoot \ branchVersion \ outputSubfolder
         throw new NotImplementedException();
     }
 }

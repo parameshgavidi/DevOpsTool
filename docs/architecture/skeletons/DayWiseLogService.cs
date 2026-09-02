@@ -1,13 +1,12 @@
 // ============================================================
-// COPY into your MAUI app: Services/Logging/DayWiseLogService.cs
+// COPY into: Services/Logging/DayWiseLogService.cs
 // ============================================================
-namespace YourApp.Services.Logging;
+namespace GssDevOpsAutomationTool.Services.Logging;
 
 public class DayWiseLogService
 {
     public string GetLogsDirectory(string? repoRoot)
     {
-        // PASTE from daywise-logs-viewlog-remove-sidebar.txt
         throw new NotImplementedException();
     }
 
@@ -28,7 +27,6 @@ public class DayWiseLogService
 
     public string ReadToday(string? repoRoot)
     {
-        // used by View Log button
         throw new NotImplementedException();
     }
 }
