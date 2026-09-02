@@ -1,0 +1,226 @@
+================================================================================
+ALIGN WITH EXISTING BuildService / IBuildService
+Your folders are ready — do NOT create a second ProcessRunner
+================================================================================
+
+WHAT YOU ALREADY HAVE (keep it)
+-------------------------------
+Services/
+  BuildService.cs      ← implements IBuildService
+  IBuildService.cs
+  FolderPickerService.cs / FolderPickerServiceWin.cs / IFolderPicker.cs
+
+IBuildService methods (confirmed from your file):
+
+  1) Task<int> RunCommandAsync(workingDirectory, command, onOutput, cancellationToken)
+       → 23 references — this IS the process runner everyone should call
+
+  2) string? ResolveMsBuildPath(bool netFramework)
+       → 6 references — MSBuild.exe path (VS / .NET Framework)
+
+  3) string? ResolveVisualStudioIdePath()
+       → 3 references — devenv.com for setup.vdproj / MSI
+
+BuildService private helpers (leave inside BuildService):
+  DiscoverMSBuildInstances
+  GetMsBuildFromInstance
+  GetMsBuildPath
+  FindVisualStudioMsBuild
+  FindVisualStudioIde
+  IsInPath
+  (+ RunCommandAsync body)
+
+
+IMPORTANT — naming
+------------------
+Your BuildService is NOT the "build all apps" orchestrator.
+It is shared infrastructure: run shell commands + find MSBuild/devenv.
+
+  OLD guide name          YOUR real class
+  --------------------    --------------------------
+  ProcessRunner      →    IBuildService / BuildService   (KEEP)
+  SetupProjectBuilder→    uses ResolveVisualStudioIdePath + RunCommandAsync
+  BuildOrchestrator  →    NEW class in Services/Build/
+
+
+================================================================================
+YOUR FOLDERS → WHAT GOES IN EACH (empty .cs files you created)
+================================================================================
+
+Services/
+├── Process/                          ← OPTIONAL move later
+│   └── (leave empty for now, OR move BuildService here later)
+│
+├── Build/                            ← NEW orchestration (from BuildTab @code)
+│   ├── BuildOrchestrator.cs          ← BuildApplication, BuildAll, RestorePackages,
+│   │                                   CleanPrecompiledOutput
+│   ├── PublishCopyService.cs         ← PrecompiledWeb / publish copy to output
+│   ├── SetupProjectBuilder.cs        ← BuildSetupProjectAsync (calls IBuildService)
+│   └── OutputPathService.cs          ← GetAppOutputFolder, branch version folder
+│
+├── Git/
+│   ├── GitService.cs                 ← GetLatest*, Load*Branches, PullBranchIntoFolder
+│   └── BranchNameHelper.cs           ← NormalizeBranchName, SplitBranchTokens, …
+│
+├── DbRollup/
+│   ├── DbRollupService.cs            ← BundleDbScriptsAsync, ClearFolderContents
+│   └── DbBranchService.cs            ← LoadDbBranchesAsync (or method on GitService)
+│
+├── Logging/
+│   └── DayWiseLogService.cs          ← AppendLog, GetTodayLogFilePath, ViewTodayLog
+│
+├── Email/
+│   └── BuildNotificationService.cs   ← SendEmail after Bundle (plaintext CS)
+│
+├── Migration/
+│   └── MigrationFolderService.cs     ← Migration share copy
+│
+├── BuildService.cs                   ← KEEP HERE for now (do not delete)
+├── IBuildService.cs                  ← KEEP
+└── FolderPicker* / IFolderPicker     ← KEEP (UI browse folders)
+
+
+================================================================================
+DO THIS NEXT (safe order — matches your empty classes)
+================================================================================
+
+STEP A — Leave BuildService where it is
+---------------------------------------
+Do NOT rename IBuildService yet (23 refs). Do NOT create ProcessRunner.cs.
+Empty Process/ folder is fine for now.
+
+All new services inject IBuildService:
+
+    public class GitService
+    {
+        private readonly IBuildService _build;   // RunCommandAsync for git
+        public GitService(IBuildService build) => _build = build;
+    }
+
+
+STEP B — Fill empty classes in this order
+-----------------------------------------
+  1. Services/Git/BranchNameHelper.cs          (static — cut from BuildTab)
+  2. Services/Logging/DayWiseLogService.cs
+  3. Services/Build/OutputPathService.cs
+  4. Services/Git/GitService.cs                (inject IBuildService)
+  5. Services/DbRollup/DbRollupService.cs      (inject IBuildService)
+  6. Services/Build/PublishCopyService.cs
+  7. Services/Build/SetupProjectBuilder.cs     (inject IBuildService —
+                                               uses ResolveVisualStudioIdePath)
+  8. Services/Build/BuildOrchestrator.cs       (inject IBuildService + others)
+  9. Services/Email/BuildNotificationService.cs
+ 10. Services/Migration/MigrationFolderService.cs
+
+
+STEP C — Register NEW services in MauiProgram (BuildService already registered)
+-------------------------------------------------------------------------------
+You already have something like:
+
+    builder.Services.AddSingleton<IBuildService, BuildService>();
+
+ADD only the new ones:
+
+    builder.Services.AddSingleton<DayWiseLogService>();
+    builder.Services.AddSingleton<OutputPathService>();
+    builder.Services.AddSingleton<GitService>();
+    builder.Services.AddSingleton<DbRollupService>();
+    builder.Services.AddSingleton<PublishCopyService>();
+    builder.Services.AddSingleton<SetupProjectBuilder>();
+    builder.Services.AddSingleton<BuildOrchestrator>();
+    builder.Services.AddSingleton<BuildNotificationService>();
+    builder.Services.AddSingleton<MigrationFolderService>();
+
+
+STEP D — Optional later cleanup (after everything works)
+--------------------------------------------------------
+Move files (Visual Studio: drag in Solution Explorer):
+
+  Services/BuildService.cs   →  Services/Process/BuildService.cs
+  Services/IBuildService.cs  →  Services/Process/IBuildService.cs
+
+Update namespace to:
+  GssDevOpsAutomationTool.Services.Process
+
+OR rename later (bigger change — do last):
+  IBuildService → IProcessRunner
+  BuildService  → ProcessRunner
+
+Only rename when you want clearer names; not required for the split.
+
+
+================================================================================
+HOW SetupProjectBuilder uses YOUR existing API
+================================================================================
+
+    public class SetupProjectBuilder
+    {
+        private readonly IBuildService _build;
+
+        public SetupProjectBuilder(IBuildService build) => _build = build;
+
+        public async Task<int> BuildSetupProjectAsync(
+            string vdprojPath,
+            string workingDir,
+            Action<string> log,
+            CancellationToken cancellation = default)
+        {
+            var devenv = _build.ResolveVisualStudioIdePath()
+                ?? throw new InvalidOperationException("devenv.com not found");
+
+            // Prefer Process Start on devenv directly (see setup-msi-devenv guide),
+            // OR shell via RunCommandAsync if that is what BuildTab already does:
+            return await _build.RunCommandAsync(
+                workingDir,
+                $"\"{devenv}\" \"{vdprojPath}\" /Build Release",
+                log,
+                cancellation);
+        }
+    }
+
+
+================================================================================
+HOW BuildOrchestrator uses YOUR existing API
+================================================================================
+
+    public class BuildOrchestrator
+    {
+        private readonly IBuildService _build;          // RunCommandAsync + MSBuild path
+        private readonly OutputPathService _paths;
+        private readonly PublishCopyService _publish;
+        private readonly SetupProjectBuilder _setup;
+
+        public async Task BuildApplicationAsync(..., Action<string> log, CancellationToken ct)
+        {
+            // restore / clean precompiled (as in BuildTab today)
+
+            var msbuild = _build.ResolveMsBuildPath(netFramework: isLegacy);
+            // build command may already embed msbuild — keep BuildTab’s command string
+
+            var exit = await _build.RunCommandAsync(workingDir, buildCommand, log, ct);
+            if (exit == 0)
+                await _publish.CopyArtifactsAsync(...);
+            // if Web2ClientBridge setup project:
+            //   await _setup.BuildSetupProjectAsync(...);
+        }
+    }
+
+
+================================================================================
+CHECKLIST
+================================================================================
+
+[x] Folders created: Build, DbRollup, Email, Git, Logging, Migration, Process
+[x] Existing IBuildService + BuildService (RunCommandAsync / MSBuild / devenv)
+[ ] Do NOT add ProcessRunner — use IBuildService
+[ ] Fill BranchNameHelper first (easiest)
+[ ] Inject IBuildService into Git / DbRollup / BuildOrchestrator / SetupProjectBuilder
+[ ] Keep BuildService.cs at Services\ root until optional Process\ move
+[ ] Rebuild after each class fill; smoke test Get latest / Build / Bundle
+
+
+RELATED
+-------
+  docs/architecture/BUILDTAB-CLASS-STRUCTURE.txt   (full method map)
+  docs/architecture/skeletons/                     (paste templates —
+      replace ProcessRunner with IBuildService in your project)

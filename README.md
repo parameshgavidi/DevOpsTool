@@ -18,5 +18,8 @@ Plain-text Mermaid source for copy-paste: [`docs/deployment-flow.txt`](docs/depl
 BuildTab `@code` should stay thin (UI only). Move git, build, DB rollup, email,
 and logging into `Services/` classes:
 
-- Guide: [`docs/architecture/BUILDTAB-CLASS-STRUCTURE.txt`](docs/architecture/BUILDTAB-CLASS-STRUCTURE.txt)
+- **Start here if you already have `IBuildService` / `BuildService`:**
+  [`docs/architecture/EXISTING-BUILDSERVICE-ALIGN.txt`](docs/architecture/EXISTING-BUILDSERVICE-ALIGN.txt)
+- Full method map: [`docs/architecture/BUILDTAB-CLASS-STRUCTURE.txt`](docs/architecture/BUILDTAB-CLASS-STRUCTURE.txt)
 - Copy-paste skeletons: [`docs/architecture/skeletons/`](docs/architecture/skeletons/)
+  (use existing `IBuildService` instead of `ProcessRunner`)

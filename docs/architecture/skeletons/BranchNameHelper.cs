@@ -1,8 +1,7 @@
 // ============================================================
-// COPY into your MAUI app: Services/Git/BranchNameHelper.cs
-// Move ALL private static branch/folder name helpers here.
+// COPY into: Services/Git/BranchNameHelper.cs
 // ============================================================
-namespace YourApp.Services.Git;
+namespace GssDevOpsAutomationTool.Services.Git;
 
 public static class BranchNameHelper
 {

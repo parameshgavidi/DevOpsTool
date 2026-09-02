@@ -15,26 +15,39 @@ Goal:
 
 
 ================================================================================
-TARGET FOLDER LAYOUT (in your MAUI app project — NOT this docs repo)
+ALREADY IN YOUR APP (GssDevOpsAutomationTool) — DO NOT DUPLICATE
+================================================================================
+  Services/IBuildService.cs + Services/BuildService.cs already provide:
+    RunCommandAsync(...)
+    ResolveMsBuildPath(bool netFramework)
+    ResolveVisualStudioIdePath()
+
+  That pair IS the process runner. Do NOT add a second ProcessRunner class.
+  See: docs/architecture/EXISTING-BUILDSERVICE-ALIGN.txt
+
+
+================================================================================
+TARGET FOLDER LAYOUT (GssDevOpsAutomationTool)
 ================================================================================
 
-  YourMauiApp/
-  ├── Components/
-  │   └── Pages/
-  │       ├── BuildTab.razor              ← markup only
-  │       └── BuildTab.razor.cs           ← partial class, UI state + wiring
+  GssDevOpsAutomationTool/
+  ├── Components/Pages/
+  │   ├── BuildTab.razor                  ← markup only
+  │   └── BuildTab.razor.cs               ← UI state + wiring
   ├── Models/
-  │   └── DeploymentModels.cs             ← already exists (BuildSettings, Application, …)
+  │   └── DeploymentModels.cs
   ├── Services/
-  │   ├── Process/
-  │   │   └── ProcessRunner.cs            ← RunCommandAsync / RunProcessCaptureAsync
+  │   ├── IBuildService.cs                ← KEEP (existing)
+  │   ├── BuildService.cs                 ← KEEP (existing RunCommand + MSBuild/devenv)
+  │   ├── IFolderPicker.cs / FolderPicker*← KEEP
+  │   ├── Process/                        ← optional later: move BuildService here
   │   ├── Git/
   │   │   ├── GitService.cs               ← fetch/pull/get-latest, load branches
   │   │   └── BranchNameHelper.cs         ← Normalize / Split / Parse / Compare
   │   ├── Build/
   │   │   ├── BuildOrchestrator.cs        ← BuildApplication / BuildAll / Restore
   │   │   ├── PublishCopyService.cs       ← PrecompiledWeb / publish → output
-  │   │   ├── SetupProjectBuilder.cs      ← BuildSetupProjectAsync (devenv MSI)
+  │   │   ├── SetupProjectBuilder.cs      ← BuildSetupProjectAsync (uses IBuildService)
   │   │   └── OutputPathService.cs        ← GetAppOutputFolder / branch version folder
   │   ├── DbRollup/
   │   │   ├── DbRollupService.cs          ← BundleDbScripts / EnsureBranchFolders
@@ -51,10 +64,11 @@ TARGET FOLDER LAYOUT (in your MAUI app project — NOT this docs repo)
 METHOD → CLASS MAP (everything currently living in BuildTab @code)
 ================================================================================
 
---- ProcessRunner.cs ---
+--- IBuildService / BuildService (ALREADY EXISTS — keep) ---
   RunCommandAsync(...)
-  RunProcessCaptureAsync(...)
-
+  ResolveMsBuildPath(bool netFramework)
+  ResolveVisualStudioIdePath()
+  (+ private MSBuild discovery helpers stay inside BuildService)
 --- BranchNameHelper.cs (static helpers, no DI needed) ---
   NormalizeBranchName
   SplitBranchTokens
@@ -156,30 +170,17 @@ BuildTab.razor.cs skeleton:
 
 
 ================================================================================
-STEP 1 — ProcessRunner.cs
+STEP 1 — Use existing IBuildService (skip ProcessRunner)
 ================================================================================
-File: Services/Process/ProcessRunner.cs
+Already implemented in Services/BuildService.cs.
 
-    namespace YourApp.Services.Process;
+BuildTab / new services call:
+    await _build.RunCommandAsync(workingDir, command, AppendToUiLog, ct);
 
-    public class ProcessRunner
-    {
-        public async Task<int> RunAsync(
-            string fileName,
-            string arguments,
-            string workingDirectory,
-            Action<string> onStdout,
-            Action<string> onStderr,
-            CancellationToken cancellation = default)
-        {
-            // MOVE body of RunProcessCaptureAsync / RunCommandAsync here
-            // Call onStdout/onStderr instead of touching LogOutput directly
-        }
-    }
+Inject:
+    [Inject] private IBuildService BuildSvc { get; set; } = default!;
 
-BuildTab keeps:
-    await _process.RunAsync(..., line => AppendToUiLog(line), ...);
-
+Do not create ProcessRunner.cs. See EXISTING-BUILDSERVICE-ALIGN.txt.
 
 ================================================================================
 STEP 2 — BranchNameHelper.cs (pure static — easiest win)
@@ -346,7 +347,9 @@ db-scripts files, attachments). BuildTab calls it AFTER Bundle succeeds.
 STEP 9 — Register DI in MauiProgram.cs
 ================================================================================
 
-    builder.Services.AddSingleton<ProcessRunner>();
+    // ALREADY present — keep:
+    // builder.Services.AddSingleton<IBuildService, BuildService>();
+
     builder.Services.AddSingleton<DayWiseLogService>();
     builder.Services.AddSingleton<OutputPathService>();
     builder.Services.AddSingleton<GitService>();
@@ -360,7 +363,7 @@ STEP 9 — Register DI in MauiProgram.cs
 
 BuildTab.razor.cs inject:
 
-    [Inject] private ProcessRunner Process { get; set; } = default!;
+    [Inject] private IBuildService BuildSvc { get; set; } = default!;
     [Inject] private GitService Git { get; set; } = default!;
     [Inject] private BuildOrchestrator Build { get; set; } = default!;
     [Inject] private DbRollupService DbRollup { get; set; } = default!;
@@ -369,7 +372,6 @@ BuildTab.razor.cs inject:
     [Inject] private OutputPathService OutputPaths { get; set; } = default!;
     [Inject] private MigrationFolderService Migration { get; set; } = default!;
     [Inject] private IConfiguration Config { get; set; } = default!;
-
 
 ================================================================================
 WHAT BuildTab.razor.cs LOOKS LIKE AFTER (thin)
@@ -445,15 +447,14 @@ SAFE MIGRATION ORDER (do one PR / one rebuild at a time)
 
   [1] BuildTab.razor.cs code-behind only          ← no logic change
   [2] BranchNameHelper (static)                   ← delete private static copies
-  [3] ProcessRunner                               ← all Process.Start go here
+  [3] (skip) IBuildService already owns RunCommandAsync / MSBuild / devenv
   [4] DayWiseLogService
   [5] OutputPathService
-  [6] GitService + DbBranchService
-  [7] DbRollupService
-  [8] PublishCopyService + SetupProjectBuilder
-  [9] BuildOrchestrator
+  [6] GitService + DbBranchService                ← inject IBuildService
+  [7] DbRollupService                             ← inject IBuildService
+  [8] PublishCopyService + SetupProjectBuilder    ← inject IBuildService
+  [9] BuildOrchestrator                           ← inject IBuildService
   [10] BuildNotificationService + MigrationFolderService
-
 After EACH step: Rebuild → smoke test Get latest / one Build / Bundle Scripts.
 
 

@@ -1,25 +1,26 @@
 // ============================================================
-// COPY into your MAUI app: Services/Build/SetupProjectBuilder.cs
+// COPY into: Services/Build/SetupProjectBuilder.cs
+// Uses EXISTING IBuildService.ResolveVisualStudioIdePath + RunCommandAsync
 // ============================================================
-using YourApp.Services.Process;
+using GssDevOpsAutomationTool.Services;
 
-namespace YourApp.Services.Build;
+namespace GssDevOpsAutomationTool.Services.Build;
 
 public class SetupProjectBuilder
 {
-    private readonly ProcessRunner _process;
+    private readonly IBuildService _build;
 
-    public SetupProjectBuilder(ProcessRunner process) => _process = process;
+    public SetupProjectBuilder(IBuildService build) => _build = build;
 
     public async Task<int> BuildSetupProjectAsync(
-        string devenvPath,
         string vdprojPath,
         string workingDir,
         Action<string> log,
         CancellationToken cancellation = default)
     {
-        // PASTE BuildSetupProjectAsync (devenv Process, no cmd) from
-        // web-to-client-bridge-setup-msi-devenv-process.txt
+        // PASTE BuildSetupProjectAsync from web-to-client-bridge-setup-msi-devenv-process.txt
+        // Prefer devenv Process directly; path from:
+        //   var devenv = _build.ResolveVisualStudioIdePath();
         await Task.CompletedTask;
         throw new NotImplementedException();
     }

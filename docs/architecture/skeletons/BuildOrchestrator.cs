@@ -1,24 +1,25 @@
 // ============================================================
-// COPY into your MAUI app: Services/Build/BuildOrchestrator.cs
+// COPY into: Services/Build/BuildOrchestrator.cs
+// Inject EXISTING IBuildService — not ProcessRunner.
 // ============================================================
-using YourApp.Services.Process;
+using GssDevOpsAutomationTool.Services;
 
-namespace YourApp.Services.Build;
+namespace GssDevOpsAutomationTool.Services.Build;
 
 public class BuildOrchestrator
 {
-    private readonly ProcessRunner _process;
+    private readonly IBuildService _build;
     private readonly OutputPathService _outputPaths;
     private readonly PublishCopyService _publish;
     private readonly SetupProjectBuilder _setup;
 
     public BuildOrchestrator(
-        ProcessRunner process,
+        IBuildService build,
         OutputPathService outputPaths,
         PublishCopyService publish,
         SetupProjectBuilder setup)
     {
-        _process = process;
+        _build = build;
         _outputPaths = outputPaths;
         _publish = publish;
         _setup = setup;
@@ -37,7 +38,8 @@ public class BuildOrchestrator
         // ORDER (do not change — matches working BuildTab flow):
         // 1) RestorePackagesAsync (skip AspNetWebForms / AsmxWebService / Mailer)
         // 2) CleanPrecompiledOutputAsync when needed
-        // 3) _process.RunCommandAsync(buildCommand, ...)
+        // 3) var exit = await _build.RunCommandAsync(workingDir, buildCommand, log, cancellation);
+        //    (optional) _build.ResolveMsBuildPath(netFramework: isLegacy)
         // 4) if exit==0 → _publish.CopyArtifactsAsync(...)
         // 5) if setup project → _setup.BuildSetupProjectAsync(...)
         await Task.CompletedTask;

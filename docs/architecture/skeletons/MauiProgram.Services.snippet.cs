@@ -1,17 +1,18 @@
 // ============================================================
 // SNIPPET — add to MauiProgram.cs builder.Services
-// Replace YourApp with your real root namespace.
+// IBuildService / BuildService should ALREADY be registered.
 // ============================================================
 /*
-using YourApp.Services.Build;
-using YourApp.Services.DbRollup;
-using YourApp.Services.Email;
-using YourApp.Services.Git;
-using YourApp.Services.Logging;
-using YourApp.Services.Migration;
-using YourApp.Services.Process;
+using GssDevOpsAutomationTool.Services.Build;
+using GssDevOpsAutomationTool.Services.DbRollup;
+using GssDevOpsAutomationTool.Services.Email;
+using GssDevOpsAutomationTool.Services.Git;
+using GssDevOpsAutomationTool.Services.Logging;
+using GssDevOpsAutomationTool.Services.Migration;
 
-builder.Services.AddSingleton<ProcessRunner>();
+// Already present — keep:
+// builder.Services.AddSingleton<IBuildService, BuildService>();
+
 builder.Services.AddSingleton<DayWiseLogService>();
 builder.Services.AddSingleton<OutputPathService>();
 builder.Services.AddSingleton<GitService>();

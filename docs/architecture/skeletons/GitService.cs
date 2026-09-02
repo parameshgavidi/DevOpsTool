@@ -1,15 +1,16 @@
 // ============================================================
-// COPY into your MAUI app: Services/Git/GitService.cs
+// COPY into: Services/Git/GitService.cs
+// Inject EXISTING IBuildService (do not use ProcessRunner).
 // ============================================================
-using YourApp.Services.Process;
+using GssDevOpsAutomationTool.Services;
 
-namespace YourApp.Services.Git;
+namespace GssDevOpsAutomationTool.Services.Git;
 
 public class GitService
 {
-    private readonly ProcessRunner _process;
+    private readonly IBuildService _build;
 
-    public GitService(ProcessRunner process) => _process = process;
+    public GitService(IBuildService build) => _build = build;
 
     public async Task<bool> GetLatestFromRepoAsync(
         /* Application app, */
@@ -18,7 +19,8 @@ public class GitService
         Action<string> log,
         CancellationToken cancellation = default)
     {
-        // PASTE GetLatestFromRepoAsync body; use _process.RunCommandAsync
+        // PASTE GetLatestFromRepoAsync body; use:
+        //   await _build.RunCommandAsync(workingDir, gitLatestCommand, log, cancellation);
         await Task.CompletedTask;
         throw new NotImplementedException();
     }
@@ -31,6 +33,7 @@ public class GitService
     {
         // PASTE LoadDbBranchesAsync / LoadRepoBranchesAsync parse logic
         // Use BranchNameHelper.SplitBranchTokens + NormalizeBranchName
+        // Run git via: await _build.RunCommandAsync(repoRoot, gitBranchesCommand, log, cancellation);
         await Task.CompletedTask;
         throw new NotImplementedException();
     }
