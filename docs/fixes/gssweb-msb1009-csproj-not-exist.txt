@@ -1,0 +1,89 @@
+================================================================================
+GSSWeb — MSB1009 Project file does not exist
+SETTINGS ONLY — new file — paste into appsettings.json
+NO DevOpsTool C# change
+================================================================================
+
+SYMPTOM (OUTPUT LOG)
+--------------------
+  MSBuild version 18.x for .NET Framework
+  MSB1009: Project file does not exist.
+  Switch: F:\GSS\AppDev\gss-root\Shared Components\GSSWebComponent\GSSWebComponent.csproj
+  [INFO] Finished GSSWeb with exit code 1
+
+MSBuild.exe itself is fine. The .csproj path we guessed is not on disk.
+Typical real layout (extra folder):
+
+  F:\GSS\AppDev\gss-root\Shared Components\GSSWebComponent\GSSWebComponent\GSSWebComponent.csproj
+
+
+CAUSE
+-----
+buildCommand pointed at:
+  ...\Shared Components\GSSWebComponent\GSSWebComponent.csproj
+That file does not exist. Working directory is WebV3\gssweb — unrelated
+to this error because the path was already absolute.
+
+
+FIX — paste this entire GSSWeb object
+-------------------------------------
+This command:
+  1) prints every GSSWebComponent.csproj under gss-root (so you can see it)
+  2) msbuild EACH one found (full VS 18 MSBuild.exe path)
+  3) copies bin\Release\GSSWebComponent.dll (or net48) into website Bin
+  4) publishes gssweb.sln
+
+Still starts with ver>nul &  (do not start with msbuild — MSB1008)
+
+
+{
+  "name": "GSSWeb",
+  "type": "AspNetWebForms",
+  "projectPath": "WebV3\\gssweb\\gssweb.sln",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"WebV3\\gssweb\" \"Shared Components\\GSSWebComponent\" && git fetch && git restore --source=@{u} --staged --worktree -- \"WebV3\\gssweb\" \"Shared Components\\GSSWebComponent\" && (git stash pop || ver > nul)",
+  "buildCommand": "ver>nul & echo ===== SEARCH GSSWebComponent.csproj ===== & dir /s /b F:\\GSS\\AppDev\\gss-root\\GSSWebComponent.csproj & for /f \"delims=\" %i in ('dir /s /b F:\\GSS\\AppDev\\gss-root\\GSSWebComponent.csproj') do echo BUILDING %i & \"F:\\Program Files\\Microsoft Visual Studio\\18\\Professional\\MSBuild\\Current\\Bin\\amd64\\MSBuild.exe\" \"%i\" /p:Configuration=Release /t:Build /v:m & (if exist \"%~dpibin\\Release\\GSSWebComponent.dll\" copy /Y \"%~dpibin\\Release\\GSSWebComponent.dll\" \"F:\\GSS\\AppDev\\gss-root\\WebV3\\gssweb\\gssweb\\Bin\\GSSWebComponent.dll\") & (if exist \"%~dpibin\\Release\\net48\\GSSWebComponent.dll\" copy /Y \"%~dpibin\\Release\\net48\\GSSWebComponent.dll\" \"F:\\GSS\\AppDev\\gss-root\\WebV3\\gssweb\\gssweb\\Bin\\GSSWebComponent.dll\") & \"F:\\Program Files\\Microsoft Visual Studio\\18\\Professional\\MSBuild\\Current\\Bin\\amd64\\MSBuild.exe\" \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
+  "outputSubfolder": "GSSWeb"
+}
+
+
+buildCommand only (copy-paste — one line):
+
+  ver>nul & echo ===== SEARCH GSSWebComponent.csproj ===== & dir /s /b F:\GSS\AppDev\gss-root\GSSWebComponent.csproj & for /f "delims=" %i in ('dir /s /b F:\GSS\AppDev\gss-root\GSSWebComponent.csproj') do echo BUILDING %i & "F:\Program Files\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe" "%i" /p:Configuration=Release /t:Build /v:m & (if exist "%~dpibin\Release\GSSWebComponent.dll" copy /Y "%~dpibin\Release\GSSWebComponent.dll" "F:\GSS\AppDev\gss-root\WebV3\gssweb\gssweb\Bin\GSSWebComponent.dll") & (if exist "%~dpibin\Release\net48\GSSWebComponent.dll" copy /Y "%~dpibin\Release\net48\GSSWebComponent.dll" "F:\GSS\AppDev\gss-root\WebV3\gssweb\gssweb\Bin\GSSWebComponent.dll") & "F:\Program Files\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe" "{projectFile}" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile
+
+
+AFTER PASTE
+-----------
+1. Save appsettings.json
+2. Restart DevOpsTool / reload config
+3. Build GSSWeb
+4. Log must show a real path after ===== SEARCH GSSWebComponent.csproj =====
+5. Log must show BUILDING <that path>
+6. No MSB1009 on the old ...\GSSWebComponent\GSSWebComponent.csproj path
+
+
+IF SEARCH PRINTS "File Not Found"
+---------------------------------
+Shared Components is not under gss-root. In cmd:
+
+  dir /s /b F:\GSS\AppDev\GSSWebComponent.csproj
+
+Paste the path it prints into a simpler buildCommand (nested example):
+
+  ver>nul & "F:\Program Files\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe" "F:\GSS\AppDev\gss-root\Shared Components\GSSWebComponent\GSSWebComponent\GSSWebComponent.csproj" /p:Configuration=Release /t:Build /v:m && copy /Y "F:\GSS\AppDev\gss-root\Shared Components\GSSWebComponent\GSSWebComponent\bin\Release\GSSWebComponent.dll" "F:\GSS\AppDev\gss-root\WebV3\gssweb\gssweb\Bin\GSSWebComponent.dll" && "F:\Program Files\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe" "{projectFile}" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile
+
+Adjust the two Shared Components paths to EXACTLY what dir printed
+(and put bin\Release\GSSWebComponent.dll next to that .csproj).
+
+
+CHECKLIST
+---------
+[ ] buildCommand starts with ver>nul &
+[ ] Restart tool
+[ ] OUTPUT LOG lists at least one GSSWebComponent.csproj
+[ ] No MSB1009
+[ ] Website msbuild runs after the copy
+
+
+================================================================================
+END
+================================================================================

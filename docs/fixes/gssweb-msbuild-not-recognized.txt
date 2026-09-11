@@ -65,6 +65,16 @@ AFTER PASTE
 6. First token after ver>nul & should be the quoted MSBuild.exe path
 
 
+SUPERSEDED if the log says MSB1009 (project file does not exist)
+--------------------------------------------------------------
+The guessed path
+  F:\GSS\AppDev\gss-root\Shared Components\GSSWebComponent\GSSWebComponent.csproj
+is not on disk.
+
+USE THIS FILE:
+  docs/fixes/gssweb-msb1009-csproj-not-exist.txt
+
+
 IF .csproj PATH IS WRONG
 ------------------------
 From F:\GSS\AppDev\gss-root in cmd:
