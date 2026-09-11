@@ -1,0 +1,91 @@
+================================================================================
+GSSWeb — 'msbuild' is not recognized
+SETTINGS ONLY — new file — paste into appsettings.json
+NO DevOpsTool C# change
+================================================================================
+
+SYMPTOM (OUTPUT LOG)
+--------------------
+  [INFO] Using configured build command for GSSWeb
+  [INFO] Build command: ver>nul & msbuild "Shared Components\..." ...
+  Working directory: F:\GSS\AppDev\gss-root\WebV3\gssweb
+  >>> Command: cmd.exe /c ver>nul & msbuild "Shared Components\..." ...
+  'msbuild' is not recognized as an internal or external command,
+  operable program or batch file.
+  [INFO] Finished GSSWeb with exit code 1
+
+
+CAUSE
+-----
+1) The DevOps tool starts cmd.exe WITHOUT the Visual Studio developer PATH.
+   Bare "msbuild" is not found. (When buildCommand started with msbuild,
+   the tool injected the full MSBuild.exe path — that is why older builds
+   could run MSBuild at all.)
+
+2) Working directory is the SOLUTION folder, not repo root:
+     F:\GSS\AppDev\gss-root\WebV3\gssweb
+   So "Shared Components\..." and "WebV3\gssweb\gssweb\Bin\..." are WRONG
+   from this cwd. Use absolute F:\GSS\AppDev\gss-root\... paths.
+
+Keep the ver>nul & PREFIX so the tool does not rewrite the chain
+into one MSBuild.exe process (MSB1008 / Switch: &&).
+
+
+FIX — paste this entire GSSWeb object over the existing one
+-----------------------------------------------------------
+
+
+{
+  "name": "GSSWeb",
+  "type": "AspNetWebForms",
+  "projectPath": "WebV3\\gssweb\\gssweb.sln",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"WebV3\\gssweb\" \"Shared Components\\GSSWebComponent\" && git fetch && git restore --source=@{u} --staged --worktree -- \"WebV3\\gssweb\" \"Shared Components\\GSSWebComponent\" && (git stash pop || ver > nul)",
+  "buildCommand": "ver>nul & \"F:\\Program Files\\Microsoft Visual Studio\\18\\Professional\\MSBuild\\Current\\Bin\\amd64\\MSBuild.exe\" \"F:\\GSS\\AppDev\\gss-root\\Shared Components\\GSSWebComponent\\GSSWebComponent.csproj\" /p:Configuration=Release /t:Build /v:m && copy /Y \"F:\\GSS\\AppDev\\gss-root\\Shared Components\\GSSWebComponent\\bin\\Release\\GSSWebComponent.dll\" \"F:\\GSS\\AppDev\\gss-root\\WebV3\\gssweb\\gssweb\\Bin\\GSSWebComponent.dll\" && \"F:\\Program Files\\Microsoft Visual Studio\\18\\Professional\\MSBuild\\Current\\Bin\\amd64\\MSBuild.exe\" \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
+  "outputSubfolder": "GSSWeb"
+}
+
+
+buildCommand only (copy-paste — one line):
+
+  ver>nul & "F:\Program Files\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe" "F:\GSS\AppDev\gss-root\Shared Components\GSSWebComponent\GSSWebComponent.csproj" /p:Configuration=Release /t:Build /v:m && copy /Y "F:\GSS\AppDev\gss-root\Shared Components\GSSWebComponent\bin\Release\GSSWebComponent.dll" "F:\GSS\AppDev\gss-root\WebV3\gssweb\gssweb\Bin\GSSWebComponent.dll" && "F:\Program Files\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe" "{projectFile}" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile
+
+
+MUST start with:  ver>nul &
+MUST NOT start with:  msbuild
+MUST NOT start with:  "F:\Program Files\...\MSBuild.exe"
+
+
+AFTER PASTE
+-----------
+1. Save appsettings.json
+2. Restart DevOpsTool / reload config
+3. Build GSSWeb
+4. Log must NOT say: 'msbuild' is not recognized
+5. Log must NOT say: MSB1008 / Switch: &&
+6. First token after ver>nul & should be the quoted MSBuild.exe path
+
+
+IF .csproj PATH IS WRONG
+------------------------
+From F:\GSS\AppDev\gss-root in cmd:
+
+  dir /s /b GSSWebComponent.csproj
+  dir /s /b GSSWebComponent.dll
+
+Put those full paths into buildCommand (msbuild source + copy /Y source).
+Website Bin destination stays:
+  F:\GSS\AppDev\gss-root\WebV3\gssweb\gssweb\Bin\GSSWebComponent.dll
+
+
+CHECKLIST
+---------
+[ ] gitLatestCommand uses WebV3\gssweb (NOT Web Services\GSSWebService)
+[ ] buildCommand starts with ver>nul &
+[ ] Both msbuild calls use the full VS 18 MSBuild.exe path (amd64)
+[ ] Shared Component + Bin paths are absolute under F:\GSS\AppDev\gss-root
+[ ] Restart → Build GSSWeb → no "not recognized", no MSB1008
+
+
+================================================================================
+END
+================================================================================

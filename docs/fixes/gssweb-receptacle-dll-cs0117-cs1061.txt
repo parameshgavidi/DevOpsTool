@@ -143,6 +143,12 @@ Also copy PDB if you want matching symbols (optional):
 
 
 --------------------------------------------------------------------------------
+If log says 'msbuild' is not recognized — NEW FILE
+  docs/fixes/gssweb-msbuild-not-recognized.txt
+  (full MSBuild.exe path + absolute F:\GSS\AppDev\gss-root paths)
+
+
+--------------------------------------------------------------------------------
 If msbuild is not on PATH
 --------------------------------------------------------------------------------
 Keep the ver>nul & PREFIX (so the line does not start with msbuild).

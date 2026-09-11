@@ -62,6 +62,19 @@ CHECKLIST
 [ ] Restart tool → Build GSSWeb → no MSB1008
 
 
+SUPERSEDED for the next error
+-----------------------------
+If the log says:  'msbuild' is not recognized as an internal or external command
+do NOT keep this file's bare "msbuild" command.
+
+USE THIS FILE INSTEAD:
+  docs/fixes/gssweb-msbuild-not-recognized.txt
+
+That file uses the full
+  F:\Program Files\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe
+and absolute F:\GSS\AppDev\gss-root\... paths (cwd is WebV3\gssweb).
+
+
 See also: docs/fixes/gssweb-receptacle-dll-cs0117-cs1061.txt
 
 
