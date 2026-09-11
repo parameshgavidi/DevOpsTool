@@ -1,0 +1,70 @@
+================================================================================
+GSSWeb — MSB1008 Switch: &&
+SETTINGS ONLY (new file) — paste into appsettings.json
+NO DevOpsTool C# change
+================================================================================
+
+SYMPTOM
+-------
+  MSB1008: Only one project can be specified.
+  Switch: &&
+  [INFO] Finished GSSWeb with exit code 1
+
+Build command in the log starts with:
+
+  "F:\Program Files\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe"
+  "Shared Components\GSSWebComponent\GSSWebComponent.csproj" ... && copy /Y ... && msbuild ...
+
+
+CAUSE
+-----
+If buildCommand STARTS WITH the word msbuild AND contains &&, the tool
+replaces the first msbuild with the full MSBuild.exe path. Then && is
+passed INTO MSBuild as a switch. Copy + website publish never run.
+
+
+FIX — replace the whole GSSWeb object in appsettings.json
+---------------------------------------------------------
+buildCommand MUST start with:  ver>nul &
+It must NOT start with:        msbuild
+It must NOT start with:        "F:\Program Files\...\MSBuild.exe"
+
+
+{
+  "name": "GSSWeb",
+  "type": "AspNetWebForms",
+  "projectPath": "WebV3\\gssweb\\gssweb.sln",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"WebV3\\gssweb\" \"Shared Components\\GSSWebComponent\" && git fetch && git restore --source=@{u} --staged --worktree -- \"WebV3\\gssweb\" \"Shared Components\\GSSWebComponent\" && (git stash pop || ver > nul)",
+  "buildCommand": "ver>nul & msbuild \"Shared Components\\GSSWebComponent\\GSSWebComponent.csproj\" /p:Configuration=Release /t:Build /v:m && copy /Y \"Shared Components\\GSSWebComponent\\bin\\Release\\GSSWebComponent.dll\" \"WebV3\\gssweb\\gssweb\\Bin\\GSSWebComponent.dll\" && msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
+  "outputSubfolder": "GSSWeb"
+}
+
+
+buildCommand only (copy-paste):
+
+  ver>nul & msbuild "Shared Components\GSSWebComponent\GSSWebComponent.csproj" /p:Configuration=Release /t:Build /v:m && copy /Y "Shared Components\GSSWebComponent\bin\Release\GSSWebComponent.dll" "WebV3\gssweb\gssweb\Bin\GSSWebComponent.dll" && msbuild "{projectFile}" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile
+
+
+AFTER PASTE
+-----------
+1. Save appsettings.json
+2. Restart DevOpsTool / reload config
+3. Build GSSWeb
+4. Log must show ver>nul & msbuild ...  (NOT a quoted MSBuild.exe as the first token)
+5. Expect exit code 0 (after Bin DLL is refreshed)
+
+
+CHECKLIST
+---------
+[ ] GSSWeb gitLatestCommand uses WebV3\gssweb (NOT Web Services\GSSWebService)
+[ ] gitLatestCommand also includes Shared Components\GSSWebComponent
+[ ] buildCommand starts with ver>nul &
+[ ] Restart tool → Build GSSWeb → no MSB1008
+
+
+See also: docs/fixes/gssweb-receptacle-dll-cs0117-cs1061.txt
+
+
+================================================================================
+END
+================================================================================
