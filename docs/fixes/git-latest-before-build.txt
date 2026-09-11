@@ -54,14 +54,17 @@ NEW (keep local + get latest for that project folder):
   "name": "GSSWeb",
   "type": "AspNetWebForms",
   "projectPath": "WebV3\\gssweb\\gssweb.sln",
-  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"WebV3\\gssweb\" && git fetch && git restore --source=@{u} --staged --worktree -- \"WebV3\\gssweb\" && git stash pop",
-  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"WebV3\\gssweb\" \"Shared Components\\GSSWebComponent\" && git fetch && git restore --source=@{u} --staged --worktree -- \"WebV3\\gssweb\" \"Shared Components\\GSSWebComponent\" && (git stash pop || ver > nul)",
+  "buildCommand": "msbuild \"Shared Components\\GSSWebComponent\\GSSWebComponent.csproj\" /p:Configuration=Release /t:Build /v:m && copy /Y \"Shared Components\\GSSWebComponent\\bin\\Release\\GSSWebComponent.dll\" \"WebV3\\gssweb\\gssweb\\Bin\\GSSWebComponent.dll\" && msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
   "outputSubfolder": "GSSWeb"
 }
 
 Copy-paste for appsettings (GSSWeb):
 
-  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"WebV3\\gssweb\" && git fetch && git restore --source=@{u} --staged --worktree -- \"WebV3\\gssweb\" && git stash pop"
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"WebV3\\gssweb\" \"Shared Components\\GSSWebComponent\" && git fetch && git restore --source=@{u} --staged --worktree -- \"WebV3\\gssweb\" \"Shared Components\\GSSWebComponent\" && (git stash pop || ver > nul)"
+
+CS0117/CS1061 receptacle Bin mismatch → docs/fixes/gssweb-receptacle-dll-cs0117-cs1061.txt
+NEVER use Web Services\GSSWebService pathspecs for the GSSWeb app entry.
 
 Copy-paste for appsettings (GSS Web Service):
 

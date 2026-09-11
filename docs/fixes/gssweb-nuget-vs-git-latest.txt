@@ -20,12 +20,16 @@ REPLACE the wipe command:
 
   OLD: git fetch && git clean -fd -- "..." && git restore --source=@{u} ...
 
-  NEW: git stash push -m "devops-pre-build" -- "WebV3\\gssweb"
+  NEW: git stash push -m "devops-pre-build" -- "WebV3\\gssweb" "Shared Components\\GSSWebComponent"
        && git fetch
-       && git restore --source=@{u} --staged --worktree -- "WebV3\\gssweb"
-       && git stash pop
+       && git restore --source=@{u} --staged --worktree -- "WebV3\\gssweb" "Shared Components\\GSSWebComponent"
+       && (git stash pop || ver > nul)
 
-That stashes local edits → takes latest for that folder → re-applies local.
+That stashes local edits → takes latest for those folders → re-applies local.
+
+Also include Shared Components\\GSSWebComponent so Bin DLL APIs stay in sync
+with processPackage.aspx.cs (see docs/fixes/gssweb-receptacle-dll-cs0117-cs1061.txt).
+NEVER point GSSWeb gitLatestCommand at Web Services\\GSSWebService.
 
 
 DO NOT put the package in appsettings.json

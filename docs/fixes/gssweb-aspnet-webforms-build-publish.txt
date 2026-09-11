@@ -2,10 +2,24 @@
   "name": "GSSWeb",
   "type": "AspNetWebForms",
   "projectPath": "WebV3\\gssweb\\gssweb.sln",
-  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"WebV3\\gssweb\" && git fetch && git restore --source=@{u} --staged --worktree -- \"WebV3\\gssweb\" && git stash pop",
-  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"WebV3\\gssweb\" \"Shared Components\\GSSWebComponent\" && git fetch && git restore --source=@{u} --staged --worktree -- \"WebV3\\gssweb\" \"Shared Components\\GSSWebComponent\" && (git stash pop || ver > nul)",
+  "buildCommand": "msbuild \"Shared Components\\GSSWebComponent\\GSSWebComponent.csproj\" /p:Configuration=Release /t:Build /v:m && copy /Y \"Shared Components\\GSSWebComponent\\bin\\Release\\GSSWebComponent.dll\" \"WebV3\\gssweb\\gssweb\\Bin\\GSSWebComponent.dll\" && msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
   "outputSubfolder": "GSSWeb"
 }
+
+--------------------------------------------------------------------------------
+CS0117 / CS1061 receptacle APIs (IsReceptacleBasedProduct etc.) — READ THIS
+--------------------------------------------------------------------------------
+If OUTPUT LOG shows error CS0117 / CS1061 on processPackage.aspx.cs for
+EnableDdpForReceptaclePackages or IsReceptacleBasedProduct:
+  → Bin\GSSWebComponent.dll is stale (or gitLatestCommand still points at
+    Web Services\GSSWebService by mistake).
+  → Full fix: docs/fixes/gssweb-receptacle-dll-cs0117-cs1061.txt
+Use the appsettings block ABOVE (rebuild Shared Component + copy to Bin).
+
+NEVER use gitLatestCommand path "Web Services\\GSSWebService" for GSSWeb —
+that is the Web Service app. GSSWeb pathspecs must be WebV3\gssweb.
+
 
 --------------------------------------------------------------------------------
 NuGet Install-Package vs gitLatestCommand (keep local)

@@ -1,0 +1,196 @@
+================================================================================
+GSSWeb build Failed — CS0117 / CS1061 (receptacle APIs missing from Bin DLL)
++ wrong gitLatestCommand path (copy-paste from GSS Web Service)
+================================================================================
+
+SYMPTOM (OUTPUT LOG — from Build GSSWeb)
+----------------------------------------
+  4 Error(s), 193 Warning(s)
+  Time Elapsed ~00:00:27
+  [INFO] Finished GSSWeb with exit code 1
+
+Real errors (search OUTPUT LOG for "error CS"):
+
+  f:\GSS\AppDev\gss-root\WebV3\gssweb\gssweb\processPackage.aspx.cs(1975):
+    error CS0117: 'GSS.TlcDdpApiCalls' does not contain a definition for
+    'EnableDdpForReceptaclePackages'
+    [F:\GSS\AppDev\gss-root\WebV3\gssweb\gsswebv3.metaproj]
+
+  f:\GSS\AppDev\gss-root\WebV3\gssweb\gssweb\processPackage.aspx.cs(1951):
+    error CS1061: 'GSS.GSSWebComponent' does not contain a definition for
+    'IsReceptacleBasedProduct' and no extension method
+    'IsReceptacleBasedProduct' accepting a first argument of type
+    'GSS.GSSWebComponent' could be found
+    [F:\GSS\AppDev\gss-root\WebV3\gssweb\gsswebv3.metaproj]
+
+(ASPNETCOMPILER may repeat the same CS lines — still the same 2 root errors.
+ Warnings are noise — they do not fail the build.)
+
+
+ROOT CAUSE
+----------
+Two separate problems. Fix BOTH.
+
+A) STALE Bin DLL (compile killer)
+   processPackage.aspx.cs calls NEW receptacle / DDP APIs:
+     - GSS.GSSWebComponent.IsReceptacleBasedProduct
+     - GSS.TlcDdpApiCalls.EnableDdpForReceptaclePackages
+   Those members live in Shared Components → GSSWebComponent.dll.
+   Classic ASP.NET Web Site compiles against:
+     F:\GSS\AppDev\gss-root\WebV3\gssweb\gssweb\Bin\GSSWebComponent.dll
+   If that Bin DLL is older than processPackage.aspx.cs → CS0117 / CS1061 → exit 1.
+
+B) WRONG gitLatestCommand (config bug — from your appsettings screenshot)
+   "GSSWeb" currently has (WRONG — copy-paste from Web Service):
+
+     "gitLatestCommand":
+       "... -- \"Web Services\\GSSWebService\" ...
+        ... -- \"Web Services\\GSSWebService\" ..."
+
+   projectPath is WebV3\gssweb\gssweb.sln, but Get latest updates
+   Web Services\GSSWebService instead. WebV3\gssweb (and its Bin) never
+   refresh from @{u}, so website source / Bin stay mismatched.
+
+
+================================================================================
+FIX 1 — appsettings.json "GSSWeb" (REQUIRED)
+================================================================================
+Paste this entire object over the GSSWeb entry:
+
+
+{
+  "name": "GSSWeb",
+  "type": "AspNetWebForms",
+  "projectPath": "WebV3\\gssweb\\gssweb.sln",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"WebV3\\gssweb\" \"Shared Components\\GSSWebComponent\" && git fetch && git restore --source=@{u} --staged --worktree -- \"WebV3\\gssweb\" \"Shared Components\\GSSWebComponent\" && (git stash pop || ver > nul)",
+  "buildCommand": "msbuild \"Shared Components\\GSSWebComponent\\GSSWebComponent.csproj\" /p:Configuration=Release /t:Build /v:m && copy /Y \"Shared Components\\GSSWebComponent\\bin\\Release\\GSSWebComponent.dll\" \"WebV3\\gssweb\\gssweb\\Bin\\GSSWebComponent.dll\" && msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
+  "outputSubfolder": "GSSWeb"
+}
+
+
+Copy-paste gitLatestCommand only (pathspecs FIXED + Shared Component):
+
+  git stash push -m "devops-pre-build" -- "WebV3\gssweb" "Shared Components\GSSWebComponent" && git fetch && git restore --source=@{u} --staged --worktree -- "WebV3\gssweb" "Shared Components\GSSWebComponent" && (git stash pop || ver > nul)
+
+
+Copy-paste buildCommand only (rebuild DLL → copy to Bin → publish website):
+
+  msbuild "Shared Components\GSSWebComponent\GSSWebComponent.csproj" /p:Configuration=Release /t:Build /v:m && copy /Y "Shared Components\GSSWebComponent\bin\Release\GSSWebComponent.dll" "WebV3\gssweb\gssweb\Bin\GSSWebComponent.dll" && msbuild "{projectFile}" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile
+
+
+Why this works:
+  1) Get latest refreshes BOTH the website AND Shared Components\GSSWebComponent
+  2) Build first compiles a fresh GSSWebComponent.dll with the receptacle APIs
+  3) copy /Y puts that DLL into the website Bin (what aspnet_compiler actually refs)
+  4) Then msbuild + FolderProfile publishes GSSWeb as before
+
+
+--------------------------------------------------------------------------------
+If GSSWebComponent.csproj path differs on disk
+--------------------------------------------------------------------------------
+From Repo Root (F:\GSS\AppDev\gss-root) in cmd:
+
+  dir /s /b "GSSWebComponent.csproj"
+
+Use THAT relative path in buildCommand (both the msbuild and the copy source).
+
+Common layouts:
+
+  Shared Components\GSSWebComponent\GSSWebComponent.csproj
+  Shared Components\GSSWebComponent\GSSWebComponent\GSSWebComponent.csproj
+
+Release output is usually next to the .csproj under bin\Release\ — confirm with:
+
+  dir /s /b "Shared Components\GSSWebComponent\*GSSWebComponent.dll"
+
+If DLL lands in bin\Release\net48\ (or similar), adjust the copy source path.
+
+Also copy PDB if you want matching symbols (optional):
+
+  copy /Y "...\GSSWebComponent.pdb" "WebV3\gssweb\gssweb\Bin\"
+
+
+--------------------------------------------------------------------------------
+If msbuild is not on PATH
+--------------------------------------------------------------------------------
+Prefix both msbuild calls with the full VS MSBuild path, e.g.:
+
+  "C:\Program Files\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe"
+
+(or VS 18 / Enterprise — match the folder that exists on the build box).
+
+Same ResolveMsBuildPath(netFramework: true) family as other AspNetWebForms builds.
+Do NOT use "dotnet build" for this classic website / Framework component.
+
+
+================================================================================
+FIX 2 — one-time manual unblock (prove outside the tool)
+================================================================================
+Open "Developer Command Prompt for VS", cwd = F:\GSS\AppDev\gss-root:
+
+  1) Find project:
+       dir /s /b GSSWebComponent.csproj
+
+  2) Build Shared Component (adjust path from step 1):
+       msbuild "Shared Components\GSSWebComponent\GSSWebComponent.csproj" /p:Configuration=Release /t:Build
+
+  3) Copy into website Bin:
+       copy /Y "Shared Components\GSSWebComponent\bin\Release\GSSWebComponent.dll" ^
+            "WebV3\gssweb\gssweb\Bin\GSSWebComponent.dll"
+
+  4) Build website the same way the tool does:
+       msbuild "WebV3\gssweb\gssweb.sln" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile
+
+Expect exit code 0 and NO CS0117 / CS1061 lines.
+
+Then put the same chained command into appsettings buildCommand (FIX 1).
+
+
+================================================================================
+FIX 3 — ONLY if Shared Components on THIS branch lacks the APIs
+================================================================================
+If after rebuilding GSSWebComponent from source you STILL get CS0117/CS1061,
+the methods do not exist on the checked-out branch yet (source vs Bin mismatch
+is not the issue — feature not merged into Shared Components).
+
+Then either:
+  a) Checkout / merge the branch that added IsReceptacleBasedProduct +
+     EnableDdpForReceptaclePackages into Shared Components, rebuild, copy Bin
+  OR
+  b) Revert / guard the receptacle calls in processPackage.aspx.cs on this
+     branch until Shared Components catches up (gss-root change — not DevOpsTool)
+
+Do NOT silence these by ignoring exit codes in the DevOps tool.
+
+
+================================================================================
+ALSO KEEP (already documented — do not regress)
+================================================================================
+- type stays "AspNetWebForms"
+- Skip "dotnet restore" for AspNetWebForms (MSB4249)
+  → docs/fixes/gssweb-aspnet-webforms-build-publish.txt
+- Clean PrecompiledWeb BEFORE msbuild (ASPRUNTIME)
+  → docs/fixes/aspnet-precompiledweb-not-empty.txt
+- Post-build copy PrecompiledWeb → Output Root\GSSWeb
+  → docs/fixes/buildtab-gss-webservice-and-gssweb-full.txt
+- Get latest is toolbar-only (not inside Build click)
+  → docs/fixes/buildtab-no-getlatest-on-build.txt
+
+
+================================================================================
+CHECKLIST
+================================================================================
+[ ] appsettings GSSWeb gitLatestCommand uses WebV3\gssweb (NOT Web Services\GSSWebService)
+[ ] gitLatestCommand also refreshes Shared Components\GSSWebComponent
+[ ] gitLatestCommand ends with (git stash pop || ver > nul)
+[ ] buildCommand rebuilds GSSWebComponent.csproj then copy /Y into WebV3\gssweb\gssweb\Bin
+[ ] .csproj / bin\Release paths match disk (dir /s if unsure)
+[ ] Manual cmd prove: website msbuild exits 0, no CS0117/CS1061
+[ ] Restart DevOpsTool / reload config
+[ ] Toolbar Get latest → GSSWeb Ready
+[ ] Build GSSWeb → exit code 0 → artifacts under Output Root\GSSWeb
+
+
+================================================================================
+END
+================================================================================
