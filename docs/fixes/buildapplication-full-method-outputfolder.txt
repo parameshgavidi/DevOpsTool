@@ -87,6 +87,12 @@ REPLACE your entire BuildApplication method with this
                     .Replace("{outputFolder}", outputFolder, StringComparison.OrdinalIgnoreCase);
 
                 // Windows: resolve full msbuild path when shell operators present
+                // WARNING: this rewrite + cmd.exe /c turns
+                //   msbuild A && copy && msbuild B
+                // into one MSBuild.exe process that sees "&&" as a switch (MSB1008).
+                // For chained GSSWeb builds, do NOT start appsettings buildCommand
+                // with the word "msbuild". Use:  ver>nul & msbuild A && copy && msbuild B
+                // See docs/fixes/gssweb-receptacle-dll-cs0117-cs1061.txt
                 if (OperatingSystem.IsWindows()
                     && command.StartsWith("msbuild", StringComparison.OrdinalIgnoreCase)
                     && command.IndexOfAny(new[] { '&', '|', '>', '<', '^', '%' }) >= 0)

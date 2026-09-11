@@ -55,7 +55,7 @@ NEW (keep local + get latest for that project folder):
   "type": "AspNetWebForms",
   "projectPath": "WebV3\\gssweb\\gssweb.sln",
   "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"WebV3\\gssweb\" \"Shared Components\\GSSWebComponent\" && git fetch && git restore --source=@{u} --staged --worktree -- \"WebV3\\gssweb\" \"Shared Components\\GSSWebComponent\" && (git stash pop || ver > nul)",
-  "buildCommand": "msbuild \"Shared Components\\GSSWebComponent\\GSSWebComponent.csproj\" /p:Configuration=Release /t:Build /v:m && copy /Y \"Shared Components\\GSSWebComponent\\bin\\Release\\GSSWebComponent.dll\" \"WebV3\\gssweb\\gssweb\\Bin\\GSSWebComponent.dll\" && msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
+  "buildCommand": "ver>nul & msbuild \"Shared Components\\GSSWebComponent\\GSSWebComponent.csproj\" /p:Configuration=Release /t:Build /v:m && copy /Y \"Shared Components\\GSSWebComponent\\bin\\Release\\GSSWebComponent.dll\" \"WebV3\\gssweb\\gssweb\\Bin\\GSSWebComponent.dll\" && msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
   "outputSubfolder": "GSSWeb"
 }
 

@@ -3,7 +3,7 @@
   "type": "AspNetWebForms",
   "projectPath": "WebV3\\gssweb\\gssweb.sln",
   "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"WebV3\\gssweb\" \"Shared Components\\GSSWebComponent\" && git fetch && git restore --source=@{u} --staged --worktree -- \"WebV3\\gssweb\" \"Shared Components\\GSSWebComponent\" && (git stash pop || ver > nul)",
-  "buildCommand": "msbuild \"Shared Components\\GSSWebComponent\\GSSWebComponent.csproj\" /p:Configuration=Release /t:Build /v:m && copy /Y \"Shared Components\\GSSWebComponent\\bin\\Release\\GSSWebComponent.dll\" \"WebV3\\gssweb\\gssweb\\Bin\\GSSWebComponent.dll\" && msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
+  "buildCommand": "ver>nul & msbuild \"Shared Components\\GSSWebComponent\\GSSWebComponent.csproj\" /p:Configuration=Release /t:Build /v:m && copy /Y \"Shared Components\\GSSWebComponent\\bin\\Release\\GSSWebComponent.dll\" \"WebV3\\gssweb\\gssweb\\Bin\\GSSWebComponent.dll\" && msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
   "outputSubfolder": "GSSWeb"
 }
 
@@ -16,6 +16,8 @@ EnableDdpForReceptaclePackages or IsReceptacleBasedProduct:
     Web Services\GSSWebService by mistake).
   → Full fix: docs/fixes/gssweb-receptacle-dll-cs0117-cs1061.txt
 Use the appsettings block ABOVE (rebuild Shared Component + copy to Bin).
+buildCommand MUST start with ver>nul & — if it starts with msbuild && the
+tool rewrites it to MSBuild.exe … && and you get MSB1008 (Switch: &&).
 
 NEVER use gitLatestCommand path "Web Services\\GSSWebService" for GSSWeb —
 that is the Web Service app. GSSWeb pathspecs must be WebV3\gssweb.

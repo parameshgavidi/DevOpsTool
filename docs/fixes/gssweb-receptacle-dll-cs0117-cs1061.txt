@@ -63,7 +63,7 @@ Paste this entire object over the GSSWeb entry:
   "type": "AspNetWebForms",
   "projectPath": "WebV3\\gssweb\\gssweb.sln",
   "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"WebV3\\gssweb\" \"Shared Components\\GSSWebComponent\" && git fetch && git restore --source=@{u} --staged --worktree -- \"WebV3\\gssweb\" \"Shared Components\\GSSWebComponent\" && (git stash pop || ver > nul)",
-  "buildCommand": "msbuild \"Shared Components\\GSSWebComponent\\GSSWebComponent.csproj\" /p:Configuration=Release /t:Build /v:m && copy /Y \"Shared Components\\GSSWebComponent\\bin\\Release\\GSSWebComponent.dll\" \"WebV3\\gssweb\\gssweb\\Bin\\GSSWebComponent.dll\" && msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
+  "buildCommand": "ver>nul & msbuild \"Shared Components\\GSSWebComponent\\GSSWebComponent.csproj\" /p:Configuration=Release /t:Build /v:m && copy /Y \"Shared Components\\GSSWebComponent\\bin\\Release\\GSSWebComponent.dll\" \"WebV3\\gssweb\\gssweb\\Bin\\GSSWebComponent.dll\" && msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
   "outputSubfolder": "GSSWeb"
 }
 
@@ -73,9 +73,9 @@ Copy-paste gitLatestCommand only (pathspecs FIXED + Shared Component):
   git stash push -m "devops-pre-build" -- "WebV3\gssweb" "Shared Components\GSSWebComponent" && git fetch && git restore --source=@{u} --staged --worktree -- "WebV3\gssweb" "Shared Components\GSSWebComponent" && (git stash pop || ver > nul)
 
 
-Copy-paste buildCommand only (rebuild DLL → copy to Bin → publish website):
+Copy-paste buildCommand only (MUST start with ver>nul & — see MSB1008 below):
 
-  msbuild "Shared Components\GSSWebComponent\GSSWebComponent.csproj" /p:Configuration=Release /t:Build /v:m && copy /Y "Shared Components\GSSWebComponent\bin\Release\GSSWebComponent.dll" "WebV3\gssweb\gssweb\Bin\GSSWebComponent.dll" && msbuild "{projectFile}" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile
+  ver>nul & msbuild "Shared Components\GSSWebComponent\GSSWebComponent.csproj" /p:Configuration=Release /t:Build /v:m && copy /Y "Shared Components\GSSWebComponent\bin\Release\GSSWebComponent.dll" "WebV3\gssweb\gssweb\Bin\GSSWebComponent.dll" && msbuild "{projectFile}" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile
 
 
 Why this works:
@@ -83,6 +83,38 @@ Why this works:
   2) Build first compiles a fresh GSSWebComponent.dll with the receptacle APIs
   3) copy /Y puts that DLL into the website Bin (what aspnet_compiler actually refs)
   4) Then msbuild + FolderProfile publishes GSSWeb as before
+  5) Command does NOT start with the word "msbuild" — required so the tool
+     does not rewrite the chain into one MSBuild.exe process (MSB1008)
+
+
+--------------------------------------------------------------------------------
+IF YOU ALREADY PASTED THE OLD buildCommand — MSB1008 (current failure)
+--------------------------------------------------------------------------------
+OUTPUT LOG:
+
+  MSB1008: Only one project can be specified.
+  Switch: &&
+  [INFO] Finished GSSWeb with exit code 1
+
+  Build command logged looks like:
+    "F:\Program Files\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe"
+    "Shared Components\GSSWebComponent\GSSWebComponent.csproj" /t:Build
+    && copy /Y ... && msbuild "F:\...\gssweb.sln" ...
+
+CAUSE (settings + tool rewrite — still NO DevOpsTool C# change):
+  BuildApplication sees buildCommand STARTS WITH "msbuild" AND contains &&
+  then replaces the first "msbuild" with the full MSBuild.exe path
+  (see docs/fixes/buildapplication-full-method-outputfolder.txt).
+  BuildService then runs that string via cmd.exe /c. Because the line now
+  starts with a quoted "…\MSBuild.exe" path, && is passed INTO MSBuild
+  as a switch → MSB1008. The copy and website build never run.
+
+FIX: replace buildCommand with the ver>nul & … version ABOVE.
+  It must NOT begin with the word msbuild.
+  Restart the tool / reload config, then Build GSSWeb again.
+
+Do NOT put the full "F:\Program Files\...\MSBuild.exe" path at the start
+of buildCommand — that hits the same cmd quoting / MSB1008 problem.
 
 
 --------------------------------------------------------------------------------
@@ -113,13 +145,16 @@ Also copy PDB if you want matching symbols (optional):
 --------------------------------------------------------------------------------
 If msbuild is not on PATH
 --------------------------------------------------------------------------------
-Prefix both msbuild calls with the full VS MSBuild path, e.g.:
+Keep the ver>nul & PREFIX (so the line does not start with msbuild).
+Use the full VS MSBuild path for EACH msbuild in the chain, e.g. your box:
 
-  "C:\Program Files\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe"
+  F:\Program Files\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe
 
-(or VS 18 / Enterprise — match the folder that exists on the build box).
+Example (still starts with ver>nul &):
 
-Same ResolveMsBuildPath(netFramework: true) family as other AspNetWebForms builds.
+  ver>nul & "F:\Program Files\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe" "Shared Components\GSSWebComponent\GSSWebComponent.csproj" /p:Configuration=Release /t:Build /v:m && copy /Y "Shared Components\GSSWebComponent\bin\Release\GSSWebComponent.dll" "WebV3\gssweb\gssweb\Bin\GSSWebComponent.dll" && "F:\Program Files\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe" "{projectFile}" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile
+
+Do NOT start the buildCommand with that quoted MSBuild.exe path (MSB1008).
 Do NOT use "dotnet build" for this classic website / Framework component.
 
 
@@ -143,7 +178,7 @@ Open "Developer Command Prompt for VS", cwd = F:\GSS\AppDev\gss-root:
 
 Expect exit code 0 and NO CS0117 / CS1061 lines.
 
-Then put the same chained command into appsettings buildCommand (FIX 1).
+Then use the ver>nul & chained buildCommand from FIX 1 (do not start with msbuild).
 
 
 ================================================================================
@@ -183,6 +218,7 @@ CHECKLIST
 [ ] appsettings GSSWeb gitLatestCommand uses WebV3\gssweb (NOT Web Services\GSSWebService)
 [ ] gitLatestCommand also refreshes Shared Components\GSSWebComponent
 [ ] gitLatestCommand ends with (git stash pop || ver > nul)
+[ ] buildCommand starts with ver>nul & (NOT with msbuild) — avoids MSB1008
 [ ] buildCommand rebuilds GSSWebComponent.csproj then copy /Y into WebV3\gssweb\gssweb\Bin
 [ ] .csproj / bin\Release paths match disk (dir /s if unsure)
 [ ] Manual cmd prove: website msbuild exits 0, no CS0117/CS1061
