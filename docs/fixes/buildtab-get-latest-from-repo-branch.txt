@@ -105,7 +105,8 @@ Notes:
 - Get latest uses the SELECTED RepoFromBranch value — not appsettings.
 - "Build file path" sits next to Get latest. Full paste guide:
   docs/fixes/buildtab-build-file-path.txt
-  (combines Output Root + selected branch → F:\build-output\GSSv9.3S1)
+  (combines Output Root + trimmed branch → F:\build-output\9.3S1)
+  If folder still has GSSv: docs/fixes/buildtab-build-file-path-trim-gssv.txt
 
 
 ================================================================================

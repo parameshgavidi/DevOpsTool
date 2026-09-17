@@ -245,7 +245,7 @@ File: Services/Build/OutputPathService.cs
         public string GetBuildFilePath(
             string? outputRoot,
             string? selectedBranch) { … }
-            // F:\build-output + GSSv9.3S1 → F:\build-output\GSSv9.3S1
+            // F:\build-output + GSSv9.3S1 → F:\build-output\9.3S1 (trim GSSv)
             // docs/fixes/buildtab-build-file-path.txt
 
         // also: TryGetCurrentGitBranch + TrimGssVersionFolder if not in BranchNameHelper

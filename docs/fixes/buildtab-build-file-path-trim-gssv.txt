@@ -1,0 +1,97 @@
+================================================================================
+SMALL FIX — Build file path folder without "GSSv"
+REPLACE GetBuildFilePath only
+================================================================================
+
+WHAT YOU SAW
+------------
+Button shows / creates:
+
+    F:\build-output\GSSv9.3S1
+
+Explorer already has (correct):
+
+    F:\build-output\9.3S1     ← checkmark
+    F:\build-output\9.2S2
+
+CAUSE
+-----
+GetBuildFilePath used the raw branch name (GSSv9.3S1).
+Existing output folders trim "GSSv" (same as GetAppOutputFolder /
+TrimGssVersionFolder):  GSSv9.3S1 → 9.3S1
+
+
+FIX — REPLACE your GetBuildFilePath method with this
+----------------------------------------------------
+You already have TrimGssVersionFolder in BuildTab. Reuse it. Do NOT add
+a second copy.
+
+    private string GetBuildFilePath()
+    {
+        var outputRoot = (OutputRoot ?? string.Empty).Trim().TrimEnd('\\', '/');
+        var branch = (RepoFromBranch ?? string.Empty).Trim();
+
+        if (string.IsNullOrWhiteSpace(outputRoot) || string.IsNullOrWhiteSpace(branch))
+            return string.Empty;
+
+        // GSSv9.3S1 / origin/GSSv9.3S1 → 9.3S1  (match Explorer: F:\build-output\9.3S1)
+        var folder = TrimGssVersionFolder(branch);
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            var slash = branch.LastIndexOf('/');
+            folder = (slash >= 0 && slash < branch.Length - 1)
+                ? branch[(slash + 1)..]
+                : branch;
+        }
+
+        foreach (var c in Path.GetInvalidFileNameChars())
+            folder = folder.Replace(c, '_');
+
+        if (string.IsNullOrWhiteSpace(folder))
+            return string.Empty;
+
+        return Path.Combine(outputRoot, folder);
+    }
+
+If TrimGssVersionFolder is missing (red squiggle), paste it from
+docs/fixes/getappoutputfolder-version-method.txt — do not invent a new helper.
+
+
+If you use OutputPathService, REPLACE GetBuildFilePath there the same way
+(call BranchNameHelper.TrimGssVersionFolder, or copy the TrimGssVersionFolder
+body). BuildTab wrapper stays:
+
+    private string GetBuildFilePath()
+        => OutputPaths.GetBuildFilePath(OutputRoot, RepoFromBranch);
+
+
+DO NOT CHANGE
+-------------
+[ ] Button markup / Get latest — leave as-is
+[ ] BuildFilePathClicked — leave as-is (it already calls GetBuildFilePath)
+[ ] GetAppOutputFolder — already trims GSSv
+[ ] appsettings.json — no new keys
+
+
+AFTER PASTE
+-----------
+1. Rebuild + run
+2. Output Root = F:\build-output, branch = GSSv9.3S1
+3. Click Build file path
+4. Label + log must show:  F:\build-output\9.3S1
+5. Explorer opens existing 9.3S1 (does NOT create GSSv9.3S1)
+
+If an empty F:\build-output\GSSv9.3S1 folder was created earlier, delete it
+in Explorer — it is leftover from the untrimmed path.
+
+
+EXPECTED LOG
+------------
+    [INFO] Build file path: F:\build-output\9.3S1
+    [INFO]   Output Root = F:\build-output
+    [INFO]   Branch      = GSSv9.3S1
+
+
+================================================================================
+END
+================================================================================

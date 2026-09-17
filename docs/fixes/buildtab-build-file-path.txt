@@ -22,14 +22,15 @@ YOUR SCREENSHOT
   Output Root:                    F:\build-output
   Get Latest From Repo Branch:    GSSv9.3S1
 
-  Combined path:
+  Combined path (trim "GSSv" to match existing Explorer folders):
 
-    F:\build-output\GSSv9.3S1
+    F:\build-output\9.3S1
 
-Uses the SELECTED branch name as-is (RepoFromBranch). Does NOT trim "GSSv".
-That is different from GetAppOutputFolder, which writes apps under a trimmed
-version folder (e.g. F:\build-output\9.3S1\GSSApi). This button is the
-parent branch folder under Output Root.
+  NOT F:\build-output\GSSv9.3S1
+
+Folder name uses TrimGssVersionFolder (same as GetAppOutputFolder):
+  GSSv9.3S1 / origin/GSSv9.3S1 → 9.3S1
+  so the button reuses F:\build-output\9.3S1 (already on disk).
 
 
 ================================================================================
@@ -97,8 +98,9 @@ CHANGE 3 — ADD GetBuildFilePath (the combine method)
 PASTE inside @code. This is the method that builds the path.
 
     /// <summary>
-    /// Combine Output Root + selected Get Latest From Repo Branch name.
-    /// Example: F:\build-output + GSSv9.3S1 → F:\build-output\GSSv9.3S1
+    /// Combine Output Root + selected Get Latest From Repo Branch.
+    /// Example: F:\build-output + GSSv9.3S1 → F:\build-output\9.3S1
+    /// Trims "GSSv" so the folder matches Explorer (9.3S1, 9.2S2).
     /// </summary>
     private string GetBuildFilePath()
     {
@@ -108,18 +110,23 @@ PASTE inside @code. This is the method that builds the path.
         if (string.IsNullOrWhiteSpace(outputRoot) || string.IsNullOrWhiteSpace(branch))
             return string.Empty;
 
-        // origin/GSSv9.3S1 → GSSv9.3S1  (folder name = branch name, not a nested origin\)
-        var slash = branch.LastIndexOf('/');
-        if (slash >= 0 && slash < branch.Length - 1)
-            branch = branch[(slash + 1)..];
+        // GSSv9.3S1 / origin/GSSv9.3S1 → 9.3S1
+        var folder = TrimGssVersionFolder(branch);
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            var slash = branch.LastIndexOf('/');
+            folder = (slash >= 0 && slash < branch.Length - 1)
+                ? branch[(slash + 1)..]
+                : branch;
+        }
 
         foreach (var c in Path.GetInvalidFileNameChars())
-            branch = branch.Replace(c, '_');
+            folder = folder.Replace(c, '_');
 
-        if (string.IsNullOrWhiteSpace(branch))
+        if (string.IsNullOrWhiteSpace(folder))
             return string.Empty;
 
-        return Path.Combine(outputRoot, branch);
+        return Path.Combine(outputRoot, folder);
     }
 
 
@@ -209,8 +216,8 @@ Only if you already moved path helpers out of BuildTab into
 Services/Build/OutputPathService.cs. ADD this method to that class:
 
     /// <summary>
-    /// Combine Output Root + selected repo branch name.
-    /// F:\build-output + GSSv9.3S1 → F:\build-output\GSSv9.3S1
+    /// Combine Output Root + selected repo branch (trim GSSv).
+    /// F:\build-output + GSSv9.3S1 → F:\build-output\9.3S1
     /// </summary>
     public string GetBuildFilePath(string? outputRoot, string? selectedBranch)
     {
@@ -220,17 +227,22 @@ Services/Build/OutputPathService.cs. ADD this method to that class:
         if (string.IsNullOrWhiteSpace(root) || string.IsNullOrWhiteSpace(branch))
             return string.Empty;
 
-        var slash = branch.LastIndexOf('/');
-        if (slash >= 0 && slash < branch.Length - 1)
-            branch = branch[(slash + 1)..];
+        var folder = TrimGssVersionFolder(branch);
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            var slash = branch.LastIndexOf('/');
+            folder = (slash >= 0 && slash < branch.Length - 1)
+                ? branch[(slash + 1)..]
+                : branch;
+        }
 
         foreach (var c in Path.GetInvalidFileNameChars())
-            branch = branch.Replace(c, '_');
+            folder = folder.Replace(c, '_');
 
-        if (string.IsNullOrWhiteSpace(branch))
+        if (string.IsNullOrWhiteSpace(folder))
             return string.Empty;
 
-        return Path.Combine(root, branch);
+        return Path.Combine(root, folder);
     }
 
 BuildTab then becomes a thin wrapper:
@@ -243,20 +255,14 @@ BuildTab then becomes a thin wrapper:
 DO NOT CHANGE / DO NOT ADD
 ================================================================================
 [ ] Do NOT add buildFilePath / outputBranchFolder to appsettings.json
-[ ] Do NOT trim "GSSv" here — folder name is the selected branch (GSSv9.3S1)
+[ ] DO trim "GSSv" — folder is 9.3S1 not GSSv9.3S1 (reuse TrimGssVersionFolder)
 [ ] Do NOT replace Get latest — this is a SECOND button beside it
-[ ] Do NOT change GetAppOutputFolder / TrimGssVersionFolder (app publish path)
+[ ] Do NOT change GetAppOutputFolder (already uses the same trim)
 [ ] Do NOT call GetLatestFromRepoAsync from this button
 
 
-OPTIONAL — match trimmed version folders instead
------------------------------------------------
-If you want this button to open the SAME parent as GetAppOutputFolder
-(F:\build-output\9.3S1 instead of F:\build-output\GSSv9.3S1), replace the
-return in GetBuildFilePath with:
-
-    var version = TrimGssVersionFolder(branch);
-    return Path.Combine(outputRoot, string.IsNullOrWhiteSpace(version) ? branch : version);
+If the button still creates GSSv9.3S1:
+  docs/fixes/buildtab-build-file-path-trim-gssv.txt  (REPLACE GetBuildFilePath only)
 
 
 ================================================================================
@@ -278,15 +284,15 @@ EXPECTED OUTPUT LOG
 ================================================================================
 Click Build file path with Output Root F:\build-output and branch GSSv9.3S1:
 
-    [INFO] Build file path: F:\build-output\GSSv9.3S1
+    [INFO] Build file path: F:\build-output\9.3S1
     [INFO]   Output Root = F:\build-output
     [INFO]   Branch      = GSSv9.3S1
 
-Explorer opens F:\build-output\GSSv9.3S1 (created if it did not exist).
+Explorer opens F:\build-output\9.3S1 (existing folder — does not create GSSv9.3S1).
 
 Change the dropdown to GSSv8.9S2 and click again:
 
-    [INFO] Build file path: F:\build-output\GSSv8.9S2
+    [INFO] Build file path: F:\build-output\8.9S2
     [INFO]   Output Root = F:\build-output
     [INFO]   Branch      = GSSv8.9S2
 
@@ -296,7 +302,7 @@ CHECKLIST
 ================================================================================
 [ ] Fields: ResolvedBuildFilePath, _isBuildingFilePath
 [ ] "Build file path" button in the same config-actions row as Get latest
-[ ] GetBuildFilePath combines OutputRoot + RepoFromBranch (selected branch name)
+[ ] GetBuildFilePath combines OutputRoot + TrimGssVersionFolder(branch) → 9.3S1 not GSSv9.3S1
 [ ] BuildFilePathClicked creates the folder, logs the path, opens Explorer
 [ ] Path shown next to the button after a successful click
 [ ] Empty Output Root / empty branch → ERROR in OUTPUT LOG, no crash

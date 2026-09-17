@@ -22,7 +22,11 @@ That guide covers:
 
     docs/fixes/buildtab-build-file-path.txt
 
-  Example: F:\build-output + GSSv9.3S1 → F:\build-output\GSSv9.3S1
+  Example: F:\build-output + GSSv9.3S1 → F:\build-output\9.3S1
+  (trim GSSv — same folder Explorer already has)
+
+  If the button still creates GSSv9.3S1:
+    docs/fixes/buildtab-build-file-path-trim-gssv.txt
 
 
 WHAT TO DO (summary)
@@ -40,7 +44,7 @@ WHAT TO DO (summary)
                      → show APPLICATIONS grid
 
 3. Click Build file path → combine Output Root + selected branch
-                         → create F:\build-output\GSSv9.3S1 (example)
+                         → F:\build-output\9.3S1 (trim GSSv; reuse existing folder)
                          → log path + open Explorer
                          → see docs/fixes/buildtab-build-file-path.txt
 
