@@ -18,6 +18,12 @@ That guide covers:
   5. Show APPLICATIONS grid
   6. Build does NOT run git
 
+"Build file path" button (next to Get latest) — Output Root + selected branch:
+
+    docs/fixes/buildtab-build-file-path.txt
+
+  Example: F:\build-output + GSSv9.3S1 → F:\build-output\GSSv9.3S1
+
 
 WHAT TO DO (summary)
 --------------------
@@ -33,7 +39,12 @@ WHAT TO DO (summary)
                        → see docs/fixes/db-scripts-folders-from-to-get-latest.txt
                      → show APPLICATIONS grid
 
-3. Click Build       → build only. NO git. NO GetLatestFromRepoAsync.
+3. Click Build file path → combine Output Root + selected branch
+                         → create F:\build-output\GSSv9.3S1 (example)
+                         → log path + open Explorer
+                         → see docs/fixes/buildtab-build-file-path.txt
+
+4. Click Build       → build only. NO git. NO GetLatestFromRepoAsync.
 
 DB ROLLUP From/To:
   Dropdowns = git branches:
@@ -52,6 +63,8 @@ A) Fields (branch dropdown + Get latest)
     private bool _isLoadingRepoBranches;
     private bool _isGettingLatest;
     private bool _showApplications;   // false until Get latest finishes
+    private string ResolvedBuildFilePath { get; set; } = string.Empty;
+    private bool _isBuildingFilePath;
 
 
 --------------------------------------------------------------------------------
@@ -83,7 +96,7 @@ Do NOT load RepoFromBranch from appsettings (no config variable).
 
 
 --------------------------------------------------------------------------------
-C) Get Latest From Repo Branch UI + Get latest button
+C) Get Latest From Repo Branch UI + Get latest + Build file path buttons
 --------------------------------------------------------------------------------
 Full markup: docs/fixes/buildtab-get-latest-from-repo-branch.txt  CHANGE 2
 
@@ -124,7 +137,21 @@ Short version:
                 @onclick="GetLatestAndShowAppsAsync">
             @(_isGettingLatest ? "Getting latest..." : "Get latest")
         </button>
+        <button class="btn btn-secondary"
+                disabled="@(_isBuildingFilePath
+                            || string.IsNullOrWhiteSpace(OutputRoot)
+                            || string.IsNullOrWhiteSpace(RepoFromBranch))"
+                @onclick="BuildFilePathClicked">
+            @(_isBuildingFilePath ? "Building path..." : "Build file path")
+        </button>
+        @if (!string.IsNullOrWhiteSpace(ResolvedBuildFilePath))
+        {
+            <span class="build-file-path" title="@ResolvedBuildFilePath">@ResolvedBuildFilePath</span>
+        }
     </div>
+
+Build file path method + click handler:
+  docs/fixes/buildtab-build-file-path.txt
 
 
 --------------------------------------------------------------------------------

@@ -56,7 +56,7 @@ Services/
 │   │                                   CleanPrecompiledOutput
 │   ├── PublishCopyService.cs         ← PrecompiledWeb / publish copy to output
 │   ├── SetupProjectBuilder.cs        ← BuildSetupProjectAsync (calls IBuildService)
-│   └── OutputPathService.cs          ← GetAppOutputFolder, branch version folder
+│   └── OutputPathService.cs          ← GetAppOutputFolder, GetBuildFilePath, branch version folder
 │
 ├── Git/
 │   ├── GitService.cs                 ← GetLatest*, Load*Branches, PullBranchIntoFolder

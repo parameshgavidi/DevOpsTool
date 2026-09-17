@@ -36,6 +36,8 @@ ADD these only. Do NOT add anything to appsettings.json.
     private bool _isLoadingRepoBranches;
     private bool _isGettingLatest;
     private bool _showApplications;   // false until Get latest finishes
+    private string ResolvedBuildFilePath { get; set; } = string.Empty;
+    private bool _isBuildingFilePath;
 
 Keep your existing:
     RepoRoot, OutputRoot, BuildApps, AppendLog, BuildService,
@@ -85,11 +87,25 @@ Put this under Repo Root / Output Root (BUILD CONFIGURATION).
                 @onclick="GetLatestAndShowAppsAsync">
             @(_isGettingLatest ? "Getting latest..." : "Get latest")
         </button>
+        <button class="btn btn-secondary"
+                disabled="@(_isBuildingFilePath
+                            || string.IsNullOrWhiteSpace(OutputRoot)
+                            || string.IsNullOrWhiteSpace(RepoFromBranch))"
+                @onclick="BuildFilePathClicked">
+            @(_isBuildingFilePath ? "Building path..." : "Build file path")
+        </button>
+        @if (!string.IsNullOrWhiteSpace(ResolvedBuildFilePath))
+        {
+            <span class="build-file-path" title="@ResolvedBuildFilePath">@ResolvedBuildFilePath</span>
+        }
     </div>
 
 Notes:
 - Dropdown looks/behaves like From Branch (select + Refresh).
 - Get latest uses the SELECTED RepoFromBranch value — not appsettings.
+- "Build file path" sits next to Get latest. Full paste guide:
+  docs/fixes/buildtab-build-file-path.txt
+  (combines Output Root + selected branch → F:\build-output\GSSv9.3S1)
 
 
 ================================================================================
@@ -505,7 +521,7 @@ After Get latest (selected GSSv8.9S2):
 CHECKLIST
 ================================================================================
 [ ] Fields: RepoFromBranch, RepoBranchOptions, _isLoadingRepoBranches
-[ ] Dropdown + Refresh + Get latest button under BUILD CONFIGURATION
+[ ] Dropdown + Refresh + Get latest + Build file path under BUILD CONFIGURATION
 [ ] LoadRepoBranchesAsync uses hardcoded "git branch -r" (no config)
 [ ] Default RepoFromBranch = last sorted GSS branch (latest)
 [ ] GetLatestAndShowAppsAsync checkouts RepoFromBranch then per-app latest

@@ -1,0 +1,309 @@
+================================================================================
+USE THIS FILE — "Build file path" button next to Get latest
+BuildTab.razor — paste-ready
+================================================================================
+
+GOAL
+----
+Add a button next to Get latest named "Build file path".
+
+It combines:
+
+    Output Root  +  selected "Get Latest From Repo Branch"
+
+into one folder path, then creates that folder (if missing), logs it,
+and opens it in Explorer.
+
+NO new appsettings / configuration variable.
+
+
+YOUR SCREENSHOT
+---------------
+  Output Root:                    F:\build-output
+  Get Latest From Repo Branch:    GSSv9.3S1
+
+  Combined path:
+
+    F:\build-output\GSSv9.3S1
+
+Uses the SELECTED branch name as-is (RepoFromBranch). Does NOT trim "GSSv".
+That is different from GetAppOutputFolder, which writes apps under a trimmed
+version folder (e.g. F:\build-output\9.3S1\GSSApi). This button is the
+parent branch folder under Output Root.
+
+
+================================================================================
+CHANGE 1 — ADD fields (inside @code, near RepoFromBranch / OutputRoot)
+================================================================================
+ADD these only. Do NOT add anything to appsettings.json.
+
+    private string ResolvedBuildFilePath { get; set; } = string.Empty;
+    private bool _isBuildingFilePath;
+
+Keep your existing:
+    RepoRoot, OutputRoot, RepoFromBranch, RepoBranchOptions,
+    _isGettingLatest, AppendLog, GetLatestAndShowAppsAsync, etc.
+
+
+================================================================================
+CHANGE 2 — ADD the button next to Get latest
+================================================================================
+Find the existing Get latest button (config-actions). REPLACE that whole
+<div class="config-actions"> block with:
+
+    <div class="config-actions">
+        <button class="btn btn-primary"
+                disabled="@(_isGettingLatest
+                            || string.IsNullOrWhiteSpace(RepoRoot)
+                            || string.IsNullOrWhiteSpace(RepoFromBranch)
+                            || RepoBranchOptions.Count == 0)"
+                @onclick="GetLatestAndShowAppsAsync">
+            @(_isGettingLatest ? "Getting latest..." : "Get latest")
+        </button>
+        <button class="btn btn-secondary"
+                disabled="@(_isBuildingFilePath
+                            || string.IsNullOrWhiteSpace(OutputRoot)
+                            || string.IsNullOrWhiteSpace(RepoFromBranch))"
+                @onclick="BuildFilePathClicked">
+            @(_isBuildingFilePath ? "Building path..." : "Build file path")
+        </button>
+        @if (!string.IsNullOrWhiteSpace(ResolvedBuildFilePath))
+        {
+            <span class="build-file-path" title="@ResolvedBuildFilePath">@ResolvedBuildFilePath</span>
+        }
+    </div>
+
+Notes:
+- Button sits NEXT TO Get latest (same row). Existing .config-actions already
+  uses display:flex; gap:8px — no new CSS required for layout.
+- Disabled until Output Root AND a selected branch are set.
+- After a successful click, the combined path shows beside the button.
+
+
+Optional CSS (only if the path wraps poorly):
+
+    .build-file-path {
+        margin-left: 8px;
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 0.9rem;
+        color: #333;
+        word-break: break-all;
+    }
+
+
+================================================================================
+CHANGE 3 — ADD GetBuildFilePath (the combine method)
+================================================================================
+PASTE inside @code. This is the method that builds the path.
+
+    /// <summary>
+    /// Combine Output Root + selected Get Latest From Repo Branch name.
+    /// Example: F:\build-output + GSSv9.3S1 → F:\build-output\GSSv9.3S1
+    /// </summary>
+    private string GetBuildFilePath()
+    {
+        var outputRoot = (OutputRoot ?? string.Empty).Trim().TrimEnd('\\', '/');
+        var branch = (RepoFromBranch ?? string.Empty).Trim();
+
+        if (string.IsNullOrWhiteSpace(outputRoot) || string.IsNullOrWhiteSpace(branch))
+            return string.Empty;
+
+        // origin/GSSv9.3S1 → GSSv9.3S1  (folder name = branch name, not a nested origin\)
+        var slash = branch.LastIndexOf('/');
+        if (slash >= 0 && slash < branch.Length - 1)
+            branch = branch[(slash + 1)..];
+
+        foreach (var c in Path.GetInvalidFileNameChars())
+            branch = branch.Replace(c, '_');
+
+        if (string.IsNullOrWhiteSpace(branch))
+            return string.Empty;
+
+        return Path.Combine(outputRoot, branch);
+    }
+
+
+If you already extracted OutputPathService, put the same logic there instead
+(see CHANGE 5) and call it from BuildTab:
+
+    private string GetBuildFilePath()
+        => OutputPaths.GetBuildFilePath(OutputRoot, RepoFromBranch);
+
+
+================================================================================
+CHANGE 4 — ADD BuildFilePathClicked (button handler)
+================================================================================
+PASTE inside @code:
+
+    private async Task BuildFilePathClicked()
+    {
+        if (_isBuildingFilePath)
+            return;
+
+        _isBuildingFilePath = true;
+        try
+        {
+            var outputRoot = (OutputRoot ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(outputRoot))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Output Root is empty. Browse Output Root first.");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            var branch = (RepoFromBranch ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(branch))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Select a branch in Get Latest From Repo Branch (click Refresh first).");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            var path = GetBuildFilePath();
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Could not build file path from Output Root + branch.");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            Directory.CreateDirectory(path);   // no-op if it already exists
+            ResolvedBuildFilePath = path;
+
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Build file path: {path}");
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO]   Output Root = {outputRoot}");
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO]   Branch      = {branch}");
+            await InvokeAsync(StateHasChanged);
+
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = $"\"{path}\"",
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [WARN] Path created but Explorer did not open: {ex.Message}");
+            }
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Build file path failed: {ex.Message}");
+            await InvokeAsync(StateHasChanged);
+        }
+        finally
+        {
+            _isBuildingFilePath = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+
+================================================================================
+CHANGE 5 — OPTIONAL: OutputPathService.GetBuildFilePath (class-file split)
+================================================================================
+Only if you already moved path helpers out of BuildTab into
+Services/Build/OutputPathService.cs. ADD this method to that class:
+
+    /// <summary>
+    /// Combine Output Root + selected repo branch name.
+    /// F:\build-output + GSSv9.3S1 → F:\build-output\GSSv9.3S1
+    /// </summary>
+    public string GetBuildFilePath(string? outputRoot, string? selectedBranch)
+    {
+        var root = (outputRoot ?? string.Empty).Trim().TrimEnd('\\', '/');
+        var branch = (selectedBranch ?? string.Empty).Trim();
+
+        if (string.IsNullOrWhiteSpace(root) || string.IsNullOrWhiteSpace(branch))
+            return string.Empty;
+
+        var slash = branch.LastIndexOf('/');
+        if (slash >= 0 && slash < branch.Length - 1)
+            branch = branch[(slash + 1)..];
+
+        foreach (var c in Path.GetInvalidFileNameChars())
+            branch = branch.Replace(c, '_');
+
+        if (string.IsNullOrWhiteSpace(branch))
+            return string.Empty;
+
+        return Path.Combine(root, branch);
+    }
+
+BuildTab then becomes a thin wrapper:
+
+    private string GetBuildFilePath()
+        => OutputPaths.GetBuildFilePath(OutputRoot, RepoFromBranch);
+
+
+================================================================================
+DO NOT CHANGE / DO NOT ADD
+================================================================================
+[ ] Do NOT add buildFilePath / outputBranchFolder to appsettings.json
+[ ] Do NOT trim "GSSv" here — folder name is the selected branch (GSSv9.3S1)
+[ ] Do NOT replace Get latest — this is a SECOND button beside it
+[ ] Do NOT change GetAppOutputFolder / TrimGssVersionFolder (app publish path)
+[ ] Do NOT call GetLatestFromRepoAsync from this button
+
+
+OPTIONAL — match trimmed version folders instead
+-----------------------------------------------
+If you want this button to open the SAME parent as GetAppOutputFolder
+(F:\build-output\9.3S1 instead of F:\build-output\GSSv9.3S1), replace the
+return in GetBuildFilePath with:
+
+    var version = TrimGssVersionFolder(branch);
+    return Path.Combine(outputRoot, string.IsNullOrWhiteSpace(version) ? branch : version);
+
+
+================================================================================
+STEP-BY-STEP WORK ORDER
+================================================================================
+1. Paste CHANGE 1 fields → Rebuild → red squiggles on new fields go away
+2. Paste CHANGE 2 UI (button next to Get latest)
+3. Paste CHANGE 3 GetBuildFilePath
+4. Paste CHANGE 4 BuildFilePathClicked
+5. Rebuild + run the tool
+6. Confirm Output Root = F:\build-output (or your folder)
+7. Confirm Get Latest From Repo Branch has a selected value (Refresh if empty)
+8. Click Build file path
+9. OUTPUT LOG shows the combined path; Explorer opens that folder
+
+
+================================================================================
+EXPECTED OUTPUT LOG
+================================================================================
+Click Build file path with Output Root F:\build-output and branch GSSv9.3S1:
+
+    [INFO] Build file path: F:\build-output\GSSv9.3S1
+    [INFO]   Output Root = F:\build-output
+    [INFO]   Branch      = GSSv9.3S1
+
+Explorer opens F:\build-output\GSSv9.3S1 (created if it did not exist).
+
+Change the dropdown to GSSv8.9S2 and click again:
+
+    [INFO] Build file path: F:\build-output\GSSv8.9S2
+    [INFO]   Output Root = F:\build-output
+    [INFO]   Branch      = GSSv8.9S2
+
+
+================================================================================
+CHECKLIST
+================================================================================
+[ ] Fields: ResolvedBuildFilePath, _isBuildingFilePath
+[ ] "Build file path" button in the same config-actions row as Get latest
+[ ] GetBuildFilePath combines OutputRoot + RepoFromBranch (selected branch name)
+[ ] BuildFilePathClicked creates the folder, logs the path, opens Explorer
+[ ] Path shown next to the button after a successful click
+[ ] Empty Output Root / empty branch → ERROR in OUTPUT LOG, no crash
+[ ] No new keys in appsettings.json
+[ ] Red squiggles gone after Rebuild
+
+
+================================================================================
+END
+================================================================================

@@ -92,7 +92,9 @@ METHOD → CLASS MAP (everything currently living in BuildTab @code)
 --- OutputPathService.cs ---
   GetAppOutputFolder
   ResolveAppOutputFolder
+  GetBuildFilePath                 ← Output Root + selected RepoFromBranch
   (uses TryGetCurrentGitBranch + TrimGssVersionFolder)
+  See: docs/fixes/buildtab-build-file-path.txt
 
 --- BuildOrchestrator.cs ---
   BuildApplication / BuildOneAsync
@@ -134,13 +136,15 @@ METHOD → CLASS MAP (everything currently living in BuildTab @code)
   CopyBuildToMigrationShareAsync
 
 --- STAY IN BuildTab.razor.cs (UI only) ---
-  fields: LogOutput, BuildApps, RepoRoot, FromBranch, ToBranch, _isBuilding,
-          _isGettingLatest, _buildCts, ShowApps, selected repo branch, …
+  fields: LogOutput, BuildApps, RepoRoot, OutputRoot, FromBranch, ToBranch,
+          _isBuilding, _isGettingLatest, _isBuildingFilePath, _buildCts,
+          ShowApps, selected repo branch (RepoFromBranch), ResolvedBuildFilePath
   OnInitialized / OnInitializedAsync / OnAfterRenderAsync
   OnFromBranchChanged / OnToBranchChanged
   BrowseScripts / BrowseDbRollupBranchRoot
   SelectTab / HandleBuildSuccessChanged
   LoadApplicationsFromConfigAsync   (reads IConfiguration → BuildApps list)
+  GetBuildFilePath / BuildFilePathClicked  (thin wrapper → OutputPathService)
   thin wrappers that call services then StateHasChanged
 
 
@@ -238,7 +242,13 @@ File: Services/Build/OutputPathService.cs
             string outputRoot,
             string? repoRoot) { … }
 
-        // moves GetAppOutputFolder + TryGetCurrentGitBranch + TrimGssVersionFolder
+        public string GetBuildFilePath(
+            string? outputRoot,
+            string? selectedBranch) { … }
+            // F:\build-output + GSSv9.3S1 → F:\build-output\GSSv9.3S1
+            // docs/fixes/buildtab-build-file-path.txt
+
+        // also: TryGetCurrentGitBranch + TrimGssVersionFolder if not in BranchNameHelper
     }
 
 
