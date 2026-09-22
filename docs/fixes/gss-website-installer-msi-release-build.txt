@@ -1,0 +1,229 @@
+================================================================================
+GSSWebSiteInstaller — how to get .msi + setup.exe (Release)
+docs/fixes/gss-website-installer-msi-release-build.txt
+================================================================================
+Use this when Visual Studio rebuilds GSSWebSiteInstaller but Explorer has
+NO .msi / setup.exe under:
+
+  F:\GSS\AppDev\gss-root\WebV4\installers\GSSWebSiteInstaller\Release\
+
+Mahmoud's expected result (DMI / WebV4 example):
+
+  gss-root\WebV4\installers\GSSWebWebsiteInstaller\Release\
+    GSSWebInboundWebsiteInstaller.msi
+    setup.exe
+
+GSS API and IMC do NOT produce these files. Every other gss-root app that
+has a Setup (.vdproj) project does — but only after a successful
+**Release** installer build.
+
+
+--------------------------------------------------------------------------------
+ANSWERS FIRST
+--------------------------------------------------------------------------------
+1) Do we need setup.exe?
+   YES. Keep BOTH files together:
+     - .msi       = Windows Installer package (the actual install)
+     - setup.exe  = bootstrapper Visual Studio writes next to the MSI
+                    (prerequisites, then launches the MSI)
+   Team process copies both to the Migration share
+   (server_application). You can run setup.exe, or msiexec the .msi
+   if prerequisites are already installed. Do not ship only one of them.
+
+2) Do we need code changes?
+   - Manual Visual Studio build (what Mahmoud described): NO.
+     The .vdproj already exists. Just build it in Release after the
+     class library / website is built.
+   - DevOps tool auto-build of MSI: YES (appsettings + C#).
+     Current appsettings only run FolderProfile web publish. MSBuild
+     cannot build .vdproj (MSB4078). The tool must call devenv after
+     the web build. See PART C.
+
+3) Why your last rebuild failed (from the Output window):
+   - Toolbar was Debug | Mixed Platforms — MSI lands in Release.
+   - WebInstallerClassLibrary was SKIPPED:
+       "Project not selected to build for this solution configuration"
+   - GSSWebSiteInstaller then failed:
+       "Cannot find output path for project output group
+        '(unable to determine name)'"
+   - Solution Explorer → Detected Dependencies → "unable to determine name"
+     means the installer Primary Output has no built project to package.
+
+
+--------------------------------------------------------------------------------
+PART A — one-time Visual Studio setup
+--------------------------------------------------------------------------------
+1. Install "Microsoft Visual Studio Installer Projects" on the SAME VS
+   that you use on the VDI (Extensions → Manage Extensions → Installed).
+   Button must be Disable / Uninstall, not "Cancel Install".
+   Close all VS windows and wait for VSIX to finish if it is scheduled.
+
+2. Confirm GSSWebSiteInstaller.vdproj loads in Solution Explorer
+   (not "incompatible" / "needs migration").
+
+
+--------------------------------------------------------------------------------
+PART B — step by step: produce .msi + setup.exe in Visual Studio
+--------------------------------------------------------------------------------
+Do this on the Windows VDI. Do NOT rebuild only the installer in Debug.
+
+STEP 1 — Open the web solution, not the installer folder
+  File → Open → Project/Solution:
+    DMI / WebV4:
+      F:\GSS\AppDev\gss-root\WebV4\gssweb\gssweb.sln
+    GSSWeb / WebV3:
+      F:\GSS\AppDev\gss-root\WebV3\gssweb\gssweb.sln
+
+  The installer project must live inside that .sln (you already have
+  GSSWebSiteInstaller + WebInstallerClassLibrary in Solution Explorer).
+
+STEP 2 — Switch to Release (required)
+  Toolbar:
+    Configuration = Release     ← not Debug
+    Platform     = Any CPU      ← or the platform WebInstallerClassLibrary uses
+                                  (avoid Mixed Platforms if that skips the library)
+
+STEP 3 — Configuration Manager: tick the projects that must build
+  Build → Configuration Manager…
+
+  For Active solution configuration = Release, check Build for:
+    [x] WebInstallerClassLibrary
+    [x] GSSWebSiteInstaller
+    [x] the website / other projects the installer Primary Output needs
+
+  Your Debug rebuild skipped WebInstallerClassLibrary. That is why the
+  installer said "(unable to determine name)".
+
+STEP 4 — Build the library FIRST, then the installer
+  1. Right-click WebInstallerClassLibrary → Rebuild
+     Wait for "Rebuild succeeded".
+  2. Right-click GSSWebSiteInstaller → Rebuild
+     (or Build → Rebuild Solution)
+
+  Do not rebuild GSSWebSiteInstaller alone while the library is skipped.
+
+STEP 5 — If Detected Dependencies still says "unable to determine name"
+  1. Select GSSWebSiteInstaller in Solution Explorer
+  2. Confirm "Primary output from WebInstallerClassLibrary" is listed
+  3. If the Primary Output is missing or named "(unable to determine name)":
+       Right-click GSSWebSiteInstaller → View → File System
+       Right-click Application Folder → Add → Project Output
+       Project = WebInstallerClassLibrary
+       Output = Primary Output
+       Configuration = Release
+     Remove the broken "(unable to determine name)" output if it is still there.
+  4. Rebuild WebInstallerClassLibrary, then GSSWebSiteInstaller again.
+
+STEP 6 — Confirm files on disk
+  Open Explorer:
+
+    F:\GSS\AppDev\gss-root\WebV4\installers\GSSWebSiteInstaller\Release\
+
+  You must see BOTH:
+    *.msi          (name may be GSSWebInboundWebsiteInstaller.msi)
+    setup.exe
+
+  Empty Debug / Release folders + only GSSWebSiteInstaller.vdproj
+  means the installer build still failed or you looked at Debug.
+
+STEP 7 — Copy both files (deployment package)
+  Copy .msi AND setup.exe together to:
+    \\EAGNMNSS595\Migration\GSS\{release}\Sprint {N}\server_application\
+
+  Same rule as docs/fixes/MIGRATION-FOLDER-MAINTENANCE.txt.
+
+
+--------------------------------------------------------------------------------
+Why Debug rebuild cannot work (matches your Output log)
+--------------------------------------------------------------------------------
+  Skipped Rebuild: WebInstallerClassLibrary  (Debug Any CPU — not selected)
+  ERROR: Cannot find output path for project output group
+         '(unable to determine name)'
+  Rebuild GSSWebSiteInstaller, Configuration: Debug
+  Rebuild All: 1 succeeded, 1 failed, 1 skipped
+
+The .vdproj packages Primary Output of WebInstallerClassLibrary.
+If that project is not built for the active configuration, the installer
+has nothing to wrap → no .msi, no setup.exe.
+
+
+--------------------------------------------------------------------------------
+PART C — DevOps tool: only if you want Build button to create the MSI
+--------------------------------------------------------------------------------
+Manual VS Release build (PART B) needs NO code changes.
+
+The tool's current GSSDMI / GSSWeb appsettings only do:
+
+  msbuild "{projectFile}" /p:Configuration=Release
+          /p:DeployOnBuild=true /p:PublishProfile=FolderProfile
+
+That publishes website files. It does NOT build .vdproj.
+MSBuild prints MSB4078 if the .sln includes the setup project — ignore
+that warning; devenv must build the installer.
+
+C# changes (same pattern as Web2ClientBridge):
+  1. Application model:
+       public string? SetupProjectPath { get; set; }
+       public string? SetupSolutionPath { get; set; }
+  2. After successful web publish, call BuildSetupProjectAsync
+     (devenv.com via ProcessStartInfo — NOT cmd.exe /c).
+     See docs/fixes/web-to-client-bridge-setup-msi-devenv-process.txt
+  3. Copy *.msi and setup.exe into the app output folder.
+
+appsettings.json additions (GSSDMI / WebV4 example):
+
+{
+  "name": "GSSDMI",
+  "type": "AspNetWebForms",
+  "projectPath": "WebV4\\gssweb\\gssweb.sln",
+  "setupProjectPath": "WebV4\\installers\\GSSWebSiteInstaller\\GSSWebSiteInstaller.vdproj",
+  "setupSolutionPath": "WebV4\\gssweb\\gssweb.sln",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"WebV4\\gssweb\" && git fetch && git restore --source=@{u} --staged --worktree -- \"WebV4\\gssweb\" && (git stash pop || ver > nul)",
+  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
+  "outputSubfolder": "GSSDMI"
+}
+
+Do NOT add setupBuildCommand (cmd quoting breaks devenv under Program Files).
+
+Prerequisites on the build PC if the tool will build MSI:
+  [ ] Installer Projects extension on the devenv VS instance
+  [ ] PART B succeeds once in the IDE (Release\*.msi + setup.exe exist)
+  [ ] EnableOutOfProcBuild = 0 if command-line devenv hits HRESULT 8000000A
+      (docs/fixes/web-to-client-bridge-msi-hresult-8000000a.txt)
+
+GSS API / IMC: leave as publish-only. No installer. No setupProjectPath.
+
+
+--------------------------------------------------------------------------------
+Command-line check (optional, after PART B works in the IDE)
+--------------------------------------------------------------------------------
+Close Visual Studio first.
+
+  cd /d F:\GSS\AppDev\gss-root\WebV4\gssweb
+
+  "F:\Program Files\Microsoft Visual Studio\18\Professional\Common7\IDE\devenv.com" ^
+    "F:\GSS\AppDev\gss-root\WebV4\gssweb\gssweb.sln" ^
+    /build Release /project "GSSWebSiteInstaller" /projectconfig Release
+
+Expect .msi + setup.exe under:
+  F:\GSS\AppDev\gss-root\WebV4\installers\GSSWebSiteInstaller\Release\
+
+
+--------------------------------------------------------------------------------
+Checklist
+--------------------------------------------------------------------------------
+[ ] Installer Projects extension installed on this VS
+[ ] Opened gssweb.sln (WebV4 for DMI), not only the .vdproj folder
+[ ] Toolbar = Release (not Debug / Mixed Platforms)
+[ ] Configuration Manager: WebInstallerClassLibrary + GSSWebSiteInstaller Build = on
+[ ] Rebuilt WebInstallerClassLibrary, then GSSWebSiteInstaller
+[ ] Detected Dependencies is NOT stuck on "unable to determine name"
+[ ] Release\ has BOTH *.msi and setup.exe
+[ ] Copied both files together if packaging for Migration
+[ ] GSS API / IMC skipped (no MSI)
+[ ] DevOps tool MSI automation only if you also do PART C
+
+
+================================================================================
+END
+================================================================================
