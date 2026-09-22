@@ -2,6 +2,14 @@
 GSSWebSiteInstaller — how to get .msi + setup.exe (Release)
 docs/fixes/gss-website-installer-msi-release-build.txt
 ================================================================================
+CURRENT follow-along (HRESULT 8000000A + MSI/setup.exe only, no site folders):
+
+  docs/fixes/gssdmi-msi-setup-exe-follow.txt
+
+Use THIS file for IDE Release rebuild / "unable to determine name".
+Use the follow file when the DevOps tool already calls devenv and you need
+.msi + setup.exe in F:\build-output\...\GSSDMI\.
+
 Use this when Visual Studio rebuilds GSSWebSiteInstaller but Explorer has
 NO .msi / setup.exe under:
 

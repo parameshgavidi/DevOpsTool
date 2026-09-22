@@ -1,0 +1,256 @@
+================================================================================
+FOLLOW THIS FILE — GSSDMI installer: .msi + setup.exe (HRESULT 8000000A)
+docs/fixes/gssdmi-msi-setup-exe-follow.txt
+================================================================================
+Use this file now. Do not start from the Web2ClientBridge guides.
+
+Goal (only these two files in the GSSDMI output folder):
+
+  F:\build-output\9.351\GSSDMI\
+    GSSWebInboundWebsiteInstaller.msi   (name may differ)
+    setup.exe
+
+You do NOT need published website folders (AdminPortal, bin, App_Data, …)
+in that output folder.
+
+Current failure (your OUTPUT LOG):
+
+  ------ Starting pre-build validation for project 'GSSWebSiteInstaller' ------
+  ERROR: An error occurred while validating. HRESULT = '8000000A'
+  Build started: Project: GSSWebSiteInstaller, Configuration: Release
+  Build: 0 succeeded, 1 failed
+  [ERROR] Setup build failed for GSSDMI
+
+  Explorer: F:\build-output\9.351\GSSDMI\  has site folders only, NO .msi / setup.exe
+
+What that means:
+  - devenv IS running (settings + BuildSetupProjectAsync are working)
+  - .vdproj command-line validation is blocked until EnableOutOfProcBuild = 0
+  - site folders are from FolderProfile publish copy — ignore them until MSI works
+
+
+--------------------------------------------------------------------------------
+STEP 1 — Close Visual Studio (required)
+--------------------------------------------------------------------------------
+Close ALL Visual Studio / devenv windows.
+Command-line Setup build fails if gssweb.sln is still open in the IDE.
+
+
+--------------------------------------------------------------------------------
+STEP 2 — Run DisableOutOfProcBuild.exe (required)
+--------------------------------------------------------------------------------
+Run as the SAME Windows user that runs the DevOps tool.
+Must run FROM its own folder (cwd = that folder):
+
+  cd /d "F:\Program Files\Microsoft Visual Studio\18\Professional\Common7\IDE\CommonExtensions\Microsoft\VSI\DisableOutOfProcBuild"
+  DisableOutOfProcBuild.exe
+
+If that path is missing, search:
+
+  dir /s /b "F:\Program Files\Microsoft Visual Studio\18\DisableOutOfProcBuild.exe"
+
+Then cd to the folder that contains it and run DisableOutOfProcBuild.exe.
+
+This sets EnableOutOfProcBuild = 0 so GSSWebSiteInstaller can build from devenv.
+
+The log line "requires running Visual Studio under an Administrator account"
+is from the same 8000000A validation. Do STEP 2 first. Do not rebuild the
+whole tool as Admin unless the helper exe is missing.
+
+
+--------------------------------------------------------------------------------
+STEP 3 — Registry fallback (only if STEP 2 exe is missing)
+--------------------------------------------------------------------------------
+As the DevOps tool user, create DWORD EnableOutOfProcBuild = 0 under:
+
+  HKEY_CURRENT_USER\Software\Microsoft\VisualStudio\18.0\MSBuild
+  HKEY_CURRENT_USER\Software\Microsoft\VisualStudio\18.0_Config\MSBuild
+
+Or PowerShell (same user):
+
+  $names = @('18.0','18.0_Config') +
+    (Get-ChildItem HKCU:\Software\Microsoft\VisualStudio -ErrorAction SilentlyContinue |
+     Where-Object { $_.PSChildName -like '18.0*_Config' -or $_.PSChildName -eq '18.0' } |
+     ForEach-Object PSChildName)
+  $names = $names | Select-Object -Unique
+  foreach ($n in $names) {
+    $p = "HKCU:\Software\Microsoft\VisualStudio\$n\MSBuild"
+    New-Item -Path $p -Force | Out-Null
+    New-ItemProperty -Path $p -Name EnableOutOfProcBuild -PropertyType DWord -Value 0 -Force | Out-Null
+    Write-Host "Set $p\EnableOutOfProcBuild = 0"
+  }
+
+
+--------------------------------------------------------------------------------
+STEP 4 — Prove MSI + setup.exe from command line (VS still closed)
+--------------------------------------------------------------------------------
+  cd /d F:\GSS\AppDev\gss-root\WebV4\gssweb
+
+  "F:\Program Files\Microsoft Visual Studio\18\Professional\Common7\IDE\devenv.com" ^
+    "F:\GSS\AppDev\gss-root\WebV4\gssweb\gssweb.sln" ^
+    /build Release /project "GSSWebSiteInstaller" /projectconfig Release
+
+Expect:
+  - NO HRESULT 8000000A
+  - BOTH files here:
+
+      F:\GSS\AppDev\gss-root\WebV4\installers\GSSWebSiteInstaller\Release\
+        *.msi
+        setup.exe
+
+If this command still prints 8000000A → STEP 2/3 did not apply for this user / VS hive.
+Stop. Do not retry the DevOps Build button yet.
+
+If Detected Dependencies / "unable to determine name" comes back:
+  Configuration = Release
+  Build WebInstallerClassLibrary first, then GSSWebSiteInstaller
+  (docs/fixes/gss-website-installer-msi-release-build.txt PART B)
+
+
+--------------------------------------------------------------------------------
+STEP 5 — Confirm appsettings (you already copied these)
+--------------------------------------------------------------------------------
+GSSDMI must have setup paths. Do NOT add setupBuildCommand.
+
+{
+  "name": "GSSDMI",
+  "type": "AspNetWebForms",
+  "projectPath": "WebV4\\gssweb\\gssweb.sln",
+  "setupProjectPath": "WebV4\\installers\\GSSWebSiteInstaller\\GSSWebSiteInstaller.vdproj",
+  "setupSolutionPath": "WebV4\\gssweb\\gssweb.sln",
+  "outputSubfolder": "GSSDMI"
+}
+
+GSS API / IMC: no setupProjectPath (publish only).
+
+
+--------------------------------------------------------------------------------
+STEP 6 — Confirm C# already in BuildOrchestrator
+--------------------------------------------------------------------------------
+You already have devenv BuildSetupProjectAsync. Check these four:
+
+  [ ] Application has SetupProjectPath + SetupSolutionPath
+  [ ] After web build exit == 0, call BuildSetupProjectAsync when SetupProjectPath is set
+  [ ] devenv.com via Process (NOT cmd.exe / RunCommandAsync)
+  [ ] No hardcoded WebToClientBridge.sln — use app.SetupSolutionPath, else search *.sln
+
+Copy BOTH installer files after devenv succeeds
+(use _logService.AppendLog, not LogOutput):
+
+        Directory.CreateDirectory(outputFolder);
+        foreach (var msi in msiFiles)
+        {
+            var dest = Path.Combine(outputFolder, Path.GetFileName(msi));
+            File.Copy(msi, dest, overwrite: true);
+            _logService.AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Setup MSI copied to {dest}\r\n");
+        }
+
+        var setupExes = Directory.GetFiles(setupProjectDir, "setup.exe", SearchOption.AllDirectories)
+            .OrderByDescending(File.GetLastWriteTimeUtc)
+            .ToArray();
+
+        foreach (var setup in setupExes)
+        {
+            var dest = Path.Combine(outputFolder, Path.GetFileName(setup));
+            File.Copy(setup, dest, overwrite: true);
+            _logService.AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Setup exe copied to {dest}\r\n");
+        }
+
+Optional (reduces 8000000A on later builds): before devenv, run
+DisableOutOfProcBuild.exe from its folder. Same snippet as
+docs/fixes/web-to-client-bridge-msi-hresult-8000000a.txt STEP 5,
+but log with _logService.AppendLog.
+
+
+--------------------------------------------------------------------------------
+STEP 7 — Stop copying published website files into GSSDMI output
+--------------------------------------------------------------------------------
+Do this AFTER STEP 4 produces Release\*.msi + setup.exe.
+
+The Build button still FolderProfile-publishes the site, then copies
+AdminPortal / bin / … into F:\build-output\...\GSSDMI\.
+For GSSDMI you only want .msi + setup.exe there.
+
+In the publish-copy block (BuildOrchestrator / PublishCopyService):
+when SetupProjectPath is set, skip copying site files. Still allow the
+web compile if the installer Primary Output needs a built site.
+
+Example guard around the site-file copy (not around devenv):
+
+        if (!string.IsNullOrWhiteSpace(app.SetupProjectPath))
+        {
+            _logService.AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Skipping published site copy for {app.Name}; installer MSI/setup.exe only.\r\n");
+        }
+        else
+        {
+            // existing published-artifacts copy
+        }
+
+Do not delete the msbuild / FolderProfile command until STEP 4 works.
+The installer may still need the website built; you only skip the COPY
+into build-output.
+
+
+--------------------------------------------------------------------------------
+STEP 8 — Rebuild DevOps tool, then Build GSSDMI
+--------------------------------------------------------------------------------
+  1. STEP 2 (or STEP 3) done once on this PC
+  2. STEP 4 produced Release\*.msi and setup.exe
+  3. STEP 6 copies both files; STEP 7 skips site copy
+  4. Restart the DevOps tool (reload appsettings)
+  5. Build GSSDMI
+
+Expected log:
+
+  [INFO] Building setup MSI for GSSDMI...
+  [INFO] Setup args: "...\WebV4\gssweb\gssweb.sln" /build Release /project "GSSWebSiteInstaller" /projectconfig Release
+  (real devenv lines — NO 8000000A)
+  [INFO] Setup MSI copied to F:\build-output\9.351\GSSDMI\....msi
+  [INFO] Setup exe copied to F:\build-output\9.351\GSSDMI\setup.exe
+  [INFO] Finished GSSDMI with exit code 0
+
+Expected Explorer F:\build-output\9.351\GSSDMI\:
+
+  *.msi
+  setup.exe
+
+No AdminPortal / bin / App_Data required.
+
+
+--------------------------------------------------------------------------------
+If something is still wrong
+--------------------------------------------------------------------------------
+Still 8000000A in the tool after STEP 4 is clean
+  → Visual Studio was open, or DisableOutOfProcBuild was run as a different user
+
+devenv HELP text (/useenv, /TfsLink)
+  → still using cmd.exe. BuildSetupProjectAsync must Process-start devenv.com
+
+Release\ has files but build-output does not
+  → MSI/setup.exe copy block missing or looking at the wrong setupProjectDir
+
+build-output still has site folders
+  → STEP 7 not applied
+
+"unable to determine name" / empty Release\
+  → library skipped; Release + rebuild WebInstallerClassLibrary first
+
+
+--------------------------------------------------------------------------------
+Checklist
+--------------------------------------------------------------------------------
+[ ] All Visual Studio windows closed
+[ ] DisableOutOfProcBuild.exe run from its folder (same user as the tool)
+[ ] Manual devenv (STEP 4): no 8000000A
+[ ] GSSWebSiteInstaller\Release\ has BOTH *.msi and setup.exe
+[ ] setupProjectPath + setupSolutionPath on GSSDMI (no setupBuildCommand)
+[ ] Copy loop includes setup.exe
+[ ] No hardcoded WebToClientBridge.sln
+[ ] Skip published site copy when SetupProjectPath is set
+[ ] Tool Build GSSDMI → F:\build-output\...\GSSDMI\ has only .msi + setup.exe
+[ ] GSS API / IMC unchanged (no installer)
+
+
+================================================================================
+END
+================================================================================
