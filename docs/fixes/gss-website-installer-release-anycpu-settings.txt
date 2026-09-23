@@ -1,0 +1,250 @@
+================================================================================
+FOLLOW THIS FILE — installer Release | Any CPU from DevOps settings
+docs/fixes/gss-website-installer-release-anycpu-settings.txt
+================================================================================
+Use this file now. Do not switch the Visual Studio toolbar by hand.
+
+Goal:
+  DevOps tool Build button always builds GSSWebSiteInstaller as
+  Release | Any CPU, using appsettings.json — same values you used to
+  pick in the VS toolbar.
+
+You do NOT need to open Visual Studio and set:
+
+  Configuration = Release
+  Platform     = Any CPU
+
+The tool reads those from settings and passes them to devenv.
+
+
+--------------------------------------------------------------------------------
+WHY MANUAL TOOLBAR IS NOT ENOUGH
+--------------------------------------------------------------------------------
+The VS toolbar (Release / Any CPU) only applies while YOU rebuild in the IDE.
+
+The DevOps tool calls devenv.com. Today that command is hardcoded as:
+
+  /build Release /project "GSSWebSiteInstaller" /projectconfig Release
+
+/build Release has NO platform. devenv then uses Mixed Platforms or the
+last IDE platform. That skips WebInstallerClassLibrary and leaves:
+
+  Detected Dependencies → "unable to determine name"
+  empty GSSWebSiteInstaller\Release\  (no .msi, no setup.exe)
+
+That is the same failure as building Debug | Mixed Platforms by hand.
+
+
+--------------------------------------------------------------------------------
+STEP 1 — appsettings.json (required)
+--------------------------------------------------------------------------------
+Add these two keys on every app that has a Setup (.vdproj) project.
+Do NOT add setupBuildCommand.
+
+Use the exact toolbar names:
+  setupConfiguration = Release        (not Debug)
+  setupPlatform      = Any CPU        (space required — not AnyCPU)
+
+GSSDMI / WebV4 (GSSWebSiteInstaller):
+
+{
+  "name": "GSSDMI",
+  "type": "AspNetWebForms",
+  "projectPath": "WebV4\\gssweb\\gssweb.sln",
+  "setupProjectPath": "WebV4\\installers\\GSSWebSiteInstaller\\GSSWebSiteInstaller.vdproj",
+  "setupSolutionPath": "WebV4\\gssweb\\gssweb.sln",
+  "setupConfiguration": "Release",
+  "setupPlatform": "Any CPU",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"WebV4\\gssweb\" && git fetch && git restore --source=@{u} --staged --worktree -- \"WebV4\\gssweb\" && (git stash pop || ver > nul)",
+  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:Platform=AnyCPU /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
+  "outputSubfolder": "GSSDMI"
+}
+
+GSSWeb / WebV3 (same installer project name, different tree):
+
+{
+  "name": "GSSWeb",
+  "type": "AspNetWebForms",
+  "projectPath": "WebV3\\gssweb\\gssweb.sln",
+  "setupProjectPath": "WebV3\\installers\\GSSWebSiteInstaller\\GSSWebSiteInstaller.vdproj",
+  "setupSolutionPath": "WebV3\\gssweb\\gssweb.sln",
+  "setupConfiguration": "Release",
+  "setupPlatform": "Any CPU",
+  "outputSubfolder": "GSSWeb"
+}
+
+Web2ClientBridge (same two keys):
+
+{
+  "name": "Web2ClientBridge",
+  "setupProjectPath": "WebToClientBridge\\Web2ClientBridge.Setup\\Web2ClientBridge.Setup.vdproj",
+  "setupSolutionPath": "WebToClientBridge\\WebToClientBridge.sln",
+  "setupConfiguration": "Release",
+  "setupPlatform": "Any CPU"
+}
+
+GSS API / IMC: do not add these keys (no installer).
+
+Name vs toolbar vs MSBuild:
+  Visual Studio toolbar / devenv  →  "Any CPU"   (space)
+  msbuild /p:Platform             →  AnyCPU      (no space)
+Do not put AnyCPU (no space) in setupPlatform. devenv will not find
+the solution configuration.
+
+
+--------------------------------------------------------------------------------
+STEP 2 — Application model
+--------------------------------------------------------------------------------
+In DeploymentModels.cs (or wherever Application lives), ADD:
+
+    public string? SetupProjectPath { get; set; }
+    public string? SetupSolutionPath { get; set; }
+    public string? SetupConfiguration { get; set; }   // appsettings: setupConfiguration
+    public string? SetupPlatform { get; set; }        // appsettings: setupPlatform
+
+JSON camelCase already binds to these properties (same as SetupProjectPath).
+
+If a value is missing, BuildSetupProjectAsync defaults to Release | Any CPU
+so the installer never falls back to Debug / Mixed Platforms.
+
+
+--------------------------------------------------------------------------------
+STEP 3 — Build devenv args from settings (not from the VS toolbar)
+--------------------------------------------------------------------------------
+In BuildSetupProjectAsync (BuildOrchestrator / SetupProjectBuilder /
+BuildTab.razor), REPLACE the hardcoded:
+
+  /build Release /project "..." /projectconfig Release
+
+with this block (paste after devenv.com is resolved):
+
+        var configuration = string.IsNullOrWhiteSpace(app.SetupConfiguration)
+            ? "Release"
+            : app.SetupConfiguration.Trim();
+        var platform = string.IsNullOrWhiteSpace(app.SetupPlatform)
+            ? "Any CPU"
+            : app.SetupPlatform.Trim();
+
+        // devenv solution config = toolbar "Release | Any CPU"
+        var solutionConfig = $"{configuration}|{platform}";
+
+        var args =
+            $"\"{setupSolutionPath}\" /build \"{solutionConfig}\" /project \"{setupProjectName}\" /projectconfig \"{configuration}\"";
+
+        _logService.AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Building setup MSI for {app.Name}...\r\n");
+        _logService.AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Setup configuration: {configuration}\r\n");
+        _logService.AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Setup platform: {platform}\r\n");
+        _logService.AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Setup args: {args}\r\n");
+
+Expected args (GSSDMI):
+
+  "...\WebV4\gssweb\gssweb.sln" /build "Release|Any CPU" /project "GSSWebSiteInstaller" /projectconfig "Release"
+
+Quotes around Release|Any CPU are required (space in Any CPU).
+
+Keep the rest of BuildSetupProjectAsync as it is:
+  - devenv.com via ProcessStartInfo (NOT cmd.exe / setupBuildCommand)
+  - copy *.msi and setup.exe into the app output folder
+  - see docs/fixes/gssdmi-msi-setup-exe-follow.txt STEP 6
+
+If /projectconfig "Release|Any CPU" is required on your .vdproj
+(rare — only if devenv says the project config was not found), use:
+
+        var args =
+            $"\"{setupSolutionPath}\" /build \"{solutionConfig}\" /project \"{setupProjectName}\" /projectconfig \"{solutionConfig}\"";
+
+
+--------------------------------------------------------------------------------
+STEP 4 — Do not use the Visual Studio toolbar anymore
+--------------------------------------------------------------------------------
+1. Save appsettings.json
+2. Rebuild / restart the DevOps tool (so settings reload)
+3. Close ALL Visual Studio windows (required for devenv / 8000000A)
+4. Build GSSDMI (or GSSWeb / Web2ClientBridge) from the tool
+
+You can leave VS on Debug | Mixed Platforms. The tool ignores the toolbar
+and uses setupConfiguration + setupPlatform.
+
+If Detected Dependencies still shows "unable to determine name" AFTER a
+tool build that logged Setup platform: Any CPU:
+  → WebInstallerClassLibrary is still not selected for Release|Any CPU
+    in Configuration Manager. Fix that once in the .sln, then rebuild
+    with the tool. Do not keep flipping the toolbar each time.
+
+
+--------------------------------------------------------------------------------
+STEP 5 — Optional website compile platform
+--------------------------------------------------------------------------------
+The installer devenv step is what packages the MSI.
+
+The website msbuild command can also pin Release + AnyCPU so the
+Primary Output is built the same way. Space-less AnyCPU is correct here:
+
+  /p:Configuration=Release /p:Platform=AnyCPU
+
+That is already in the GSSDMI buildCommand in STEP 1.
+
+
+--------------------------------------------------------------------------------
+Expected log
+--------------------------------------------------------------------------------
+  [INFO] Building setup MSI for GSSDMI...
+  [INFO] Setup configuration: Release
+  [INFO] Setup platform: Any CPU
+  [INFO] Setup args: "...\WebV4\gssweb\gssweb.sln" /build "Release|Any CPU" /project "GSSWebSiteInstaller" /projectconfig "Release"
+  Build started: Project: GSSWebSiteInstaller, Configuration: Release Any CPU
+  [INFO] Setup MSI copied to F:\build-output\...\GSSDMI\....msi
+  [INFO] Setup exe copied to F:\build-output\...\GSSDMI\setup.exe
+  [INFO] Finished GSSDMI with exit code 0
+
+If the log still shows only:
+
+  /build Release /project "GSSWebSiteInstaller" /projectconfig Release
+
+STEP 3 was not pasted. The two appsettings keys alone cannot change devenv
+args until C# reads them.
+
+
+--------------------------------------------------------------------------------
+If something is still wrong
+--------------------------------------------------------------------------------
+Still switching Release | Any CPU in the IDE
+  → that is optional now. Close VS and use the DevOps Build button.
+
+Log has /build Release with no |Any CPU
+  → STEP 3 not applied (hardcoded args still in BuildSetupProjectAsync)
+
+devenv: invalid configuration / configuration not found
+  → setupPlatform must be "Any CPU" (space), not AnyCPU
+  → or /projectconfig fallback in STEP 3
+
+Detected Dependencies "unable to determine name"
+  → tool must log Setup platform: Any CPU
+  → Configuration Manager: Build = on for WebInstallerClassLibrary
+    under Release | Any CPU (one-time .sln fix)
+
+HRESULT 8000000A
+  → docs/fixes/gssdmi-msi-setup-exe-follow.txt (DisableOutOfProcBuild)
+
+GSS API / IMC unchanged
+  → no setupProjectPath, no setupConfiguration, no setupPlatform
+
+
+--------------------------------------------------------------------------------
+Checklist
+--------------------------------------------------------------------------------
+[ ] GSSDMI (and any other .vdproj app) has setupConfiguration = Release
+[ ] same app has setupPlatform = Any CPU  (space)
+[ ] Application has SetupConfiguration + SetupPlatform
+[ ] BuildSetupProjectAsync uses /build "Release|Any CPU"
+[ ] no setupBuildCommand
+[ ] DevOps tool restarted after saving appsettings
+[ ] Visual Studio closed before Build
+[ ] log shows Setup configuration: Release and Setup platform: Any CPU
+[ ] GSSWebSiteInstaller\Release\ has *.msi + setup.exe
+[ ] GSS API / IMC unchanged
+
+
+================================================================================
+END
+================================================================================
