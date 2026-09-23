@@ -2,13 +2,18 @@
 GSSWebSiteInstaller — how to get .msi + setup.exe (Release)
 docs/fixes/gss-website-installer-msi-release-build.txt
 ================================================================================
-CURRENT follow-along (HRESULT 8000000A + MSI/setup.exe only, no site folders):
+CURRENT follow-along (stop setting Release | Any CPU in the VS toolbar):
+
+  docs/fixes/gss-website-installer-release-anycpu-settings.txt
+
+HRESULT 8000000A + MSI/setup.exe only, no site folders:
 
   docs/fixes/gssdmi-msi-setup-exe-follow.txt
 
-Use THIS file for IDE Release rebuild / "unable to determine name".
-Use the follow file when the DevOps tool already calls devenv and you need
-.msi + setup.exe in F:\build-output\...\GSSDMI\.
+Use THIS file for a one-time IDE Release rebuild / "unable to determine name".
+Use the Any CPU settings file so the DevOps tool sets Release | Any CPU
+from appsettings (no manual toolbar). Use the GSSDMI follow file when
+devenv already runs and you need .msi + setup.exe in F:\build-output\...\GSSDMI\.
 
 Use this when Visual Studio rebuilds GSSWebSiteInstaller but Explorer has
 NO .msi / setup.exe under:
@@ -173,6 +178,8 @@ C# changes (same pattern as Web2ClientBridge):
   1. Application model:
        public string? SetupProjectPath { get; set; }
        public string? SetupSolutionPath { get; set; }
+       public string? SetupConfiguration { get; set; }
+       public string? SetupPlatform { get; set; }
   2. After successful web publish, call BuildSetupProjectAsync
      (devenv.com via ProcessStartInfo — NOT cmd.exe /c).
      See docs/fixes/web-to-client-bridge-setup-msi-devenv-process.txt
@@ -186,10 +193,16 @@ appsettings.json additions (GSSDMI / WebV4 example):
   "projectPath": "WebV4\\gssweb\\gssweb.sln",
   "setupProjectPath": "WebV4\\installers\\GSSWebSiteInstaller\\GSSWebSiteInstaller.vdproj",
   "setupSolutionPath": "WebV4\\gssweb\\gssweb.sln",
+  "setupConfiguration": "Release",
+  "setupPlatform": "Any CPU",
   "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"WebV4\\gssweb\" && git fetch && git restore --source=@{u} --staged --worktree -- \"WebV4\\gssweb\" && (git stash pop || ver > nul)",
-  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
+  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:Platform=AnyCPU /p:DeployOnBuild=true /p:PublishProfile=FolderProfile",
   "outputSubfolder": "GSSDMI"
 }
+
+C# must pass those settings to devenv as /build "Release|Any CPU"
+(docs/fixes/gss-website-installer-release-anycpu-settings.txt). The toolbar
+Release | Any CPU step is not required after that.
 
 Do NOT add setupBuildCommand (cmd quoting breaks devenv under Program Files).
 
@@ -211,7 +224,7 @@ Close Visual Studio first.
 
   "F:\Program Files\Microsoft Visual Studio\18\Professional\Common7\IDE\devenv.com" ^
     "F:\GSS\AppDev\gss-root\WebV4\gssweb\gssweb.sln" ^
-    /build Release /project "GSSWebSiteInstaller" /projectconfig Release
+    /build "Release|Any CPU" /project "GSSWebSiteInstaller" /projectconfig Release
 
 Expect .msi + setup.exe under:
   F:\GSS\AppDev\gss-root\WebV4\installers\GSSWebSiteInstaller\Release\
@@ -222,7 +235,7 @@ Checklist
 --------------------------------------------------------------------------------
 [ ] Installer Projects extension installed on this VS
 [ ] Opened gssweb.sln (WebV4 for DMI), not only the .vdproj folder
-[ ] Toolbar = Release (not Debug / Mixed Platforms)
+[ ] Toolbar = Release | Any CPU only for a one-time IDE rebuild; tool uses setupConfiguration + setupPlatform after that
 [ ] Configuration Manager: WebInstallerClassLibrary + GSSWebSiteInstaller Build = on
 [ ] Rebuilt WebInstallerClassLibrary, then GSSWebSiteInstaller
 [ ] Detected Dependencies is NOT stuck on "unable to determine name"

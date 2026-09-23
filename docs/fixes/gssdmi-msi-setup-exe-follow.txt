@@ -2,7 +2,13 @@
 FOLLOW THIS FILE — GSSDMI installer: .msi + setup.exe (HRESULT 8000000A)
 docs/fixes/gssdmi-msi-setup-exe-follow.txt
 ================================================================================
-Use this file now. Do not start from the Web2ClientBridge guides.
+Stop setting Release | Any CPU in the Visual Studio toolbar. Add those
+values in appsettings and pass them to devenv:
+
+  docs/fixes/gss-website-installer-release-anycpu-settings.txt
+
+Use this file for HRESULT 8000000A + MSI/setup.exe copy. Do not start
+from the Web2ClientBridge guides.
 
 Goal (only these two files in the GSSDMI output folder):
 
@@ -88,7 +94,7 @@ STEP 4 — Prove MSI + setup.exe from command line (VS still closed)
 
   "F:\Program Files\Microsoft Visual Studio\18\Professional\Common7\IDE\devenv.com" ^
     "F:\GSS\AppDev\gss-root\WebV4\gssweb\gssweb.sln" ^
-    /build Release /project "GSSWebSiteInstaller" /projectconfig Release
+    /build "Release|Any CPU" /project "GSSWebSiteInstaller" /projectconfig Release
 
 Expect:
   - NO HRESULT 8000000A
@@ -118,8 +124,14 @@ GSSDMI must have setup paths. Do NOT add setupBuildCommand.
   "projectPath": "WebV4\\gssweb\\gssweb.sln",
   "setupProjectPath": "WebV4\\installers\\GSSWebSiteInstaller\\GSSWebSiteInstaller.vdproj",
   "setupSolutionPath": "WebV4\\gssweb\\gssweb.sln",
+  "setupConfiguration": "Release",
+  "setupPlatform": "Any CPU",
   "outputSubfolder": "GSSDMI"
 }
+
+setupConfiguration + setupPlatform replace the VS toolbar
+(Release | Any CPU). C# must send /build "Release|Any CPU":
+  docs/fixes/gss-website-installer-release-anycpu-settings.txt
 
 GSS API / IMC: no setupProjectPath (publish only).
 
@@ -129,7 +141,7 @@ STEP 6 — Confirm C# already in BuildOrchestrator
 --------------------------------------------------------------------------------
 You already have devenv BuildSetupProjectAsync. Check these four:
 
-  [ ] Application has SetupProjectPath + SetupSolutionPath
+  [ ] Application has SetupProjectPath + SetupSolutionPath + SetupConfiguration + SetupPlatform
   [ ] After web build exit == 0, call BuildSetupProjectAsync when SetupProjectPath is set
   [ ] devenv.com via Process (NOT cmd.exe / RunCommandAsync)
   [ ] No hardcoded WebToClientBridge.sln — use app.SetupSolutionPath, else search *.sln
@@ -203,7 +215,9 @@ STEP 8 — Rebuild DevOps tool, then Build GSSDMI
 Expected log:
 
   [INFO] Building setup MSI for GSSDMI...
-  [INFO] Setup args: "...\WebV4\gssweb\gssweb.sln" /build Release /project "GSSWebSiteInstaller" /projectconfig Release
+  [INFO] Setup configuration: Release
+  [INFO] Setup platform: Any CPU
+  [INFO] Setup args: "...\WebV4\gssweb\gssweb.sln" /build "Release|Any CPU" /project "GSSWebSiteInstaller" /projectconfig "Release"
   (real devenv lines — NO 8000000A)
   [INFO] Setup MSI copied to F:\build-output\9.351\GSSDMI\....msi
   [INFO] Setup exe copied to F:\build-output\9.351\GSSDMI\setup.exe
@@ -243,7 +257,7 @@ Checklist
 [ ] DisableOutOfProcBuild.exe run from its folder (same user as the tool)
 [ ] Manual devenv (STEP 4): no 8000000A
 [ ] GSSWebSiteInstaller\Release\ has BOTH *.msi and setup.exe
-[ ] setupProjectPath + setupSolutionPath on GSSDMI (no setupBuildCommand)
+[ ] setupProjectPath + setupSolutionPath + setupConfiguration=Release + setupPlatform=Any CPU on GSSDMI (no setupBuildCommand)
 [ ] Copy loop includes setup.exe
 [ ] No hardcoded WebToClientBridge.sln
 [ ] Skip published site copy when SetupProjectPath is set

@@ -172,7 +172,7 @@ HOW SetupProjectBuilder uses YOUR existing API
             // OR shell via RunCommandAsync if that is what BuildTab already does:
             return await _build.RunCommandAsync(
                 workingDir,
-                $"\"{devenv}\" \"{vdprojPath}\" /Build Release",
+                $"\"{devenv}\" \"{vdprojPath}\" /Build \"Release|Any CPU\"",
                 log,
                 cancellation);
         }
