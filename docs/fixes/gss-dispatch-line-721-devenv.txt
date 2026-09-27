@@ -1,0 +1,147 @@
+================================================================================
+EXACT ISSUE — line 721 Setup build failed (ifs are OK)
+docs/fixes/gss-dispatch-line-721-devenv.txt
+================================================================================
+Use this file now. Do not change the two ifs again.
+
+
+--------------------------------------------------------------------------------
+WHERE THE DEBUGGER IS
+--------------------------------------------------------------------------------
+  Line 721:  [ERROR] Setup build failed for GSS DispatchService
+
+That line is AFTER devenv.com already ran.
+
+  exit != 0  →  devenv failed  →  no .msi to copy
+
+The two ifs (search *.sln + File.Exists) already succeeded.
+If they had failed you would have stopped at:
+
+  [ERROR] Setup project not found
+  [ERROR] Setup solution (.sln) not found
+
+You did not. Paths exist. The installer command failed.
+
+
+--------------------------------------------------------------------------------
+THE EXACT ISSUE
+--------------------------------------------------------------------------------
+devenv built the WRONG thing or could not build GSSDispServiceSetup.
+
+GSSDispatchServiceNet2.sln lives inside the service folder.
+GSSDispServiceSetup.vdproj is a SIBLING folder.
+That .sln usually does NOT contain the Setup project.
+
+Command the tool runs:
+
+  devenv "....\GSSDispatchServiceNet2.sln"
+         /build "Release|Any CPU"
+         /project "GSSDispServiceSetup"
+         /projectconfig "Release"
+
+If Setup is not in that .sln, devenv exits 1 and you land on 721.
+Your GSSDispServiceSetup\Release\ folder is empty — the MSI was
+never produced on disk.
+
+
+--------------------------------------------------------------------------------
+READ THE LOG ABOVE LINE 721 (this tells you which case)
+--------------------------------------------------------------------------------
+Uncomment these two lines (they are commented in your method)
+and rebuild the DevOps tool:
+
+        _logService.AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Setup args: {args}\r\n");
+
+        // and do NOT comment out:
+        return exit;
+
+Match the devenv text above "Setup build failed":
+
+A) "The following project does not exist in the specified solution"
+   or no mention of GSSDispServiceSetup
+   → STEP 1 (add the .vdproj to the .sln)
+
+B) HELP / "first argument for devenv" / /useenv / /TfsLink
+   → first argument is not a .sln
+   → setupSolutionPath must end with GSSDispatchServiceNet2.sln
+   → setupProjectPath must end with GSSDispServiceSetup.vdproj
+   → do not swap those two keys
+
+C) HRESULT 8000000A
+   → close Visual Studio, run DisableOutOfProcBuild
+     (docs/fixes/gssdmi-msi-setup-exe-follow.txt STEP 2)
+
+D) "unable to determine name" / Primary Output
+   → build GSSDispatchServiceNet2 in Release first, then Setup
+
+
+--------------------------------------------------------------------------------
+STEP 1 — this is the fix (Visual Studio, not C#)
+--------------------------------------------------------------------------------
+1. File → Open:
+     ...\Windows Services\GSS Dispatch Service\GSSDispatchService\GSSDispatchServiceNet2.sln
+
+2. Solution Explorer MUST show:
+     [x] GSSDispatchServiceNet2
+     [x] GSSDispServiceSetup
+
+3. If Setup is missing:
+     Right-click solution → Add → Existing Project
+     ...\GSSDispServiceSetup\GSSDispServiceSetup.vdproj
+     Save the .sln
+
+4. Configuration Manager: Release | Any CPU, Build ticked on BOTH
+
+5. Right-click GSSDispServiceSetup → Rebuild
+
+6. Explorer must have a file:
+     ...\GSSDispServiceSetup\Release\*.msi
+
+The DevOps tool cannot invent an MSI. If step 6 is empty, line 721
+will keep happening.
+
+
+--------------------------------------------------------------------------------
+STEP 2 — confirm appsettings (do not swap the two paths)
+--------------------------------------------------------------------------------
+{
+  "name": "GSS DispatchService",
+  "type": "WindowsApplication",
+  "projectPath": "Windows Services\\GSS Dispatch Service\\GSSDispatchService\\GSSDispatchServiceNet2.csproj",
+  "setupProjectPath": "Windows Services\\GSS Dispatch Service\\GSSDispServiceSetup\\GSSDispServiceSetup.vdproj",
+  "setupSolutionPath": "Windows Services\\GSS Dispatch Service\\GSSDispatchService\\GSSDispatchServiceNet2.sln",
+  "setupConfiguration": "Release",
+  "setupPlatform": "Any CPU",
+  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:Platform=AnyCPU /t:Build /v:m",
+  "outputSubfolder": "GSSDispatchService"
+}
+
+setupProjectPath  = .vdproj
+setupSolutionPath = .sln
+
+
+--------------------------------------------------------------------------------
+STEP 3 — one C# change only (log + keep return)
+--------------------------------------------------------------------------------
+Leave the two ifs as they are.
+
+Uncomment Setup args log BEFORE RunProcessCaptureAsync.
+Keep  if (exit != 0) { log; return exit; }  — do not comment return.
+
+Then close Visual Studio, restart the tool, Build GSS DispatchService.
+
+
+--------------------------------------------------------------------------------
+Checklist
+--------------------------------------------------------------------------------
+[ ] Debugger at 721 = devenv failed, not the ifs
+[ ] Setup args log shows ...Net2.sln and /project "GSSDispServiceSetup"
+[ ] Net2.sln contains GSSDispServiceSetup in Solution Explorer
+[ ] IDE Rebuild created Release\*.msi
+[ ] return exit is NOT commented
+[ ] Visual Studio closed when the tool builds
+
+
+================================================================================
+END
+================================================================================
