@@ -2,8 +2,12 @@
 FOLLOW THIS FILE — GSS Dispatch Service: devenv HELP, no .msi
 docs/fixes/gss-dispatch-service-msi-sln-path.txt
 ================================================================================
-Use this file now. Release | Any CPU settings are fine. The MSI failed
-for a different reason.
+CURRENT follow-along (real Explorer names: Net2.sln + GSSDispServiceSetup):
+
+  docs/fixes/gss-dispatch-service-net2-msi.txt
+
+This file is background only (it guessed GSSDispatchService.sln /
+GSSDispatchSetup.vdproj). Use the Net2 file.
 
 
 --------------------------------------------------------------------------------
