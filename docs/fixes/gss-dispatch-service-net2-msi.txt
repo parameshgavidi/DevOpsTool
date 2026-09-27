@@ -2,8 +2,11 @@
 FOLLOW THIS FILE — GSS DispatchService MSI (line 710 / no .msi)
 docs/fixes/gss-dispatch-service-net2-msi.txt
 ================================================================================
-Use this file now. The earlier Dispatch sln note guessed the wrong
-file names. Your Explorer shows the real ones.
+Debugger on line 721 / Setup build failed (ifs already OK):
+
+  docs/fixes/gss-dispatch-line-721-devenv.txt
+
+Use this file for paths. Use the line-721 file if devenv already ran.
 
 
 --------------------------------------------------------------------------------
