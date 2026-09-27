@@ -2,9 +2,9 @@
 FOLLOW THIS FILE — installer Release | Any CPU from DevOps settings
 docs/fixes/gss-website-installer-release-anycpu-settings.txt
 ================================================================================
-GSS Dispatch Service devenv HELP / no .msi (setupSolutionPath is a .csproj):
+GSS Dispatch Service devenv HELP / no .msi (use real Explorer names):
 
-  docs/fixes/gss-dispatch-service-msi-sln-path.txt
+  docs/fixes/gss-dispatch-service-net2-msi.txt
 
 Use this file now. Do not switch the Visual Studio toolbar by hand.
 

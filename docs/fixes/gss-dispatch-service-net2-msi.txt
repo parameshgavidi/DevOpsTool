@@ -1,0 +1,220 @@
+================================================================================
+FOLLOW THIS FILE — GSS DispatchService MSI (line 710 / no .msi)
+docs/fixes/gss-dispatch-service-net2-msi.txt
+================================================================================
+Use this file now. The earlier Dispatch sln note guessed the wrong
+file names. Your Explorer shows the real ones.
+
+
+--------------------------------------------------------------------------------
+WHY LINE 710 RUNS (the method is not "skipping" MSI copy)
+--------------------------------------------------------------------------------
+Line 710 is:
+
+  if (exit != 0)
+  {
+      [ERROR] Setup build failed for {app.Name}
+      return exit;     ← leaves BEFORE the *.msi copy at line 718
+  }
+
+devenv.com started. It returned a non-zero exit. The copy block never
+runs, so no .msi in build-output.
+
+Your GSSDispServiceSetup\Release\ folder is empty (dated 7/16, no
+.msi files). The installer project itself did not produce an MSI.
+
+
+--------------------------------------------------------------------------------
+REAL PATHS (from your Explorer screenshots)
+--------------------------------------------------------------------------------
+  Windows Services\GSS Dispatch Service\
+    GSSDispatchService\
+      GSSDispatchServiceNet2.csproj          ← service project
+      GSSDispatchServiceNet2.sln             ← ONLY .sln on disk
+    GSSDispServiceSetup\
+      GSSDispServiceSetup.vdproj             ← installer
+      Debug\
+      Release\                               ← empty; MSI should land here
+
+NOT these (old guessed names — do not use):
+  GSSDispatchService.csproj
+  GSSDispatchService.sln
+  GSSDispatchServiceSetup\GSSDispatchSetup.vdproj
+
+
+--------------------------------------------------------------------------------
+THREE PROBLEMS THAT CAUSE EXIT != 0
+--------------------------------------------------------------------------------
+1) appsettings paths do not match Explorer
+   projectPath must be ...\GSSDispatchService\GSSDispatchServiceNet2.csproj
+   (not ...\DispatchService\...)
+   setupProjectPath must be ...\GSSDispServiceSetup\GSSDispServiceSetup.vdproj
+   setupSolutionPath must be ...\GSSDispatchService\GSSDispatchServiceNet2.sln
+
+2) GSSDispatchServiceNet2.sln likely does NOT contain the Setup project
+   The .sln sits inside the service folder (7/8). The .vdproj is a
+   sibling folder and is newer (8/28). If Solution Explorer does not
+   show GSSDispServiceSetup, devenv /project "GSSDispServiceSetup"
+   fails → line 710.
+
+3) BuildSetupProjectAsync fallback cannot find this .sln
+   Fallback only does GetFiles(parentOfSetupDir, "*.sln") — that is
+   "GSS Dispatch Service\*.sln". Your .sln is one folder deeper.
+   If setupSolutionPath is wrong, you get "Setup solution not found"
+   OR a bad file. Also Setup args logs are commented, so you cannot
+   see the devenv command.
+
+
+--------------------------------------------------------------------------------
+STEP 1 — put Setup into the .sln (required, one time in Visual Studio)
+--------------------------------------------------------------------------------
+  1. File → Open →
+       ...\Windows Services\GSS Dispatch Service\GSSDispatchService\GSSDispatchServiceNet2.sln
+  2. Solution Explorer must list BOTH:
+       [x] GSSDispatchServiceNet2   (or the service project)
+       [x] GSSDispServiceSetup      (the .vdproj)
+  3. If Setup is missing:
+       Right-click the solution → Add → Existing Project
+       pick:
+         ...\GSSDispServiceSetup\GSSDispServiceSetup.vdproj
+       Save the .sln
+  4. Build → Configuration Manager… → Release | Any CPU
+       tick Build for GSSDispatchServiceNet2 AND GSSDispServiceSetup
+  5. Right-click GSSDispServiceSetup → Rebuild
+  6. Confirm a file exists:
+       ...\GSSDispServiceSetup\Release\*.msi
+
+Stop here if step 6 is empty. The DevOps tool cannot create an MSI
+until the IDE build does.
+
+
+--------------------------------------------------------------------------------
+STEP 2 — paste this GSS DispatchService block into appsettings.json
+--------------------------------------------------------------------------------
+{
+  "name": "GSS DispatchService",
+  "type": "WindowsApplication",
+  "projectPath": "Windows Services\\GSS Dispatch Service\\GSSDispatchService\\GSSDispatchServiceNet2.csproj",
+  "setupProjectPath": "Windows Services\\GSS Dispatch Service\\GSSDispServiceSetup\\GSSDispServiceSetup.vdproj",
+  "setupSolutionPath": "Windows Services\\GSS Dispatch Service\\GSSDispatchService\\GSSDispatchServiceNet2.sln",
+  "setupConfiguration": "Release",
+  "setupPlatform": "Any CPU",
+  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:Platform=AnyCPU /t:Build /v:m",
+  "outputSubfolder": "GSSDispatchService"
+}
+
+Exact names from Explorer:
+  GSSDispatchServiceNet2.csproj
+  GSSDispatchServiceNet2.sln
+  GSSDispServiceSetup.vdproj
+
+Do NOT use FolderProfile on this app (that is for websites).
+Do NOT add setupBuildCommand.
+Leave gitLatestCommand as you already have it (or keep it commented).
+
+
+--------------------------------------------------------------------------------
+STEP 3 — fix BuildSetupProjectAsync (this method)
+--------------------------------------------------------------------------------
+A) After setupSolutionPath is resolved, ADD a .sln check
+   (stops the old .csproj / HELP dump):
+
+        if (!string.IsNullOrWhiteSpace(setupSolutionPath)
+            && !setupSolutionPath.EndsWith(".sln", StringComparison.OrdinalIgnoreCase))
+        {
+            _logService.AppendLog(
+                $"[{DateTime.Now:HH:mm:ss}] [ERROR] setupSolutionPath must be a .sln, not {setupSolutionPath}\r\n");
+            return -1;
+        }
+
+B) REPLACE the fallback that only looks in the parent folder
+   (your .sln is under GSSDispatchService\, not next to the setup folder):
+
+        if (string.IsNullOrWhiteSpace(setupSolutionPath) || !File.Exists(setupSolutionPath))
+        {
+            var searchRoot = Path.GetDirectoryName(setupProjectDir);
+            if (!string.IsNullOrEmpty(searchRoot) && Directory.Exists(searchRoot))
+            {
+                setupSolutionPath = Directory.GetFiles(searchRoot, "*.sln", SearchOption.AllDirectories)
+                    .FirstOrDefault();
+            }
+        }
+
+C) UNCOMMENT the Setup args logs (you need these to debug line 710):
+
+        _logService.AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Building setup MSI for {app.Name}...\r\n");
+        _logService.AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Setup exe: {devenvPath}\r\n");
+        _logService.AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Setup args: {args}\r\n");
+
+D) Keep the args you already have (Release | Any CPU).
+   setupProjectName comes from the .vdproj file name → GSSDispServiceSetup
+
+        var args =
+            $"\"{setupSolutionPath}\" /build \"{solutionConfig}\" /project \"{setupProjectName}\" /projectconfig \"{configuration}\"";
+
+Expected args:
+
+  "...\GSSDispatchServiceNet2.sln" /build "Release|Any CPU" /project "GSSDispServiceSetup" /projectconfig "Release"
+
+If devenv says the project does not exist in the solution, the .sln
+still does not contain GSSDispServiceSetup — redo STEP 1.
+
+
+--------------------------------------------------------------------------------
+STEP 4 — prove MSI from devenv (Visual Studio closed)
+--------------------------------------------------------------------------------
+  cd /d "F:\GSS\AppDev\gss-root\Windows Services\GSS Dispatch Service\GSSDispatchService"
+
+  "F:\Program Files\Microsoft Visual Studio\18\Professional\Common7\IDE\devenv.com" ^
+    "GSSDispatchServiceNet2.sln" ^
+    /build "Release|Any CPU" /project "GSSDispServiceSetup" /projectconfig Release
+
+Good:
+  - NO HELP text, NO "first argument for devenv"
+  - Build started: Project: GSSDispServiceSetup
+  - *.msi under ..\GSSDispServiceSetup\Release\
+
+If HRESULT 8000000A → docs/fixes/gssdmi-msi-setup-exe-follow.txt STEP 2
+  (DisableOutOfProcBuild). Close VS first.
+
+If "project does not exist in the specified solution"
+  → STEP 1 (add the .vdproj to this .sln and save)
+
+
+--------------------------------------------------------------------------------
+STEP 5 — restart the DevOps tool and Build GSS DispatchService
+--------------------------------------------------------------------------------
+  1. STEP 1 produced Release\*.msi in the IDE
+  2. STEP 2 appsettings saved
+  3. STEP 3 C# saved; tool rebuilt / restarted
+  4. Visual Studio closed
+  5. Build GSS DispatchService
+
+Good log (must show a .sln and GSSDispServiceSetup):
+
+  [INFO] Setup args: "...\GSSDispatchServiceNet2.sln" /build "Release|Any CPU" /project "GSSDispServiceSetup" /projectconfig "Release"
+  (real build lines — not devenv usage)
+  [INFO] Setup MSI copied to F:\build-output\...\GSSDispatchService\....msi
+  [INFO] Finished GSS DispatchService with exit code 0
+
+Line 710 must NOT run. If it does, the devenv lines above it are the
+real error (project missing, 8000000A, or still HELP).
+
+
+--------------------------------------------------------------------------------
+Checklist
+--------------------------------------------------------------------------------
+[ ] Explorer names: Net2.csproj, Net2.sln, GSSDispServiceSetup.vdproj
+[ ] Net2.sln shows GSSDispServiceSetup in Solution Explorer
+[ ] IDE Rebuild of GSSDispServiceSetup creates Release\*.msi
+[ ] appsettings paths match Explorer (STEP 2)
+[ ] buildCommand is msbuild /t:Build (no FolderProfile)
+[ ] fallback searches *.sln AllDirectories
+[ ] Setup args log is on
+[ ] manual devenv (STEP 4) has no HELP and creates .msi
+[ ] tool Build copies .msi into F:\build-output\...\GSSDispatchService\
+
+
+================================================================================
+END
+================================================================================
