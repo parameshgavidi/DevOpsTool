@@ -1,0 +1,112 @@
+================================================================================
+FOLLOW THIS FILE — /project name is wrong (no more info needed)
+docs/fixes/gss-dispatch-setup-project-name.txt
+================================================================================
+The paths and devenv args were almost right. The Setup PROJECT NAME
+in the .sln does not match the .vdproj file name.
+
+
+--------------------------------------------------------------------------------
+EXACT ISSUE (from your screenshots)
+--------------------------------------------------------------------------------
+Debugger args (what the tool runs):
+
+  "...\GSSDispatchServiceNet2.sln"
+  /build "Release|Any CPU"
+  /project "GSSDispServiceSetup"          ← from GSSDispServiceSetup.vdproj
+  /projectconfig "Release"
+
+Solution Explorer (solution 'GSS Dispatch Service Net2'):
+
+  GSSDispatchServiceNet2
+  GSSDispServiceNet2Setup                 ← real project name
+
+devenv /project uses the name in Solution Explorer, NOT the .vdproj
+file name. It looks for GSSDispServiceSetup, does not find it, exits
+1 → line 721 Setup build failed → no MSI.
+
+File System editor is fine (Primary output from GSSDispatchServiceNet2).
+The installer project IS in the solution. Only the /project switch
+is the wrong name.
+
+
+--------------------------------------------------------------------------------
+STEP 1 — appsettings.json (add one key)
+--------------------------------------------------------------------------------
+On GSS DispatchService ADD:
+
+  "setupProjectName": "GSSDispServiceNet2Setup"
+
+Full block:
+
+{
+  "name": "GSS DispatchService",
+  "type": "WindowsApplication",
+  "projectPath": "Windows Services\\GSS Dispatch Service\\GSSDispatchService\\GSSDispatchServiceNet2.csproj",
+  "setupProjectPath": "Windows Services\\GSS Dispatch Service\\GSSDispServiceSetup\\GSSDispServiceSetup.vdproj",
+  "setupSolutionPath": "Windows Services\\GSS Dispatch Service\\GSSDispatchService\\GSSDispatchServiceNet2.sln",
+  "setupProjectName": "GSSDispServiceNet2Setup",
+  "setupConfiguration": "Release",
+  "setupPlatform": "Any CPU",
+  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:Platform=AnyCPU /t:Build /v:m",
+  "outputSubfolder": "GSSDispatchService"
+}
+
+setupProjectPath  = .vdproj file on disk (GSSDispServiceSetup.vdproj)
+setupProjectName  = Solution Explorer name (GSSDispServiceNet2Setup)
+setupSolutionPath = .sln
+
+
+--------------------------------------------------------------------------------
+STEP 2 — Application model
+--------------------------------------------------------------------------------
+    public string? SetupProjectName { get; set; }
+
+
+--------------------------------------------------------------------------------
+STEP 3 — BuildSetupProjectAsync (use the setting)
+--------------------------------------------------------------------------------
+REPLACE the line that always uses the file name:
+
+        var setupProjectName = Path.GetFileNameWithoutExtension(setupProjectFile);
+
+with:
+
+        var setupProjectName = !string.IsNullOrWhiteSpace(app.SetupProjectName)
+            ? app.SetupProjectName.Trim()
+            : Path.GetFileNameWithoutExtension(setupProjectFile);
+
+GSSDMI / Web2ClientBridge can omit setupProjectName (file name = sln name).
+
+After this, debugger args must be:
+
+  "...\GSSDispatchServiceNet2.sln" /build "Release|Any CPU" /project "GSSDispServiceNet2Setup" /projectconfig "Release"
+
+
+--------------------------------------------------------------------------------
+STEP 4 — one IDE Rebuild (Release folder is still empty)
+--------------------------------------------------------------------------------
+1. Right-click GSSDispServiceNet2Setup → Rebuild
+2. Confirm:
+     ...\GSSDispServiceSetup\Release\*.msi
+3. Close Visual Studio
+4. Restart the DevOps tool and Build GSS DispatchService
+
+If devenv then prints HRESULT 8000000A:
+  docs/fixes/gssdmi-msi-setup-exe-follow.txt STEP 2
+
+
+--------------------------------------------------------------------------------
+Checklist
+--------------------------------------------------------------------------------
+[ ] setupProjectName = GSSDispServiceNet2Setup
+[ ] Application.SetupProjectName exists
+[ ] C# uses app.SetupProjectName when set
+[ ] debugger /project is GSSDispServiceNet2Setup (not GSSDispServiceSetup)
+[ ] IDE Rebuild created Release\*.msi
+[ ] tool Build copies that MSI to build-output
+
+
+================================================================================
+END
+================================================================================

@@ -2,7 +2,11 @@
 EXACT ISSUE — line 721 Setup build failed (ifs are OK)
 docs/fixes/gss-dispatch-line-721-devenv.txt
 ================================================================================
-Use this file now. Do not change the two ifs again.
+CURRENT — /project name mismatch (GSSDispServiceNet2Setup):
+
+  docs/fixes/gss-dispatch-setup-project-name.txt
+
+Use that file now. This file is background (ifs vs devenv).
 
 
 --------------------------------------------------------------------------------
