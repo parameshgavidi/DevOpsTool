@@ -1,0 +1,244 @@
+================================================================================
+FOLLOW THIS FILE — GSS Dispatch Service: devenv HELP, no .msi
+docs/fixes/gss-dispatch-service-msi-sln-path.txt
+================================================================================
+Use this file now. Release | Any CPU settings are fine. The MSI failed
+for a different reason.
+
+
+--------------------------------------------------------------------------------
+YOUR CURRENT FAILURE (from OUTPUT LOG)
+--------------------------------------------------------------------------------
+  Microsoft Visual Studio version 18.0
+  Could not find the "subversionScc" source control provider...
+  The operation could not be completed. The parameter is incorrect.
+
+  Use:
+  devenv  [solutionfile | projectfile | folder | anyfile.ext]  [switches]
+
+  The first argument for devenv is usually a solution file, project
+  file or a folder.
+  ...
+  /useenv   /TfsLink   VsJITDebugger.exe
+
+  [ERROR] Setup build failed for GSS DispatchService
+
+Explorer: no GSSDispatchSetup\Release\*.msi
+          no .msi in F:\build-output\...\GSSDispatchService\
+
+What that means:
+  devenv never built the installer. HELP text = it rejected the first
+  argument and printed usage. No .msi is created.
+
+  subversionScc is a warning only. Ignore it.
+
+
+--------------------------------------------------------------------------------
+ROOT CAUSE — setupSolutionPath is a .csproj
+--------------------------------------------------------------------------------
+Your appsettings (from the screenshot):
+
+  "projectPath":
+    "Windows Services\\GSS Dispatch Service\\GSSDispatchService\\GSSDispatchService.csproj"
+
+  "setupProjectPath":
+    "Windows Services\\GSS Dispatch Service\\GSSDispatchServiceSetup\\GSSDispatchSetup.vdproj"
+
+  "setupSolutionPath":
+    "Windows Services\\GSS Dispatch Service\\GSSDispatchService.csproj"   ← WRONG
+
+setupSolutionPath must be the .sln that CONTAINS GSSDispatchSetup.
+You copied projectPath (the service .csproj) into setupSolutionPath.
+
+devenv /build /project /projectconfig only works with a solution:
+
+  devenv "something.sln" /build "Release|Any CPU" /project "GSSDispatchSetup" /projectconfig "Release"
+
+When the first argument is a .csproj, devenv tries to open the project
+(and look for a same-name .sln next to it). /build + /project are not
+valid in that mode → HELP dump → exit != 0 → no MSI.
+
+
+--------------------------------------------------------------------------------
+STEP 1 — find the real .sln (on the VDI)
+--------------------------------------------------------------------------------
+  dir /s /b "F:\GSS\AppDev\gss-root\Windows Services\GSS Dispatch Service\*.sln"
+
+Typical layout (service + setup as sibling projects):
+
+  Windows Services\GSS Dispatch Service\
+    GSSDispatchService.sln                          ← use THIS
+    GSSDispatchService\
+      GSSDispatchService.csproj                     ← projectPath only
+    GSSDispatchServiceSetup\
+      GSSDispatchSetup.vdproj                       ← setupProjectPath
+      Release\                                      ← *.msi lands here after a good build
+
+Open that .sln in Visual Studio once. Solution Explorer must show BOTH:
+  [x] GSSDispatchService
+  [x] GSSDispatchSetup   (or whatever the Setup project is named)
+
+If the setup project is missing from the .sln, add it (right-click
+solution → Add → Existing Project → GSSDispatchSetup.vdproj) and save.
+
+
+--------------------------------------------------------------------------------
+STEP 2 — fix appsettings.json (GSS DispatchService only)
+--------------------------------------------------------------------------------
+REPLACE the GSS DispatchService object with this. Change only the
+setupSolutionPath .sln name if STEP 1 printed a different file.
+
+{
+  "name": "GSS DispatchService",
+  "type": "WinService",
+  "projectPath": "Windows Services\\GSS Dispatch Service\\GSSDispatchService\\GSSDispatchService.csproj",
+  "setupProjectPath": "Windows Services\\GSS Dispatch Service\\GSSDispatchServiceSetup\\GSSDispatchSetup.vdproj",
+  "setupSolutionPath": "Windows Services\\GSS Dispatch Service\\GSSDispatchService.sln",
+  "setupConfiguration": "Release",
+  "setupPlatform": "Any CPU",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"Windows Services\\GSS Dispatch Service\" && git fetch && git restore --source=@{u} --staged --worktree -- \"Windows Services\\GSS Dispatch Service\" && (git stash pop || ver > nul)",
+  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:Platform=AnyCPU /t:Build /v:m",
+  "outputSubfolder": "GSSDispatchService"
+}
+
+Rules:
+  projectPath          = service .csproj          (msbuild)
+  setupProjectPath     = installer .vdproj
+  setupSolutionPath    = .sln that contains the installer   ← MUST end in .sln
+  setupConfiguration   = Release
+  setupPlatform        = Any CPU   (space)
+
+Do NOT:
+  - put a .csproj in setupSolutionPath
+  - add setupBuildCommand
+  - use /p:PublishProfile=FolderProfile on this WinService
+    (FolderProfile is for websites; the service only needs a Release build
+    so the installer Primary Output has an .exe to wrap)
+
+If STEP 1 printed a different .sln, for example:
+
+  Windows Services\GSS Dispatch Service\GSS Dispatch Service.sln
+
+then use that exact relative path in setupSolutionPath.
+
+
+--------------------------------------------------------------------------------
+STEP 3 — reject a .csproj in C# (paste into BuildSetupProjectAsync)
+--------------------------------------------------------------------------------
+After setupSolutionPath is resolved and File.Exists is true, ADD:
+
+        if (!setupSolutionPath.EndsWith(".sln", StringComparison.OrdinalIgnoreCase))
+        {
+            _logService.AppendLog(
+                $"[{DateTime.Now:HH:mm:ss}] [ERROR] setupSolutionPath must be a .sln that contains the Setup project, not a .csproj: {setupSolutionPath}\r\n");
+            return -1;
+        }
+
+Keep the devenv args you already have (Release | Any CPU):
+
+        var args =
+            $"\"{setupSolutionPath}\" /build \"{solutionConfig}\" /project \"{setupProjectName}\" /projectconfig \"{configuration}\"";
+
+setupProjectName comes from the .vdproj file name (GSSDispatchSetup).
+If devenv says the project was not found, open the .sln and use the
+exact Setup project name from Solution Explorer.
+
+Keep these log lines ON so you can see the first argument:
+
+        _logService.AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Setup configuration: {configuration}\r\n");
+        _logService.AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Setup platform: {platform}\r\n");
+        _logService.AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Setup args: {args}\r\n");
+
+
+--------------------------------------------------------------------------------
+STEP 4 — prove MSI from the command line (VS closed)
+--------------------------------------------------------------------------------
+Close ALL Visual Studio windows.
+
+  cd /d "F:\GSS\AppDev\gss-root\Windows Services\GSS Dispatch Service"
+
+  "F:\Program Files\Microsoft Visual Studio\18\Professional\Common7\IDE\devenv.com" ^
+    "F:\GSS\AppDev\gss-root\Windows Services\GSS Dispatch Service\GSSDispatchService.sln" ^
+    /build "Release|Any CPU" /project "GSSDispatchSetup" /projectconfig Release
+
+Good:
+  - NO HELP text (/useenv, /TfsLink, "first argument for devenv")
+  - Build started: Project: GSSDispatchSetup, Configuration: Release
+  - BOTH files under GSSDispatchServiceSetup\Release\:
+      *.msi
+      setup.exe   (if the vdproj writes a bootstrapper)
+
+If this command still prints HELP → the .sln path is still wrong.
+If it says project not found → /project name does not match the .sln.
+If HRESULT 8000000A → docs/fixes/gssdmi-msi-setup-exe-follow.txt STEP 2.
+
+
+--------------------------------------------------------------------------------
+STEP 5 — rebuild the DevOps tool, then Build GSS DispatchService
+--------------------------------------------------------------------------------
+  1. Save appsettings.json (STEP 2)
+  2. Paste the .sln guard (STEP 3) if you want the clear error
+  3. Restart the DevOps tool
+  4. Visual Studio closed
+  5. Build GSS DispatchService
+
+Expected log:
+
+  [INFO] Building setup MSI for GSS DispatchService...
+  [INFO] Setup configuration: Release
+  [INFO] Setup platform: Any CPU
+  [INFO] Setup args: "...\GSSDispatchService.sln" /build "Release|Any CPU" /project "GSSDispatchSetup" /projectconfig "Release"
+  (real devenv build lines — NO usage / /useenv / /TfsLink)
+  [INFO] Setup MSI copied to F:\build-output\...\GSSDispatchService\....msi
+  [INFO] Finished GSS DispatchService with exit code 0
+
+
+--------------------------------------------------------------------------------
+If something is still wrong
+--------------------------------------------------------------------------------
+Still HELP text + "first argument for devenv"
+  → setupSolutionPath is still a .csproj, missing, or a bad path
+  → log Setup args and confirm the first quoted path ends with .sln
+  → File.Exists must be true for that .sln
+
+[ERROR] setupSolutionPath must be a .sln ... not a .csproj
+  → STEP 3 guard fired. Fix the setting, restart the tool
+
+devenv: project not found / invalid project
+  → /project name != Solution Explorer name
+  → set setupProjectPath to the real .vdproj; code uses its file name
+
+HRESULT 8000000A
+  → DisableOutOfProcBuild (GSSDMI follow file)
+
+No .msi under Setup\Release\ after a clean devenv build
+  → build GSSDispatchService (the .csproj) in Release first
+  → Configuration Manager: Build = on for GSSDispatchSetup | Release | Any CPU
+  → Installer Projects extension installed on this VS
+
+FolderProfile / web publish errors on this app
+  → expected if you still have the old buildCommand
+  → use the msbuild /t:Build command in STEP 2
+
+subversionScc / SccProvider
+  → ignore; not why the MSI is missing
+
+
+--------------------------------------------------------------------------------
+Checklist
+--------------------------------------------------------------------------------
+[ ] dir /s /b ...\GSS Dispatch Service\*.sln  found the solution
+[ ] that .sln contains GSSDispatchSetup
+[ ] setupSolutionPath ends with .sln  (NOT .csproj)
+[ ] setupProjectPath is the .vdproj
+[ ] setupConfiguration=Release, setupPlatform=Any CPU
+[ ] no setupBuildCommand
+[ ] WinService buildCommand is msbuild /t:Build (no FolderProfile)
+[ ] manual devenv (STEP 4): no HELP, Release\*.msi exists
+[ ] tool log Setup args starts with a quoted .sln
+[ ] F:\build-output\...\GSSDispatchService\*.msi after Build
+
+
+================================================================================
+END
+================================================================================
