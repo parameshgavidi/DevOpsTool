@@ -24,6 +24,8 @@ public class SetupProjectBuilder
         // devenv args MUST include platform from appsettings:
         //   /build "Release|Any CPU"  (setupConfiguration + setupPlatform)
         // Do not hardcode /build Release — that ignores Any CPU.
+        // setupSolutionPath MUST be a .sln (not the service .csproj).
+        // GSS Dispatch HELP dump: docs/fixes/gss-dispatch-service-msi-sln-path.txt
         await Task.CompletedTask;
         throw new NotImplementedException();
     }
