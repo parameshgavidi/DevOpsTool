@@ -105,6 +105,8 @@ Notes:
 - Dropdown looks/behaves like From Branch (select + Refresh).
 - Do NOT use @bind on this <select> — use value + @onchange so a branch
   change can clear the "build file path" label (ResolvedBuildFilePath).
+  If you keep @bind AND @onchange you get RZ10008 ("onchange is used two
+  or more times"). DELETE @bind. Keep value= + @onchange.
   Handler paste: docs/fixes/buildtab-clear-path-on-branch-change.txt
 - Get latest uses the SELECTED RepoFromBranch value — not appsettings.
 - "Build file path" sits next to Get latest. Full paste guide:

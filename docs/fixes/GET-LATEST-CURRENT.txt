@@ -168,6 +168,8 @@ Build file path method + click handler:
 
 Dropdown change clears the build file path label (do not keep @bind):
   docs/fixes/buildtab-clear-path-on-branch-change.txt
+  RZ10008 ("onchange is used two or more times") = you still have
+  @bind="RepoFromBranch" next to @onchange. DELETE the @bind line.
 
 
 --------------------------------------------------------------------------------

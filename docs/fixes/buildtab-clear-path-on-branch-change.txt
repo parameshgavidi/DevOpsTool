@@ -19,24 +19,49 @@ again to show the path for the newly selected branch.
 NO new appsettings / configuration variable.
 
 
-YOUR SCREENSHOT
----------------
-  Get Latest From Repo Branch dropdown still uses @bind="RepoFromBranch".
-  @bind and @onchange cannot sit on the same <select> (both use onchange).
+YOUR SCREENSHOT (RZ10008)
+-------------------------
+BuildTab.razor Error List:
 
-  REPLACE @bind with value + @onchange — same pattern as DB ROLLUP To Branch.
+    RZ10008 The attribute 'onchange' is used two or more times for this
+            element. Attributes must be unique (case-insensitive). The
+            attribute 'onchange' is used by the '@bind' directive attribute.
 
-
-================================================================================
-CHANGE 1 — REPLACE the Get Latest From Repo Branch <select>
-================================================================================
-Find this (BuildTab.razor, BUILD CONFIGURATION):
+Your <select> currently has BOTH (this is the bug):
 
     <select class="form-control"
             @bind="RepoFromBranch"
+            @onchange="OnRepoFromBranchChanged"
             disabled="@(RepoBranchOptions.Count == 0)">
 
-REPLACE those three attributes with:
+@bind already owns onchange. You cannot add @onchange next to it.
+
+FIX: DELETE the @bind line. Keep @onchange. Add value="@RepoFromBranch".
+Do NOT use @bind:after. Do NOT keep both.
+
+
+================================================================================
+CHANGE 1 — FIX RZ10008 (DELETE @bind, keep @onchange)
+================================================================================
+In BuildTab.razor, Get Latest From Repo Branch <select>, FIND this exact block:
+
+    <select class="form-control"
+            @bind="RepoFromBranch"
+            @onchange="OnRepoFromBranchChanged"
+            disabled="@(RepoBranchOptions.Count == 0)">
+
+DELETE the line:
+
+            @bind="RepoFromBranch"
+
+so the four attributes become THREE:
+
+    <select class="form-control"
+            value="@RepoFromBranch"
+            @onchange="OnRepoFromBranchChanged"
+            disabled="@(RepoBranchOptions.Count == 0)">
+
+After DELETE + ADD value=  (copy this whole opening tag):
 
     <select class="form-control"
             value="@RepoFromBranch"
@@ -44,6 +69,7 @@ REPLACE those three attributes with:
             disabled="@(RepoBranchOptions.Count == 0)">
 
 Leave the <option> loop and Refresh button as they are.
+Rebuild — RZ10008 must disappear.
 
 Full block after the edit:
 
@@ -98,7 +124,8 @@ What this does:
 DO NOT CHANGE / DO NOT ADD
 ================================================================================
 [ ] Do NOT keep @bind="RepoFromBranch" on this <select>
-    (Blazor error: The attribute 'onchange' is used two or more times)
+    (RZ10008: The attribute 'onchange' is used two or more times)
+[ ] Do NOT use @bind + @onchange together. @bind already uses onchange.
 [ ] Do NOT clear RepoFromBranch — only clear ResolvedBuildFilePath
 [ ] Do NOT auto-call BuildFilePathClicked on change
 [ ] Do NOT change GetBuildFilePath / BuildFilePathClicked combine logic
@@ -110,9 +137,10 @@ DO NOT CHANGE / DO NOT ADD
 ================================================================================
 STEP-BY-STEP WORK ORDER
 ================================================================================
-1. Paste CHANGE 1 (value + @onchange on the dropdown)
-2. Paste CHANGE 2 (OnRepoFromBranchChanged)
-3. Rebuild — red squiggles on OnRepoFromBranchChanged go away
+1. CHANGE 1 — DELETE @bind="RepoFromBranch", ADD value="@RepoFromBranch"
+   (keep the @onchange line you already added)
+2. CHANGE 2 — paste OnRepoFromBranchChanged if it is not already in @code
+3. Rebuild — RZ10008 must be gone; red squiggles on the handler go away
 4. Run the tool
 5. Click Build file path → label shows F:\build-output\9.351 (or your path)
 6. Change Get Latest From Repo Branch to a different branch
