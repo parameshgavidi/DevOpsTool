@@ -290,7 +290,12 @@ Click Build file path with Output Root F:\build-output and branch GSSv9.3S1:
 
 Explorer opens F:\build-output\9.3S1 (existing folder — does not create GSSv9.3S1).
 
-Change the dropdown to GSSv8.9S2 and click again:
+Change the dropdown to GSSv8.9S2:
+
+    The "build file path" label goes blank (OnRepoFromBranchChanged).
+    See docs/fixes/buildtab-clear-path-on-branch-change.txt
+
+Click Build file path again:
 
     [INFO] Build file path: F:\build-output\8.9S2
     [INFO]   Output Root = F:\build-output
@@ -305,6 +310,8 @@ CHECKLIST
 [ ] GetBuildFilePath combines OutputRoot + TrimGssVersionFolder(branch) → 9.3S1 not GSSv9.3S1
 [ ] BuildFilePathClicked creates the folder, logs the path, opens Explorer
 [ ] Path shown next to the button after a successful click
+[ ] Changing Get Latest From Repo Branch clears the path label
+    (docs/fixes/buildtab-clear-path-on-branch-change.txt)
 [ ] Empty Output Root / empty branch → ERROR in OUTPUT LOG, no crash
 [ ] No new keys in appsettings.json
 [ ] Red squiggles gone after Rebuild
