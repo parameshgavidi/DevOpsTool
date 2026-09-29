@@ -69,6 +69,20 @@ public partial class BuildTab : ComponentBase
     private string GetBuildFilePath()
         => OutputPaths.GetBuildFilePath(OutputRoot, RepoFromBranch);
 
+    /// <summary>
+    /// Get Latest From Repo Branch &lt;select&gt; change.
+    /// Sets RepoFromBranch and clears the stale "build file path" label.
+    /// Markup: value="@RepoFromBranch" @onchange="OnRepoFromBranchChanged"
+    /// (do not use @bind on this dropdown).
+    /// Full paste: docs/fixes/buildtab-clear-path-on-branch-change.txt
+    /// </summary>
+    private Task OnRepoFromBranchChanged(ChangeEventArgs e)
+    {
+        RepoFromBranch = e.Value?.ToString()?.Trim() ?? string.Empty;
+        ResolvedBuildFilePath = string.Empty;
+        return InvokeAsync(StateHasChanged);
+    }
+
     private async Task BuildFilePathClicked()
     {
         if (_isBuildingFilePath)

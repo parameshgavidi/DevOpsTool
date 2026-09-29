@@ -56,7 +56,8 @@ Put this under Repo Root / Output Root (BUILD CONFIGURATION).
         <label>Get Latest From Repo Branch</label>
         <div class="config-row">
             <select class="form-control"
-                    @bind="RepoFromBranch"
+                    value="@RepoFromBranch"
+                    @onchange="OnRepoFromBranchChanged"
                     disabled="@(RepoBranchOptions.Count == 0)">
                 @if (RepoBranchOptions.Count == 0)
                 {
@@ -102,6 +103,9 @@ Put this under Repo Root / Output Root (BUILD CONFIGURATION).
 
 Notes:
 - Dropdown looks/behaves like From Branch (select + Refresh).
+- Do NOT use @bind on this <select> — use value + @onchange so a branch
+  change can clear the "build file path" label (ResolvedBuildFilePath).
+  Handler paste: docs/fixes/buildtab-clear-path-on-branch-change.txt
 - Get latest uses the SELECTED RepoFromBranch value — not appsettings.
 - "Build file path" sits next to Get latest. Full paste guide:
   docs/fixes/buildtab-build-file-path.txt
@@ -471,6 +475,26 @@ docs/fixes/GET-LATEST-CURRENT.txt (unchanged).
 
 
 ================================================================================
+CHANGE 7 — Clear "build file path" when the dropdown changes
+================================================================================
+CHANGE 2 already uses value + @onchange (not @bind).
+
+PASTE OnRepoFromBranchChanged inside @code / BuildTab.razor.cs:
+
+    private Task OnRepoFromBranchChanged(ChangeEventArgs e)
+    {
+        RepoFromBranch = e.Value?.ToString()?.Trim() ?? string.Empty;
+        ResolvedBuildFilePath = string.Empty;
+        return InvokeAsync(StateHasChanged);
+    }
+
+Picking a new branch hides the stale label (F:\build-output\9.351).
+User clicks "Build file path" again for the new branch.
+
+Dedicated paste guide: docs/fixes/buildtab-clear-path-on-branch-change.txt
+
+
+================================================================================
 DO NOT CHANGE / DO NOT ADD
 ================================================================================
 [ ] Do NOT add repoFromBranch / latestBranch to appsettings.json
@@ -489,10 +513,12 @@ STEP-BY-STEP WORK ORDER (do in this order)
 4. Paste CHANGE 4 helpers ONLY if missing
 5. Paste CHANGE 5 OnAfterRenderAsync merge
 6. Paste CHANGE 6 GetLatestAndShowAppsAsync (replace old method)
-7. Rebuild + run the tool
-8. Set Repo Root → click Refresh (or reopen tab)
-9. Confirm dropdown fills and defaults to latest GSS branch
-10. Click Get latest → OUTPUT LOG shows checkout + per-app git latest
+7. Paste CHANGE 7 OnRepoFromBranchChanged (clears build file path label)
+8. Rebuild + run the tool
+9. Set Repo Root → click Refresh (or reopen tab)
+10. Confirm dropdown fills and defaults to latest GSS branch
+11. Click Get latest → OUTPUT LOG shows checkout + per-app git latest
+12. Click Build file path → change the dropdown → label must go blank
 
 
 ================================================================================
@@ -523,6 +549,8 @@ CHECKLIST
 ================================================================================
 [ ] Fields: RepoFromBranch, RepoBranchOptions, _isLoadingRepoBranches
 [ ] Dropdown + Refresh + Get latest + Build file path under BUILD CONFIGURATION
+[ ] Dropdown uses value + @onchange="OnRepoFromBranchChanged" (NOT @bind)
+[ ] Changing the dropdown clears ResolvedBuildFilePath (hides the path label)
 [ ] LoadRepoBranchesAsync uses hardcoded "git branch -r" (no config)
 [ ] Default RepoFromBranch = last sorted GSS branch (latest)
 [ ] GetLatestAndShowAppsAsync checkouts RepoFromBranch then per-app latest
