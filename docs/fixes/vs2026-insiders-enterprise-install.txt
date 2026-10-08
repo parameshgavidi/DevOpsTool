@@ -1,0 +1,241 @@
+================================================================================
+FOLLOW THIS FILE — install Visual Studio Enterprise 2026 Insiders
+docs/fixes/vs2026-insiders-enterprise-install.txt
+================================================================================
+You already have a BROKEN VS 2026 Insiders entry:
+
+  Visual Studio Enterprise 2026 Insiders
+  Insiders 11224.32.331
+  Setup completed with warnings
+
+You cannot click Install on top of that and expect a clean IDE.
+Fix or remove the broken instance first, then install once onto
+ONE drive (C:). Do not reuse the leftover F:\ ...\18\ folders.
+
+
+Background (why the last setup failed):
+
+  docs/fixes/vs2026-insiders-installer-1612-uninstall.txt
+
+That file explains 1612 / FileTracker / C: vs F: split.
+This file is the install path.
+
+
+--------------------------------------------------------------------------------
+STEP 0 — close everything
+--------------------------------------------------------------------------------
+1. Close the "Sorry, something went wrong" dialog (Close).
+2. Close Visual Studio Installer.
+3. Close every devenv / VS 2019 / VS 2022 / VS 2026 window.
+4. Open Task Manager. End these if they are still running:
+
+     devenv.exe
+     vs_installer.exe
+     vs_installerservice.exe
+     Microsoft.VisualStudio.Extensibility.Finalizer.exe
+     vs_finalizer.exe
+
+5. Reopen Visual Studio Installer as Administrator
+   (right-click → Run as administrator).
+
+
+--------------------------------------------------------------------------------
+STEP 1 — try Repair (fastest if it works)
+--------------------------------------------------------------------------------
+On Visual Studio Enterprise 2026 Insiders:
+
+  More → Repair
+
+If Repair finishes with no FileTracker / 1612 dialog:
+
+  1. Click Launch on VS 2026 Insiders
+  2. Help → About must say Visual Studio 2026 (18.x) Insiders
+  3. Skip to STEP 5 (workloads) if Launch works
+  4. You are done with install. Do not uninstall.
+
+If Repair shows the same errors again:
+
+  Couldn't uninstall Microsoft.Build.FileTracker.Msi
+  Return code 1612
+
+go to STEP 2. Do not click Repair in a loop.
+
+
+--------------------------------------------------------------------------------
+STEP 2 — unblock FileTracker MSI 1612 (required before a new install)
+--------------------------------------------------------------------------------
+Windows is missing the cached .msi for:
+
+  Microsoft.Build.FileTracker.Msi  version 18.9.119151.23
+  ProductCode: {2B48BBFA-3D0EA-45225-AEBB-37F25940F016}
+
+Run Microsoft's Program Install and Uninstall troubleshooter:
+
+  https://support.microsoft.com/en-us/topic/
+  fix-problems-that-block-programs-from-being-installed-or-removed
+  -cca7d1b6-65a9-3d98-426b-e9f927e1eb4d
+
+  1. Uninstalling
+  2. Microsoft.Build.FileTracker.Msi  (or FileTracker)
+  3. Yes, try to uninstall
+
+Then rename the leftover F: Copilot folder if it exists
+(do not delete yet):
+
+  F:\Program Files\Microsoft Visual Studio\18\Enterprise\Common7\IDE\Extensions\Microsoft.CopilotLogViewer
+
+Back in Visual Studio Installer (Admin):
+
+  Visual Studio Enterprise 2026 Insiders → More → Uninstall
+
+If Uninstall still fails, STEP 3.
+
+
+--------------------------------------------------------------------------------
+STEP 3 — remove only the VS 18 / 2026 instance
+--------------------------------------------------------------------------------
+Elevated Command Prompt (Admin):
+
+  cd "C:\Program Files (x86)\Microsoft Visual Studio\Installer"
+  InstallCleanup.exe -i 18
+
+  -i 18  removes Visual Studio 18 / 2026 only.
+
+DO NOT run:
+
+  InstallCleanup.exe -f
+
+That can break Visual Studio Enterprise 2022 and VS 2019.
+
+After it finishes:
+
+  1. Confirm VS 2022 still shows Launch in the installer
+  2. Confirm VS 2026 Insiders is gone (or shows Install, not Launch)
+
+
+--------------------------------------------------------------------------------
+STEP 4 — install Enterprise 2026 Insiders (clean, one drive)
+--------------------------------------------------------------------------------
+Download the Insiders Enterprise bootstrapper (not the 2022 one):
+
+  https://visualstudio.microsoft.com/insiders/
+
+Pick Visual Studio Enterprise.
+
+Or the general downloads page Insiders section:
+
+  https://visualstudio.microsoft.com/downloads/
+
+Save VisualStudioSetup.exe / vs_enterprise.exe.
+Right-click → Run as administrator.
+
+Installation location — use ONE path only:
+
+  C:\Program Files\Microsoft Visual Studio\18\Enterprise
+
+Do NOT set the install folder to:
+
+  F:\Program Files\Microsoft Visual Studio\18\...
+
+The last failure mixed C: (IDE) and F: (CopilotLogViewer).
+A second drive is what broke finalize.
+
+Keep download cache on C: as well (default).
+
+Side-by-side with VS 2022 is OK. You can keep
+Visual Studio Enterprise 2022 installed.
+
+
+--------------------------------------------------------------------------------
+STEP 5 — workloads for GssDevOpsAutomationTool (.NET 10 MAUI)
+--------------------------------------------------------------------------------
+On the Workloads tab check:
+
+  [x] .NET Multi-platform App UI development
+  [x] .NET desktop development
+  [x] Windows application development     (WinUI / Windows App SDK)
+  [x] ASP.NET and web development         (optional, useful)
+
+Individual components — confirm:
+
+  [x] .NET 10.0 SDK / Runtime
+  [x] .NET SDK
+  [x] Windows 10 SDK (10.0.19041.0) or newer
+  [x] GitHub Copilot                     (optional)
+
+Click Install. Wait until the installer says Ready / Launch.
+No "Couldn't uninstall FileTracker" dialog.
+
+
+--------------------------------------------------------------------------------
+STEP 6 — prove the install
+--------------------------------------------------------------------------------
+1. Visual Studio Installer → Visual Studio Enterprise 2026 Insiders
+   status is Launch (not "Setup completed with warnings").
+2. Click Launch.
+3. Help → About = Visual Studio 2026 Insiders, version 18.x.
+4. File → New → Project → .NET MAUI Blazor Hybrid App
+   Target framework list must include .NET 10.
+5. Open GssDevOpsAutomationTool.sln in THIS VS 2026 window
+   (not VS 2022).
+
+If you stay on VS 2026 Insiders, KEEP net10.0-windows* in the
+csproj. Do not apply the VS 2022 net8 retarget:
+
+  docs/fixes/vs2022-retarget-gssdevops-from-net10.txt
+
+That file is only if you open the tool in VS 2022.
+
+
+--------------------------------------------------------------------------------
+IF INSTALL STILL FAILS
+--------------------------------------------------------------------------------
+Same 1612 after STEP 2
+  The troubleshooter did not remove FileTracker. Run it again
+  and pick "Not listed" if the name is missing, then use the
+  ProductCode {2B48BBFA-3D0EA-45225-AEBB-37F25940F016}.
+
+CopilotLogViewer / 0xE0434352 again
+  Install location is still split. Confirm no F:\...\18\Enterprise
+  folder is being used. Rename F:\Program Files\Microsoft Visual
+  Studio\18  to  18.bak  and retry STEP 4 on C: only.
+
+Installer cannot download packages
+  Corporate proxy / missing VS cache. Use a network layout
+  (vs_enterprise.exe --layout) or check that
+  C:\ProgramData\Microsoft\VisualStudio\Packages is writable.
+
+Need a stable VS 2026 instead of Insiders
+  Downloads page → Visual Studio Enterprise 2026 (Current /
+  Stable channel), not the Insiders tile. That is a different
+  channel from the broken Insiders instance you have now.
+
+
+--------------------------------------------------------------------------------
+DO NOT
+--------------------------------------------------------------------------------
+- Run InstallCleanup.exe -f
+- Install VS 2026 onto F: while leftover 18 files remain on C:
+  (or the reverse)
+- Open GssDevOpsAutomationTool in VS 2022 after a successful
+  2026 install if the csproj still says net10.0-*
+- Delete C:\Windows\Installer
+- Uninstall VS 2022 to make room (they can live side by side)
+
+
+--------------------------------------------------------------------------------
+CHECKLIST
+--------------------------------------------------------------------------------
+[ ] Closed the error dialog and all devenv processes
+[ ] Repair succeeded  OR  FileTracker 1612 cleared  OR  -i 18
+[ ] Fresh Insiders Enterprise bootstrapper from visualstudio.microsoft.com/insiders/
+[ ] Install path = C:\Program Files\Microsoft Visual Studio\18\Enterprise only
+[ ] MAUI + Windows App SDK + .NET 10 SDK selected
+[ ] Installer status = Launch, no FileTracker dialog
+[ ] Help → About = VS 2026 Insiders 18.x
+[ ] GssDevOpsAutomationTool opened in VS 2026 (keep net10)
+
+
+================================================================================
+END
+================================================================================

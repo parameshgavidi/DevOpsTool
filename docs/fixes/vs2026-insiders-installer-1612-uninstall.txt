@@ -199,16 +199,14 @@ After -i 18:
 
 
 --------------------------------------------------------------------------------
-IF YOU WANTED TO KEEP VS 2026 INSTEAD
+IF YOU WANT TO INSTALL / KEEP VS 2026 INSIDERS
 --------------------------------------------------------------------------------
-Then you are on Insiders, not a stable VS 2026.
-Repair first (STEP B1). If Repair works, Launch VS 2026
-Insiders — do not uninstall.
+Use this file instead (Repair, then clean install on C: only):
 
-GssDevOpsAutomationTool on net10.0-* only loads in VS 18.
-If you stay on VS 2026, you can keep net10 and skip the
-net8 retarget. If you stay on VS 2022, you must retarget
-to net8 (or net9).
+  docs/fixes/vs2026-insiders-enterprise-install.txt
+
+Do not uninstall after a successful Repair. Keep net10 in the
+csproj and open the tool in VS 2026, not VS 2022.
 
 
 --------------------------------------------------------------------------------
