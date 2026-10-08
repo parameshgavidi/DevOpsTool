@@ -1,0 +1,392 @@
+================================================================================
+FOLLOW THIS FILE — switch GssDevOpsAutomationTool from VS 2026 to VS 2022
+docs/fixes/vs2022-retarget-gssdevops-from-net10.txt
+================================================================================
+VS 2022 cannot load a .NET 10 MAUI project. Do not keep net10.0-*.
+Do not try to "just open" the same csproj in VS 2022.
+
+You were on VS 2026 (Visual Studio 18) + .NET 10.
+You are now on VS 2022 (Visual Studio 17) + .NET 8 (or .NET 9).
+
+
+--------------------------------------------------------------------------------
+YOUR CURRENT ERRORS (from the screenshot)
+--------------------------------------------------------------------------------
+Error List on GssDevOpsAutomationTool.csproj:
+
+  NETSDK1045  The current Visual Studio version does not support targeting
+              .NET 10.0. Either target .NET 9.0 or lower, or use Visual
+              Studio version 18.0 or higher.
+
+  NU1012      Platform version is not present for one or more target
+              frameworks, even though they have specified a platform:
+              net10.0-windows10.0.19041.0
+
+Error List / Output:
+
+  Failed to restore GssDevOpsAutomationTool.csproj
+
+Project Properties → Application → Target frameworks shows a BROKEN mix:
+
+  $(TargetFrameworks);net10.0-windows10.0.19041.0
+  .net10.0-maccatalystnet10.0-windows10.0.19041.0
+
+Output type = Console Application is a SIDE EFFECT of the SDK failing
+to load. After retarget it should be WinExe again. Do not "fix" Output
+type in the property page first.
+
+
+--------------------------------------------------------------------------------
+WHY
+--------------------------------------------------------------------------------
+VS 2026 = product version 18 = .NET 10 MAUI.
+VS 2022 = product version 17 = .NET 8 MAUI (all 17.8+) or .NET 9 MAUI
+          (17.12+). It will never compile net10.0-*.
+
+The Mac Catalyst TFM (net10.0-maccatalyst) has no platform version.
+That is NU1012. This tool is Windows-only — drop iOS / Android /
+Mac Catalyst.
+
+
+--------------------------------------------------------------------------------
+USE THIS TFM (default)
+--------------------------------------------------------------------------------
+  net8.0-windows10.0.19041.0
+
+Use net9.0-windows10.0.19041.0 ONLY if:
+  Help → About shows Visual Studio 2022 version 17.12 or newer
+  AND  dotnet --list-sdks  shows a 9.0.x SDK
+
+Otherwise stay on net8. The steps below use net8.
+
+
+--------------------------------------------------------------------------------
+STEP 0 — install VS 2022 workloads (one time)
+--------------------------------------------------------------------------------
+Open Visual Studio Installer → Visual Studio 2022 → Modify.
+
+Check ALL of these:
+
+  [x] .NET Multi-platform App UI development
+  [x] .NET desktop development
+  [x] Windows application development   (WinUI / Windows App SDK)
+
+Under Individual components, confirm:
+
+  [x] .NET 8.0 Runtime / SDK
+  [x] .NET SDK
+  [x] Windows 10 SDK (10.0.19041.0) or newer
+
+Click Modify. Wait until install finishes.
+
+Close ALL Visual Studio windows. Reopen VS 2022.
+
+Confirm from Developer Command Prompt for VS 2022:
+
+  dotnet --list-sdks
+  dotnet workload list
+
+You need an 8.0.x SDK and maui / maui-windows workloads.
+If maui-windows is missing:
+
+  dotnet workload install maui-windows
+
+
+--------------------------------------------------------------------------------
+STEP 1 — find every net10 / VS 18 pin (do this first)
+--------------------------------------------------------------------------------
+In Solution Explorer, search the GssDevOpsAutomationTool solution
+(and the sibling DBRollupScriptBuilder project if it is in the same
+repo) for:
+
+  net10.0
+  Microsoft Visual Studio\18\
+  TargetFrameworks
+
+Typical hits:
+
+  GssDevOpsAutomationTool.csproj
+  DBRollupScriptBuilder.csproj
+  Directory.Build.props          (if present)
+  Directory.Packages.props       (if present)
+  global.json                    (if present)
+  appsettings.json               (dbRollupExePath + MSBuild/devenv paths)
+
+
+--------------------------------------------------------------------------------
+STEP 2 — edit GssDevOpsAutomationTool.csproj (NOT the Property page)
+--------------------------------------------------------------------------------
+Right-click GssDevOpsAutomationTool → Edit Project File.
+
+A) Target frameworks — DELETE every net10 / android / ios / maccatalyst
+   line. REPLACE the TargetFrameworks PropertyGroup lines with ONE line:
+
+  <TargetFrameworks>net8.0-windows10.0.19041.0</TargetFrameworks>
+
+   If the file uses <TargetFramework> (singular), use:
+
+  <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+
+   Do NOT leave this leftover pair (that is what the screenshot shows):
+
+  <TargetFrameworks>net10.0-android;net10.0-ios;net10.0-maccatalyst</TargetFrameworks>
+  <TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('windows'))">$(TargetFrameworks);net10.0-windows10.0.19041.0</TargetFrameworks>
+
+B) Output / Windows — keep or set:
+
+  <OutputType>WinExe</OutputType>
+  <UseMaui>true</UseMaui>
+  <SingleProject>true</SingleProject>
+  <WindowsPackageType>None</WindowsPackageType>
+  <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+  <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+
+C) Packages — any 10.x Microsoft.Maui / Microsoft.Extensions /
+   Microsoft.AspNetCore package must become 8.x.
+
+   Typical ItemGroup after the change:
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Maui.Controls" Version="8.0.100" />
+    <PackageReference Include="Microsoft.Maui.Controls.Compatibility" Version="8.0.100" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="8.0.2" />
+  </ItemGroup>
+
+   If NuGet cannot find 8.0.100, use the latest 8.0.x the feed offers
+   (8.0.93 is also fine). Keep Maui.Controls and Compatibility on the
+   SAME version.
+
+   KEEP System.Data.SqlClient if you already added it for GSSEmail
+   (docs/fixes/sqlclient-filenotfound-gssemail.txt). Do not bump it
+   to a 10.x package — it stays 4.8 / 4.9.
+
+D) If you see <MauiVersion>10.*</MauiVersion>, change it to 8.0.100
+   or delete the property (the PackageReference version wins).
+
+E) Save the csproj. Do not use the Target frameworks dropdown until
+   restore succeeds.
+
+
+--------------------------------------------------------------------------------
+STEP 3 — global.json / Directory.Build.props (only if they exist)
+--------------------------------------------------------------------------------
+If global.json pins SDK 10:
+
+  {
+    "sdk": {
+      "version": "10.0.100"
+    }
+  }
+
+Change to (match an SDK from `dotnet --list-sdks`):
+
+  {
+    "sdk": {
+      "version": "8.0.400",
+      "rollForward": "latestFeature"
+    }
+  }
+
+Or delete global.json so VS 2022 picks its own 8.0 SDK.
+
+If Directory.Build.props sets TargetFramework / TargetFrameworks to
+net10.0*, change those to net8.0-windows10.0.19041.0 as well.
+
+If Directory.Packages.props pins Microsoft.Maui.* 10.x, change those
+PackageVersion items to 8.0.100.
+
+
+--------------------------------------------------------------------------------
+STEP 4 — DBRollupScriptBuilder (same repo, also net10)
+--------------------------------------------------------------------------------
+That console exe is often:
+
+  F:\GSS\AppDev\gss-utilities\DBRollupScriptBuilder\...\bin\Debug\net10.0\DBRollupScriptBuilder.exe
+
+Edit DBRollupScriptBuilder.csproj:
+
+  OLD:  <TargetFramework>net10.0</TargetFramework>
+  NEW:  <TargetFramework>net8.0</TargetFramework>
+
+Rebuild that project. New path:
+
+  ...\bin\Debug\net8.0\DBRollupScriptBuilder.exe
+
+Then in GssDevOpsAutomationTool appsettings.json, update
+dbRollupExePath from \net10.0\ to \net8.0\.
+
+
+--------------------------------------------------------------------------------
+STEP 5 — Restore / Rebuild in VS 2022
+--------------------------------------------------------------------------------
+1. Close the solution.
+2. Delete these folders if they exist (stale net10 output):
+
+     GssDevOpsAutomationTool\bin
+     GssDevOpsAutomationTool\obj
+
+3. Reopen the .sln in Visual Studio 2022 (not 2026).
+4. Toolbar startup project = GssDevOpsAutomationTool.
+5. Debug target = Windows Machine  (not Android / iOS / Mac Catalyst).
+6. Right-click the solution → Restore NuGet Packages.
+7. Build → Rebuild Solution.
+
+NETSDK1045 and NU1012 must disappear.
+
+Error List must be 0 errors before you run.
+
+If restore still mentions net10.0, a second csproj / Directory.Build.props
+still has net10. Search again (STEP 1).
+
+
+--------------------------------------------------------------------------------
+STEP 6 — VS 18 MSBuild / devenv paths in appsettings
+--------------------------------------------------------------------------------
+Previous VS 2026 work used:
+
+  F:\Program Files\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe
+  F:\Program Files\Microsoft Visual Studio\18\Professional\Common7\IDE\devenv.com
+
+VS 2022 is NOT folder "18". It is folder "2022".
+
+Find which of these EXIST on this machine (File Explorer or cmd):
+
+  dir "C:\Program Files\Microsoft Visual Studio\2022"
+  dir "F:\Program Files\Microsoft Visual Studio\2022"
+
+Typical VS 2022 Professional paths:
+
+  C:\Program Files\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe
+  C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\devenv.com
+
+If VS 2022 lives on F: (same drive as VS 18), use F:\...2022\Professional\...
+
+In appsettings.json, REPLACE every:
+
+  Microsoft Visual Studio\18\Professional\
+
+with:
+
+  Microsoft Visual Studio\2022\Professional\
+
+Apps that commonly have a hardcoded VS 18 MSBuild path:
+
+  GSSWeb
+  GSS Web Service
+  GSS API   (only if buildCommand uses MSBuild.exe, not dotnet)
+  Web2ClientBridge
+
+Example GSSWeb buildCommand after the switch (one line):
+
+  ver>nul & "C:\Program Files\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe" "F:\GSS\AppDev\gss-root\Shared Components\GSSWebComponent\GSSWebComponent.csproj" /p:Configuration=Release /t:Build /v:m && copy /Y "F:\GSS\AppDev\gss-root\Shared Components\GSSWebComponent\bin\Release\GSSWebComponent.dll" "F:\GSS\AppDev\gss-root\WebV3\gssweb\gssweb\Bin\GSSWebComponent.dll" && "C:\Program Files\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe" "{projectFile}" /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile
+
+MUST start with:  ver>nul &
+MUST use the 2022 folder, not 18.
+If MSBuild is on F:, keep F: and only change \18\ → \2022\.
+
+
+--------------------------------------------------------------------------------
+STEP 7 — BuildService VS path resolver
+--------------------------------------------------------------------------------
+If ResolveVisualStudioIdePath / ResolveMsBuildPath prefer
+  \18\  or  "2026"
+before
+  \2022\
+then MSI / devenv builds will still call VS 2026 after the tool
+itself opens in VS 2022.
+
+Open BuildService.cs. If you see a version list, put 2022 first
+(or remove 18) so the tool matches the IDE you are using now.
+
+Installer Projects: install
+  "Microsoft Visual Studio Installer Projects 2022"
+on THIS VS 2022 instance (Extensions → Manage Extensions).
+The VS 2026 / VS 18 extension does not apply to devenv 2022.
+
+
+--------------------------------------------------------------------------------
+PASTE BLOCK — Windows-only PropertyGroup (reference)
+--------------------------------------------------------------------------------
+Use this as the shape of the Application PropertyGroup. Keep your
+existing ApplicationTitle / ApplicationId / RootNamespace values.
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0-windows10.0.19041.0</TargetFrameworks>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>GssDevOpsAutomationTool</RootNamespace>
+    <UseMaui>true</UseMaui>
+    <SingleProject>true</SingleProject>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <WindowsPackageType>None</WindowsPackageType>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+  </PropertyGroup>
+
+
+--------------------------------------------------------------------------------
+IF YOU SEE THESE AFTER RETARGET
+--------------------------------------------------------------------------------
+NETSDK1045 still mentions .NET 10
+  A leftover TargetFrameworks / Directory.Build.props / global.json
+  still says net10. Search the solution for net10.0.
+
+NU1012 platform version
+  You still have net8.0-maccatalyst or net8.0-android with no
+  platform suffix. Delete those TFMs. Windows-only is enough.
+
+The project is a Console Application / no Windows Machine
+  csproj OutputType is not WinExe, or UseMaui is missing, or
+  you opened the project in VS 2022 without the MAUI workload.
+
+C# errors about new language / APIs
+  .NET 10 / C# 13 features will not compile on net8. Comment or
+  rewrite those lines. Do not set <LangVersion>preview</LangVersion>
+  to paper over this.
+
+MSB3644 / Windows targeting pack
+  Install Windows 10 SDK 10.0.19041.0 (or newer) from the VS
+  Installer Individual components tab.
+
+Restore cannot find Microsoft.Maui.Controls 8.0.100
+  Use the latest 8.0.x from nuget.org. Do not install 10.x.
+
+dbRollupExePath FileNotFound
+  You rebuilt the MAUI app but not DBRollupScriptBuilder, or
+  appsettings still points at \net10.0\.
+
+
+--------------------------------------------------------------------------------
+DO NOT
+--------------------------------------------------------------------------------
+- Keep net10.0-windows* and hope VS 2022 will "ignore" it
+- Fix Target frameworks in the Property page while NETSDK1045 is
+  still listed (the page is already showing $(TargetFrameworks)
+  unevaluated)
+- Mix net10 Windows + net8 Windows in the same project
+- Point appsettings MSBuild/devenv at \18\ after you moved to 2022
+- Install MAUI / Installer Projects on VS 2026 and expect VS 2022
+  devenv to see them
+
+
+--------------------------------------------------------------------------------
+CHECKLIST
+--------------------------------------------------------------------------------
+[ ] VS 2022 has MAUI + Windows App SDK + .NET 8 SDK
+[ ] GssDevOpsAutomationTool.csproj TargetFrameworks = net8.0-windows10.0.19041.0
+[ ] No android / ios / maccatalyst TFM
+[ ] Maui / Extensions packages are 8.x (no 10.x)
+[ ] global.json does not pin SDK 10
+[ ] DBRollupScriptBuilder is net8.0; dbRollupExePath uses \net8.0\
+[ ] appsettings MSBuild/devenv paths use \2022\, not \18\
+[ ] BuildService resolver prefers 2022 if it hardcodes versions
+[ ] Restore + Rebuild in VS 2022: 0 errors (no NETSDK1045, no NU1012)
+[ ] Debug target = Windows Machine, OutputType = WinExe
+[ ] Run the tool once from VS 2022 before using Build tab
+
+
+================================================================================
+END
+================================================================================
