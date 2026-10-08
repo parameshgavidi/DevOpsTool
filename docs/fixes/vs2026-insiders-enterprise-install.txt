@@ -7,10 +7,15 @@ You already have a BROKEN VS 2026 Insiders entry:
   Visual Studio Enterprise 2026 Insiders
   Insiders 11224.32.331
   Setup completed with warnings
+  Buttons: Modify + Launch   ← already installed
 
-You cannot click Install on top of that and expect a clean IDE.
-Fix or remove the broken instance first, then install once onto
-ONE drive (C:). Do not reuse the leftover F:\ ...\18\ folders.
+If the installer shows Launch on 2026 Insiders, do NOT download
+or run a second Enterprise Insiders setup. That adds another
+broken 18.x instance. Click Launch first.
+
+After you removed VS 2022, this Insiders install is the only
+IDE that can open GssDevOpsAutomationTool on net10.0-*.
+VS 2019 cannot.
 
 
 Background (why the last setup failed):
@@ -18,7 +23,29 @@ Background (why the last setup failed):
   docs/fixes/vs2026-insiders-installer-1612-uninstall.txt
 
 That file explains 1612 / FileTracker / C: vs F: split.
-This file is the install path.
+This file is the install / Repair path.
+
+
+--------------------------------------------------------------------------------
+IF LAUNCH IS ALREADY THERE (your current installer screen)
+--------------------------------------------------------------------------------
+Installed tab looks like:
+
+  Visual Studio Professional 2019          Launch
+  Visual Studio Enterprise 2026 Insiders   Launch
+      Setup completed with warnings
+  (Visual Studio 2022 is gone — you uninstalled it)
+
+Do this, in order:
+
+  1. Click Launch on Visual Studio Enterprise 2026 Insiders.
+  2. If the IDE opens: Help → About = 2026 Insiders 18.x.
+     Open GssDevOpsAutomationTool.sln in THIS window.
+     Keep net10. You do not need to install again.
+  3. If Launch crashes or NETSDK1045 still appears:
+     More → Repair  (STEP 1 below). Do not Install again.
+  4. Only if Launch is missing (Install button instead of
+     Launch) do STEP 4 (fresh bootstrapper).
 
 
 --------------------------------------------------------------------------------
