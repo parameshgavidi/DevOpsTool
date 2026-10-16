@@ -1,8 +1,12 @@
 ================================================================================
 VISUAL STUDIO PROFESSIONAL 2026 — EXACT STEPS
 File: docs/fixes/VS2026-INSTALL-STEPS.txt
-Open this file in Notepad. Follow STEP 1 to STEP 9 in order.
-Run every command in Administrator Command Prompt. Not in Notepad.
+
+STOP. If devenv.exe already exists on F: but Visual Studio shows
+"Cannot find one or more components", do NOT use this file.
+Use this file instead:
+
+  docs/fixes/VS2026-NEXT-STEPS.txt
 ================================================================================
 
 HOW TO OPEN ADMINISTRATOR COMMAND PROMPT
