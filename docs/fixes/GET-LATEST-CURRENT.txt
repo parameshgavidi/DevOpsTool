@@ -28,6 +28,10 @@ That guide covers:
   If the button still creates GSSv9.3S1:
     docs/fixes/buildtab-build-file-path-trim-gssv.txt
 
+Changing "Get Latest From Repo Branch" clears the path label:
+
+    docs/fixes/buildtab-clear-path-on-branch-change.txt
+
 
 WHAT TO DO (summary)
 --------------------
@@ -48,7 +52,11 @@ WHAT TO DO (summary)
                          → log path + open Explorer
                          → see docs/fixes/buildtab-build-file-path.txt
 
-4. Click Build       → build only. NO git. NO GetLatestFromRepoAsync.
+4. Change Get Latest From Repo Branch → hide/clear the build file path label
+                         → click Build file path again for the new branch
+                         → see docs/fixes/buildtab-clear-path-on-branch-change.txt
+
+5. Click Build       → build only. NO git. NO GetLatestFromRepoAsync.
 
 DB ROLLUP From/To:
   Dropdowns = git branches:
@@ -110,7 +118,8 @@ Short version:
         <label>Get Latest From Repo Branch</label>
         <div class="config-row">
             <select class="form-control"
-                    @bind="RepoFromBranch"
+                    value="@RepoFromBranch"
+                    @onchange="OnRepoFromBranchChanged"
                     disabled="@(RepoBranchOptions.Count == 0)">
                 @if (RepoBranchOptions.Count == 0)
                 {
@@ -156,6 +165,11 @@ Short version:
 
 Build file path method + click handler:
   docs/fixes/buildtab-build-file-path.txt
+
+Dropdown change clears the build file path label (do not keep @bind):
+  docs/fixes/buildtab-clear-path-on-branch-change.txt
+  RZ10008 ("onchange is used two or more times") = you still have
+  @bind="RepoFromBranch" next to @onchange. DELETE the @bind line.
 
 
 --------------------------------------------------------------------------------
@@ -285,6 +299,8 @@ Paste FULL methods from:
   - CHANGE 4 = SplitBranchTokens / NormalizeBranchName (reuse if From Branch has them)
   - CHANGE 5 = OnAfterRenderAsync auto-load
   - CHANGE 6 = GetLatestAndShowAppsAsync (checkout RepoFromBranch, then per-app)
+  - CHANGE 7 = OnRepoFromBranchChanged (clear ResolvedBuildFilePath)
+               docs/fixes/buildtab-clear-path-on-branch-change.txt
 
 
 --------------------------------------------------------------------------------
@@ -323,6 +339,7 @@ J) Checklist
 [ ] Follow docs/fixes/buildtab-get-latest-from-repo-branch.txt in order
 [ ] Dropdown loads like From Branch (git branch -r, GSS filter, strip origin/)
 [ ] Default = latest branch (no appsettings variable)
+[ ] Dropdown change → OnRepoFromBranchChanged clears ResolvedBuildFilePath
 [ ] Get latest checkouts selected branch then loops GetLatestFromRepoAsync
 [ ] GetLatestFromRepoAsync uses app.GitLatestCommand — NOT hardcoded pull
 [ ] Grid uses BuildApps and @if (_showApplications)
