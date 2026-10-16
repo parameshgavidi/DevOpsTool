@@ -1,6 +1,9 @@
 ================================================================================
 FOLLOW THIS FILE — Visual Studio Professional 2026
 docs/fixes/vs2026-install-failed.txt
+
+Copy-paste steps only (same fix, shorter):
+  docs/fixes/VS2026-INSTALL-STEPS.txt
 ================================================================================
 Do the steps IN ORDER in a BLACK Administrator Command Prompt.
 Stop when Help → About shows Visual Studio Professional 2026 with

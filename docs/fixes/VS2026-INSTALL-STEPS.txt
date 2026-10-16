@@ -1,0 +1,248 @@
+================================================================================
+VISUAL STUDIO PROFESSIONAL 2026 — EXACT STEPS
+File: docs/fixes/VS2026-INSTALL-STEPS.txt
+Open this file in Notepad. Follow STEP 1 to STEP 9 in order.
+Run every command in Administrator Command Prompt. Not in Notepad.
+================================================================================
+
+HOW TO OPEN ADMINISTRATOR COMMAND PROMPT
+1. Close Visual Studio Installer. Close the error popup.
+2. Close every Visual Studio window.
+3. Start → type: cmd
+4. Right-click Command Prompt → Run as administrator
+5. Click Yes
+
+
+WHAT FAILED
+- VS 2026 installed to C:\Program Files\Microsoft Visual Studio\18\Professional
+- C: had only 22–28 GB free. Product needed 18.55 GB.
+- Install reached 99% (Optimizing assemblies), then vsfinalizer.exe
+  returned 1 (Incorrect function).
+- F: has 91 GB free. Install on F:.
+- Keep Visual Studio 2019. Keep Crystal Reports.
+- Do not click Repair / Modify / Launch on the 2026 warning card.
+
+
+================================================================================
+STEP 1 — pause SentinelOne
+================================================================================
+1. Start → type: Sentinel
+2. Open Sentinel Agent / SentinelOne
+3. Pause protection for 4 hours if the screen allows it
+4. If you cannot pause it, continue. If STEP 7 fails at vsfinalizer
+   again, Sentinel must be paused, then start over from STEP 2.
+
+
+================================================================================
+STEP 2 — remove ONLY Visual Studio 2026 (keeps VS 2019)
+================================================================================
+Paste this block. Press Enter. Wait until the prompt comes back.
+Never run InstallCleanup.exe without  -i 18
+
+  taskkill /IM setup.exe /F >nul 2>&1
+  taskkill /IM vs_installer.exe /F >nul 2>&1
+  taskkill /IM vs_installershell.exe /F >nul 2>&1
+  taskkill /IM devenv.exe /F >nul 2>&1
+  "C:\Program Files (x86)\Microsoft Visual Studio\Installer\InstallCleanup.exe" -i 18
+
+If it says the file is missing:
+  1. Run  %USERPROFILE%\Downloads\vs_Professional.exe  as Administrator
+  2. Wait until the workload screen appears
+  3. Close that window. Do not click Install
+  4. Run the InstallCleanup line again
+
+
+================================================================================
+STEP 3 — delete leftover 2026 files on C:
+================================================================================
+Paste this block. Press Enter.
+"File not found" is OK.
+
+  rmdir /s /q "C:\Program Files\Microsoft Visual Studio\18"
+  rmdir /s /q "C:\Program Files (x86)\Microsoft Visual Studio\Installer.old"
+  rmdir /s /q "C:\ProgramData\Microsoft\VisualStudio\Packages\_Instances\c0551210"
+
+If a file is in use: reboot, open Administrator cmd, run this block again.
+
+
+================================================================================
+STEP 4 — free C: and create F: folders
+================================================================================
+Paste this block. Press Enter.
+
+  cleanmgr /d C
+  mkdir "F:\Program Files\Microsoft Visual Studio\18"
+  mkdir "F:\VS2026\Packages"
+  mkdir "F:\VS2026\Temp"
+  wmic logicaldisk get caption,freespace,size
+
+In Disk Cleanup:
+  Tick Recycle Bin, Temporary files, Delivery Optimization, Thumbnails
+  Click Clean up system files if you see it
+  Click OK. Wait until it finishes
+
+Free space is BYTES.
+  C: must be at least  30000000000   (30 GB)
+  F: must be at least  40000000000   (40 GB)
+
+If C: is still under 30 GB:
+  1. Empty Recycle Bin
+  2. Delete old files in Downloads except the new vs_professional.exe
+  3. Run:  cleanmgr /d C
+  4. Run:  wmic logicaldisk get caption,freespace,size
+  5. Do not go to STEP 7 until C: is over 30 GB
+
+
+================================================================================
+STEP 5 — point the VS download cache at F:
+================================================================================
+Paste this block. Press Enter.
+
+  mkdir "F:\VS2026\Packages"
+  icacls "F:\VS2026\Packages" /grant SYSTEM:(OI)(CI)F /grant Administrators:(OI)(CI)F
+  reg add "HKLM\SOFTWARE\Policies\Microsoft\VisualStudio\Setup" /v CachePath /t REG_SZ /d "F:\VS2026\Packages" /f
+  reg query "HKLM\SOFTWARE\Policies\Microsoft\VisualStudio\Setup" /v CachePath
+
+The last line MUST show:
+  CachePath    REG_SZ    F:\VS2026\Packages
+
+If it does not, run the reg add line again.
+
+
+================================================================================
+STEP 6 — reboot, then download a NEW installer
+================================================================================
+1. Reboot the machine now
+2. After reboot, pause SentinelOne again (same as STEP 1)
+3. Open Administrator Command Prompt again
+4. Delete the old bootstrapper:
+
+     del /q "%USERPROFILE%\Downloads\vs_Professional.exe"
+     del /q "%USERPROFILE%\Downloads\vs_professional.exe"
+
+5. Download a NEW file in Edge/Chrome:
+
+     https://aka.ms/vs/18/stable/vs_professional.exe
+
+   Official page: https://visualstudio.microsoft.com/downloads/
+   Visual Studio Professional 2026 → Download
+
+6. Save it to Downloads. Do not run it yet.
+   If the file is named vs_professional (1).exe, rename it to
+   vs_professional.exe
+
+
+================================================================================
+STEP 7 — install Visual Studio 2026 ON F: (do not use the GUI)
+================================================================================
+Paste this whole block in Administrator Command Prompt. Press Enter.
+
+  set TEMP=F:\VS2026\Temp
+  set TMP=F:\VS2026\Temp
+  mkdir F:\VS2026\Temp
+  cd /d %USERPROFILE%\Downloads
+
+  vs_professional.exe --wait --passive --norestart --nocache ^
+    --installPath "F:\Program Files\Microsoft Visual Studio\18\Professional" ^
+    --path cache="F:\VS2026\Packages" ^
+    --add Microsoft.VisualStudio.Workload.NetWeb;includeRecommended ^
+    --add Microsoft.VisualStudio.Workload.NetCrossPlat;includeRecommended ^
+    --add Microsoft.VisualStudio.Workload.ManagedDesktop;includeRecommended
+
+Leave it until the cmd prompt returns. This can take 30–90 minutes.
+Do not click Cancel.
+
+When the prompt returns, paste:
+
+  echo EXIT=%ERRORLEVEL%
+
+Need:
+  EXIT=0     success → go to STEP 8
+  EXIT=3010  success, reboot required → reboot, then STEP 8
+
+If the window closes in under 1 minute and the text mentions cache or
+path, run STEP 7 again but DELETE this one line:
+
+  --path cache="F:\VS2026\Packages" ^
+
+Keep --installPath on F: and keep --nocache.
+
+Any other EXIT number = failed. Go to STEP 10. Do not click Repair.
+
+
+================================================================================
+STEP 8 — confirm it is on F:, not C:
+================================================================================
+Paste this block. Press Enter.
+
+  dir "F:\Program Files\Microsoft Visual Studio\18\Professional\Common7\IDE\devenv.com"
+  dir "F:\Program Files\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe"
+  dir "C:\Program Files\Microsoft Visual Studio\18\Professional\Common7\IDE\devenv.com"
+  dotnet --list-sdks
+
+MUST be true:
+  [ ] F: devenv.com exists
+  [ ] F: MSBuild.exe exists
+  [ ] C: devenv.com is NOT found
+  [ ] dotnet --list-sdks shows a 10.0.x line
+
+Then launch:
+
+  "F:\Program Files\Microsoft Visual Studio\18\Professional\Common7\IDE\devenv.exe"
+
+Help → About Visual Studio must say:
+  Visual Studio Professional 2026
+with NO yellow "Setup completed with warnings".
+
+
+================================================================================
+STEP 9 — after it works
+================================================================================
+1. Turn SentinelOne protection back ON
+2. In VS 2026: sign in with the Visual Studio subscription
+3. Extensions → Manage Extensions → search:
+     Microsoft Visual Studio Installer Projects
+   Install it on THIS 2026 instance
+4. Close VS
+5. Start menu → Developer Command Prompt for VS 2026
+
+     dotnet workload list
+
+   If maui-windows is missing:
+
+     dotnet workload install maui-windows
+
+This repo should use these paths:
+
+  F:\Program Files\Microsoft Visual Studio\18\Professional\Common7\IDE\devenv.com
+  F:\Program Files\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe
+
+
+================================================================================
+STEP 10 — only if STEP 7 failed
+================================================================================
+Paste this. Copy ALL of the output and send it.
+Do not send the OK popup.
+
+  powershell -NoProfile -Command "Get-ChildItem $env:TEMP\dd_setup*.log,$env:TEMP\dd_installer*.log,F:\VS2026\Temp\dd_setup*.log,F:\VS2026\Temp\dd_installer*.log -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 4 | ForEach-Object { Write-Host '====' $_.FullName; Select-String -Path $_.FullName -Pattern 'Error|Failed|Exception|vsfinalizer|Incorrect function' | Select-Object -Last 50 }"
+  wmic logicaldisk get caption,freespace,size
+  dir "C:\Program Files\Microsoft Visual Studio"
+  dir "F:\Program Files\Microsoft Visual Studio"
+
+
+================================================================================
+DO NOT
+================================================================================
+- Click Modify / Repair / Launch on the warning 2026 card
+- Leave Location as C:\Program Files\Microsoft Visual Studio\18\Professional
+- Run InstallCleanup.exe with no  -i 18
+- Run InstallCleanup.exe -f
+- Uninstall Visual Studio 2019
+- Uninstall Crystal Reports
+- Paste these blocks into Notepad and expect them to run
+- Use the old vs_Professional.exe from 16 Oct 2:03 AM
+
+
+================================================================================
+END
+================================================================================
