@@ -1,0 +1,351 @@
+================================================================================
+FOLLOW THIS FILE — install Visual Studio Professional 2026
+docs/fixes/vs2026-install-failed.txt
+================================================================================
+Open this file in Notepad. Do the steps IN ORDER. Stop when VS 2026 Launch
+works with no warning banner.
+
+Run every command in a BLACK Command Prompt window started as Administrator.
+Do NOT paste commands into this Notepad file and expect them to run.
+
+
+--------------------------------------------------------------------------------
+YOUR CURRENT ERROR (from the screenshots)
+--------------------------------------------------------------------------------
+Visual Studio Installer → Installed:
+
+  Visual Studio Professional 2019     16.11.60     (leave this alone)
+  Visual Studio Professional 2026     18.11.0
+      October 2026 Feature Update
+      Setup completed with warnings     ← broken / partial install
+
+Popup:
+
+  Sorry, something went wrong
+  The install operation failed.
+
+Modify / Launch keep failing. Resetting the Installer folder (Step 2)
+does NOT fix this. The 2026 product instance is still corrupt.
+
+
+--------------------------------------------------------------------------------
+TWO DIFFERENT FOLDERS — do not mix them
+--------------------------------------------------------------------------------
+VS 2019 (32-bit path, LEAVE THIS):
+
+  F:\Program Files (x86)\Microsoft Visual Studio\2019
+
+VS 2026 (64-bit path, THIS is the broken one):
+
+  F:\Program Files\Microsoft Visual Studio\18\Professional
+
+Installer engine (always on C:):
+
+  C:\Program Files (x86)\Microsoft Visual Studio\Installer\InstallCleanup.exe
+
+If File Explorer is in "Program Files (x86)" and you only see a 2019
+folder, you are looking at VS 2019. Type this in the Explorer address
+bar instead:
+
+  F:\Program Files\Microsoft Visual Studio
+
+
+--------------------------------------------------------------------------------
+HOW TO OPEN ADMINISTRATOR COMMAND PROMPT
+--------------------------------------------------------------------------------
+1. Close Visual Studio Installer. Click OK on the error first.
+2. Close every Visual Studio / devenv window.
+3. Windows Start → type:  cmd
+4. Right-click "Command Prompt" → Run as administrator
+5. Click Yes on UAC.
+6. Paste ONE block at a time. Press Enter.
+
+
+--------------------------------------------------------------------------------
+STEP 0 — print disk space and confirm paths
+--------------------------------------------------------------------------------
+Paste this whole block into Administrator cmd, press Enter:
+
+  wmic logicaldisk get caption,freespace
+  echo ----- installer -----
+  dir "C:\Program Files (x86)\Microsoft Visual Studio\Installer\InstallCleanup.exe"
+  echo ----- VS2026 on F: Program Files -----
+  dir "F:\Program Files\Microsoft Visual Studio"
+  dir "F:\Program Files\Microsoft Visual Studio\18\Professional"
+  echo ----- VS2019 (leave this) -----
+  dir "F:\Program Files (x86)\Microsoft Visual Studio"
+
+READ the numbers:
+
+  Free space is in BYTES. 20 GB = 20000000000
+  C: needs ~20 GB free even if VS 2026 lives on F:
+     (shared components, package cache, %TEMP%).
+  F: needs ~15 GB free for the IDE at
+     F:\Program Files\Microsoft Visual Studio\18\Professional
+
+If C: is low: Disk Cleanup on C:, empty Recycle Bin, reboot.
+
+If dir says "File Not Found" for InstallCleanup.exe, that is OK.
+You will recreate it in STEP 3.
+
+If dir shows F:\...\18\Professional, the broken files are still there.
+That is expected. Keep going.
+
+
+--------------------------------------------------------------------------------
+STEP 1 — Repair from the installer (try once)
+--------------------------------------------------------------------------------
+Only if the installer still opens.
+
+1. Start menu → Visual Studio Installer.
+   If it asks to update itself, let it. Then close the error popup (OK).
+2. Visual Studio Professional 2026 card → More → Repair.
+3. Wait until it finishes. Do not cancel.
+4. Click Launch.
+
+If Repair is missing, or the same popup comes back, skip to STEP 3.
+Do not click Modify again. Modify cannot fix this instance.
+
+
+--------------------------------------------------------------------------------
+STEP 2 — reset the Visual Studio Installer (already tried)
+--------------------------------------------------------------------------------
+You already did this. It rebuilds the Installer app only. It does NOT
+remove the broken 18.11.0 instance. That is why the same popup returned.
+
+Skip this step unless you never did it. If you still want to redo it:
+
+1. Close Visual Studio Installer.
+2. Download a FRESH bootstrapper (do not reuse an old copy):
+
+     https://aka.ms/vs/18/Stable/vs_professional.exe
+
+   Official page: https://visualstudio.microsoft.com/downloads/
+
+3. Rename this folder (do not delete VS 2019):
+
+     C:\Program Files (x86)\Microsoft Visual Studio\Installer
+   to:
+     C:\Program Files (x86)\Microsoft Visual Studio\Installer.old
+
+4. Right-click vs_professional.exe → Run as administrator.
+5. Try Repair / Launch on VS 2026.
+
+If the popup is still there, go to STEP 3.
+
+
+--------------------------------------------------------------------------------
+STEP 3 — remove ONLY Visual Studio 2026 (version 18)
+--------------------------------------------------------------------------------
+THIS is the step that actually clears the broken install.
+
+MUST include  -i 18
+That keeps Visual Studio 2019.
+
+1. Close Visual Studio Installer.
+2. Administrator Command Prompt. Paste:
+
+  cd /d %TEMP%
+  "C:\Program Files (x86)\Microsoft Visual Studio\Installer\InstallCleanup.exe" -i 18
+
+3. Wait until the prompt comes back (can take several minutes).
+4. REBOOT the machine.
+
+If InstallCleanup.exe is missing:
+
+  a) Run vs_professional.exe as Administrator.
+  b) Wait until the workload screen appears.
+  c) Close that window. Do not install yet.
+  d) Run the InstallCleanup command above.
+  e) Reboot.
+
+
+--------------------------------------------------------------------------------
+STEP 4 — confirm VS 2026 is gone
+--------------------------------------------------------------------------------
+After reboot, open Visual Studio Installer.
+
+MUST be true:
+  [ ] Visual Studio Professional 2026 is NOT on the Installed tab
+  [ ] Visual Studio Professional 2019 is still listed
+
+If 2026 is still listed, or Explorer still has the 18 folder,
+Administrator cmd:
+
+  rmdir /s /q "F:\Program Files\Microsoft Visual Studio\18"
+
+If the installer STILL shows 2026 after that, also run:
+
+  rmdir /s /q "%ProgramData%\Microsoft\VisualStudio\Packages\_Instances"
+
+VS 2019 recreates its own instance entry the next time the installer
+starts. Do not delete the 2019 folder under Program Files (x86).
+
+
+--------------------------------------------------------------------------------
+STEP 5 — install Visual Studio 2026 clean
+--------------------------------------------------------------------------------
+1. Download again (new file):
+
+     https://aka.ms/vs/18/Stable/vs_professional.exe
+
+2. Right-click vs_professional.exe → Run as administrator.
+   Click Yes on UAC. Click Continue on the license.
+
+3. Choose: Manually choose workloads
+   (do NOT migrate from the old 18.11 instance)
+
+4. Installation location (Installation locations tab):
+
+     F:\Program Files\Microsoft Visual Studio\18\Professional
+
+   You can pick the drive only on a NEW install.
+
+5. Workloads tab — check ALL of these:
+
+     [x] ASP.NET and web development
+     [x] .NET Multi-platform App UI development
+     [x] .NET desktop development
+
+6. Individual components tab — check:
+
+     [x] .NET 10 SDK
+     [x] Windows 10 SDK (10.0.19041.0) or newer
+     [x] .NET Framework 4.8 targeting pack
+     [x] .NET Framework 4.8 SDK
+
+7. Click Install. Wait until it finishes. Do not close the window.
+
+8. Click Launch. Help → About must say
+   Visual Studio Professional 2026  /  18.x
+   with NO "Setup completed with warnings".
+
+
+--------------------------------------------------------------------------------
+STEP 6 — if the GUI still pops "install operation failed"
+--------------------------------------------------------------------------------
+Do not use Modify. Install from Administrator cmd.
+
+cd /d %USERPROFILE%\Downloads
+
+vs_professional.exe --wait --passive --norestart ^
+  --installPath "F:\Program Files\Microsoft Visual Studio\18\Professional" ^
+  --add Microsoft.VisualStudio.Workload.NetWeb;includeRecommended ^
+  --add Microsoft.VisualStudio.Workload.NetCrossPlat;includeRecommended ^
+  --add Microsoft.VisualStudio.Workload.ManagedDesktop;includeRecommended ^
+  --add Microsoft.VisualStudio.Component.Windows10SDK.19041
+
+Wait until the prompt returns. Then run STEP 7.
+
+
+--------------------------------------------------------------------------------
+STEP 7 — prove it installed
+--------------------------------------------------------------------------------
+Administrator cmd:
+
+  dir "F:\Program Files\Microsoft Visual Studio\18\Professional\Common7\IDE\devenv.com"
+  dir "F:\Program Files\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe"
+  dotnet --list-sdks
+
+Need ALL of:
+  [ ] devenv.com exists
+  [ ] MSBuild.exe exists
+  [ ] dotnet --list-sdks shows a 10.0.x SDK
+
+This DevOps tool's devenv / MSBuild paths are:
+
+  F:\Program Files\Microsoft Visual Studio\18\Professional\Common7\IDE\devenv.com
+  F:\Program Files\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe
+
+
+--------------------------------------------------------------------------------
+STEP 8 — one-time after a good install
+--------------------------------------------------------------------------------
+1. Launch VS 2026. Sign in with the Visual Studio subscription.
+2. Extensions → Manage Extensions → Visual Studio Marketplace.
+   Search:  Microsoft Visual Studio Installer Projects
+   Install it on THIS VS 2026 instance (needed for .vdproj / MSI).
+3. Close all VS windows.
+4. Developer Command Prompt for VS 2026:
+
+     dotnet workload list
+
+   If maui-windows is missing:
+
+     dotnet workload install maui-windows
+
+
+--------------------------------------------------------------------------------
+IF IT STILL FAILS — dump the real error
+--------------------------------------------------------------------------------
+The OK popup is useless. Get the log.
+
+Click View problems on the VS 2026 card (if it is still listed).
+Screenshot that page.
+
+Then Administrator cmd:
+
+  powershell -NoProfile -Command "Get-ChildItem $env:TEMP\dd_setup*.log, $env:TEMP\dd_installer*.log | Sort-Object LastWriteTime -Descending | Select-Object -First 3 | ForEach-Object { Write-Host '====' $_.FullName; Select-String -Path $_.FullName -Pattern 'Error|Failed|Exception' | Select-Object -Last 40 }"
+
+Paste that output. The first Error / Failed line is the package that
+actually broke setup.
+
+
+--------------------------------------------------------------------------------
+OTHER CHECKS (only if STEP 3 + STEP 5 still fail)
+--------------------------------------------------------------------------------
+1. Install with a local Administrator account, not a standard user.
+2. Pause antivirus / endpoint protection, reboot, retry STEP 5.
+3. services.msc → Windows Management Instrumentation → Restart.
+4. Machine must reach:
+     aka.ms
+     download.visualstudio.microsoft.com
+     marketplace.visualstudio.com
+5. Microsoft installer chat:
+     https://learn.microsoft.com/en-us/visualstudio/install/troubleshooting-installation-issues
+
+
+--------------------------------------------------------------------------------
+DO NOT
+--------------------------------------------------------------------------------
+- Click Modify / Launch again on a card that says
+  "Setup completed with warnings"
+- Run InstallCleanup.exe with NO  -i 18
+  (that can also strip VS 2019)
+- Delete  F:\Program Files (x86)\Microsoft Visual Studio\2019
+- Paste cmd blocks into Notepad and expect them to run
+- Look in Program Files (x86) for the VS 2026 18 folder
+- Use an old vs_professional.exe from Downloads
+- Run InstallCleanup.exe -f  unless you intend to wipe shared VS bits
+
+
+--------------------------------------------------------------------------------
+FALLBACK — cannot get VS 2026 working
+--------------------------------------------------------------------------------
+This repo can run on VS 2022 + .NET 8 instead:
+
+  docs/fixes/vs2022-retarget-gssdevops-from-net10.txt
+
+Use that file only after STEP 3 + STEP 5 + STEP 6 have failed.
+
+
+--------------------------------------------------------------------------------
+CHECKLIST
+--------------------------------------------------------------------------------
+[ ] Commands run in Administrator Command Prompt, not Notepad
+[ ] Looked in F:\Program Files\...18\  (not Program Files x86)
+[ ] C: has ~20 GB free, F: has ~15 GB free
+[ ] InstallCleanup.exe -i 18  completed, then reboot
+[ ] VS 2026 gone from Installed tab; VS 2019 still there
+[ ] Fresh vs_professional.exe as Administrator
+[ ] Workloads: ASP.NET + MAUI + .NET desktop
+[ ] Install path = F:\Program Files\Microsoft Visual Studio\18\Professional
+[ ] devenv.com and MSBuild.exe exist under that path
+[ ] dotnet --list-sdks shows 10.0.x
+[ ] Launch works, no "Setup completed with warnings"
+[ ] Installer Projects extension installed on this VS 2026
+
+
+================================================================================
+END
+================================================================================
