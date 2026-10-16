@@ -1,0 +1,237 @@
+================================================================================
+FOLLOW THIS FILE — VS 2026 Insiders installer error (not a project error)
+docs/fixes/vs2026-insiders-installer-1612-uninstall.txt
+================================================================================
+This is a Visual Studio Installer / uninstall failure.
+It is NOT NETSDK1045. It is NOT GssDevOpsAutomationTool.csproj.
+
+You already have Visual Studio Enterprise 2022 (17.14.11).
+Use that for the DevOps tool. You do not need VS 2026 working
+to continue:
+
+  docs/fixes/vs2022-retarget-gssdevops-from-net10.txt
+
+
+--------------------------------------------------------------------------------
+YOUR CURRENT ERRORS (from the screenshots)
+--------------------------------------------------------------------------------
+Visual Studio Installer dialog:
+
+  Sorry, something went wrong
+    Couldn't uninstall Microsoft.Build.FileTracker.Msi
+    Couldn't process Microsoft.VisualStudio.CopilotLogViewerExtension
+    Couldn't process Microsoft.VisualStudio.Product.Enterprise
+
+Installed list:
+
+  Visual Studio Professional 2019          16.11.50
+  Visual Studio Enterprise 2026 Insiders   Insiders 11224.32.331
+      Setup completed with warnings
+  Visual Studio Enterprise 2022            17.14.11 (September 2026)
+      Setup completed with warnings
+
+Plain-text log:
+
+  Package 'Microsoft.Build.FileTracker.Msi,version=18.9.119151.23'
+    failed to uninstall.
+    PackageAction: Uninstall
+    ReturnCode: 1612
+    Details: The installation source for this product is not available.
+             Verify that the source exists and that you can access it.
+
+  ExtensibilityFinalizer failed to execute.
+    Package: Microsoft.VisualStudio.CopilotLogViewerExtension
+    ReturnCode: -532462766   (0xE0434352 = .NET CLR crash)
+    Command mixed TWO drives:
+      C:\Program Files\Microsoft Visual Studio\18\Enterprise\...\Finalizer.exe
+      F:\Program Files\Microsoft Visual Studio\18\Enterprise\...\CopilotLogViewer
+
+  Product finalizer failed to execute.
+    Package: Microsoft.VisualStudio.Product.Enterprise
+    ReturnCode: 1
+    Details: Incorrect function.
+
+
+--------------------------------------------------------------------------------
+WHAT THE ISSUE IS
+--------------------------------------------------------------------------------
+VS 2026 Insiders (product version 18) is a BROKEN / half-uninstalled
+instance. Three failures stacked:
+
+1) FileTracker MSI 1612  (the real blocker)
+   Windows Installer must re-open the original .msi to uninstall.
+   That cached source is gone (cleaned cache, moved folder, or the
+   package was installed from a path that no longer exists).
+   Return 1612 = ERROR_INSTALL_SOURCE_ABSENT.
+   Until this MSI is removed or repaired, the VS 2026 modify /
+   uninstall cannot finish.
+
+2) Copilot Log Viewer finalizer crash  (0xE0434352)
+   The installer asked Extensibility.Finalizer.exe to uninstall
+   CopilotLogViewer. That process crashed.
+   The command line shows the install is SPLIT across drives:
+     Finalizer.exe  = C:\Program Files\Microsoft Visual Studio\18\...
+     Extension      = F:\Program Files\Microsoft Visual Studio\18\...
+   That split C: / F: layout is leftover from the older VS 18
+   Professional-on-F: install. The Insiders instance is not a
+   clean single-folder install.
+
+3) Product.Enterprise finalize  (Incorrect function)
+   This is a CASCADE. vs_finalizer.exe runs after the two
+   failures above. It is not a separate product bug.
+
+None of this is caused by GssDevOpsAutomationTool targeting
+.net10 / net8.
+
+
+--------------------------------------------------------------------------------
+WHAT TO DO (pick one path)
+--------------------------------------------------------------------------------
+PATH A — keep working (recommended)
+  Ignore VS 2026. Close the dialog. Launch Visual Studio 2022.
+  Continue the net8 retarget.
+
+PATH B — clean up VS 2026 so the red warning goes away
+  Repair or force-remove the Insiders instance only.
+  Do NOT run InstallCleanup.exe -f  (that can damage VS 2022
+  and VS 2019).
+
+
+--------------------------------------------------------------------------------
+PATH A — use VS 2022 now (no VS 2026 fix required)
+--------------------------------------------------------------------------------
+1. In the installer dialog click Close.
+2. On Visual Studio Enterprise 2022 click Launch
+   (or Start menu → Visual Studio 2022).
+3. Open GssDevOpsAutomationTool.sln.
+4. Follow:
+     docs/fixes/vs2022-retarget-gssdevops-from-net10.txt
+
+VS 2022 also says "Setup completed with warnings". That is OK
+as long as Launch works and you can open a new Console / MAUI
+project. Do not Repair VS 2022 unless it fails to start.
+
+
+--------------------------------------------------------------------------------
+PATH B — clean VS 2026 Insiders (optional)
+--------------------------------------------------------------------------------
+Close ALL Visual Studio windows and the installer first.
+
+
+STEP B1 — Repair VS 2026 (restores the missing MSI cache)
+
+1. Open Visual Studio Installer as Administrator
+   (right-click → Run as administrator).
+2. Visual Studio Enterprise 2026 Insiders → More → Repair.
+3. Wait. If Repair succeeds, then More → Uninstall.
+
+If Repair fails with the same 1612 / FileTracker error,
+go to STEP B2. Do not keep clicking Uninstall.
+
+
+STEP B2 — remove the stuck FileTracker MSI (1612)
+
+Windows cannot uninstall Microsoft.Build.FileTracker.Msi
+because the cached .msi is missing.
+
+Use Microsoft's Program Install and Uninstall troubleshooter:
+
+  https://support.microsoft.com/en-us/topic/
+  fix-problems-that-block-programs-from-being-installed-or-removed
+  -cca7d1b6-65a9-3d98-426b-e9f927e1eb4d
+
+Or search Microsoft for:  "Program Install and Uninstall troubleshooter"
+
+Run it:
+  1. Uninstalling
+  2. Find Microsoft.Build.FileTracker.Msi  (or "FileTracker")
+  3. Yes, try to uninstall
+
+ProductCode from your log (if the list does not show a name):
+
+  {2B48BBFA-3D0EA-45225-AEBB-37F25940F016}
+
+After the troubleshooter, reopen Visual Studio Installer
+and try Uninstall on VS 2026 Insiders again.
+
+
+STEP B3 — if CopilotLogViewer is still listed
+
+The finalizer crashed because the extension folder is on F:
+and the IDE bits are on C:.
+
+Check which of these exist:
+
+  dir "C:\Program Files\Microsoft Visual Studio\18\Enterprise"
+  dir "F:\Program Files\Microsoft Visual Studio\18\Enterprise"
+  dir "F:\Program Files\Microsoft Visual Studio\18\Professional"
+
+If CopilotLogViewer exists only on F: and the rest is on C:,
+you can rename (do not delete yet) the leftover F: extension:
+
+  F:\Program Files\Microsoft Visual Studio\18\Enterprise\Common7\IDE\Extensions\Microsoft.CopilotLogViewer
+
+Then run Repair / Uninstall again from the installer.
+
+
+STEP B4 — last resort: InstallCleanup for version 18 ONLY
+
+Use this only if Repair + troubleshooter still leave VS 2026
+stuck. Run an elevated Command Prompt (Admin):
+
+  cd "C:\Program Files (x86)\Microsoft Visual Studio\Installer"
+  InstallCleanup.exe -i 18
+
+  -i 18  = remove VS 18 / 2026 products only.
+
+DO NOT run:
+
+  InstallCleanup.exe -f
+
+-f removes shared components used by VS 2022 and VS 2019.
+
+After -i 18:
+
+  1. Reopen Visual Studio Installer
+  2. VS 2026 Insiders should be gone (or offer Install)
+  3. Confirm Visual Studio Enterprise 2022 still shows Launch
+  4. Launch VS 2022 and open a simple project as a smoke test
+
+
+--------------------------------------------------------------------------------
+IF YOU WANT TO INSTALL / KEEP VS 2026 INSIDERS
+--------------------------------------------------------------------------------
+Use this file instead (Repair, then clean install on C: only):
+
+  docs/fixes/vs2026-insiders-enterprise-install.txt
+
+Do not uninstall after a successful Repair. Keep net10 in the
+csproj and open the tool in VS 2026, not VS 2022.
+
+
+--------------------------------------------------------------------------------
+DO NOT
+--------------------------------------------------------------------------------
+- Treat this dialog as a DevOpsTool / csproj compile error
+- Run InstallCleanup.exe -f
+- Delete C:\Windows\Installer  (that makes more 1612 errors)
+- Uninstall VS 2022 to "fix" VS 2026
+- Mix the two: keep net10 in the csproj AND work only in VS 2022
+
+
+--------------------------------------------------------------------------------
+CHECKLIST
+--------------------------------------------------------------------------------
+[ ] Understand: 1612 = missing FileTracker MSI source, not .NET 10
+[ ] Understand: CopilotLogViewer crash is C: vs F: split install
+[ ] Understand: Product.Enterprise finalize is a cascade
+[ ] PATH A: Launch VS 2022 and continue the net8 retarget
+    OR
+[ ] PATH B: Repair → troubleshoot FileTracker → Uninstall 2026
+[ ] If cleanup: InstallCleanup.exe -i 18 only, never -f
+[ ] VS 2022 still launches after any cleanup
+
+
+================================================================================
+END
+================================================================================

@@ -8,6 +8,14 @@ Do not try to "just open" the same csproj in VS 2022.
 You were on VS 2026 (Visual Studio 18) + .NET 10.
 You are now on VS 2022 (Visual Studio 17) + .NET 8 (or .NET 9).
 
+If Visual Studio Installer says "Couldn't uninstall
+Microsoft.Build.FileTracker.Msi" / return 1612 on VS 2026
+Insiders, that is NOT this csproj error. Use:
+
+  docs/fixes/vs2026-insiders-installer-1612-uninstall.txt
+
+Then come back here and retarget in VS 2022.
+
 
 --------------------------------------------------------------------------------
 YOUR CURRENT ERRORS (from the screenshot)
