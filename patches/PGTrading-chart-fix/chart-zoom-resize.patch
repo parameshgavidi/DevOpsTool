@@ -1,0 +1,490 @@
+From c0c0d4a3e916352e4bbdbb07b2d01ad2a0f4e71d Mon Sep 17 00:00:00 2001
+From: Cursor Agent <agent@cursor.com>
+Date: Tue, 28 Jul 2026 03:54:18 +0000
+Subject: [PATCH] Fix chart zoom, resize, and oversized candle rendering
+
+- Re-resolve canvas from DOM on each render to avoid stale references after Blazor re-renders
+- Add ResizeObserver so the chart redraws when the container size changes
+- Default to 80 visible bars instead of all candles to prevent giant blocks
+- Cap maximum candle body width and lower minimum zoom bar count
+- Use flat global JS functions for reliable MAUI Blazor WebView interop
+- Let canvas fill chart container via CSS instead of fixed width/height attributes
+---
+ PGOne/Components/CandlestickChart.razor | 10 ++-
+ PGOne/Components/Cpr1mChart.razor       | 10 ++-
+ PGOne/Components/Pages/Chart.razor      |  4 +-
+ PGOne/Components/Pages/Cpr1m.razor      |  4 +-
+ PGOne/Components/Pages/Dashboard.razor  |  4 +-
+ PGOne/wwwroot/css/app.css               |  8 ++-
+ PGOne/wwwroot/js/chart-cpr.js           | 92 ++++++++++++++++++-------
+ PGOne/wwwroot/js/chart.js               | 70 +++++++++++++++----
+ 8 files changed, 145 insertions(+), 57 deletions(-)
+
+diff --git a/PGOne/Components/CandlestickChart.razor b/PGOne/Components/CandlestickChart.razor
+index 1859246..2a2d25b 100644
+--- a/PGOne/Components/CandlestickChart.razor
++++ b/PGOne/Components/CandlestickChart.razor
+@@ -8,7 +8,7 @@
+         <button type="button" class="zoom-btn" title="Zoom out" @onclick="ZoomOut">−</button>
+         <button type="button" class="zoom-btn" title="Reset zoom" @onclick="ResetZoom">⟳</button>
+     </div>
+-    <canvas id="@CanvasId" width="@Width" height="@Height"></canvas>
++    <canvas id="@CanvasId" class="chart-canvas"></canvas>
+ </div>
+ 
+ @code {
+@@ -23,8 +23,6 @@
+     [Parameter] public bool ShowCamarillaLevels { get; set; } = true;
+     [Parameter] public string Timeframe { get; set; } = "5m";
+     [Parameter] public string CssClass { get; set; } = string.Empty;
+-    [Parameter] public int Width { get; set; } = 800;
+-    [Parameter] public int Height { get; set; } = 350;
+ 
+     private int _lastRenderedVersion = -1;
+     private int _lastOverlayVersion = -1;
+@@ -58,9 +56,9 @@
+         await RenderAsync();
+     }
+ 
+-    private async Task ZoomIn() => await InvokeSafe("pgOneChart.zoom", CanvasId, 1.3);
+-    private async Task ZoomOut() => await InvokeSafe("pgOneChart.zoom", CanvasId, 1 / 1.3);
+-    private async Task ResetZoom() => await InvokeSafe("pgOneChart.resetZoom", CanvasId);
++    private async Task ZoomIn() => await InvokeSafe("pgOneChartZoom", CanvasId, 1.3);
++    private async Task ZoomOut() => await InvokeSafe("pgOneChartZoom", CanvasId, 1 / 1.3);
++    private async Task ResetZoom() => await InvokeSafe("pgOneChartResetZoom", CanvasId);
+ 
+     private async Task InvokeSafe(string fn, params object[] args)
+     {
+diff --git a/PGOne/Components/Cpr1mChart.razor b/PGOne/Components/Cpr1mChart.razor
+index d43e35e..d9df2c0 100644
+--- a/PGOne/Components/Cpr1mChart.razor
++++ b/PGOne/Components/Cpr1mChart.razor
+@@ -8,7 +8,7 @@
+         <button type="button" class="zoom-btn" title="Zoom out" @onclick="ZoomOut">−</button>
+         <button type="button" class="zoom-btn" title="Reset zoom" @onclick="ResetZoom">⟳</button>
+     </div>
+-    <canvas id="@CanvasId" width="@Width" height="@Height"></canvas>
++    <canvas id="@CanvasId" class="chart-canvas"></canvas>
+ </div>
+ 
+ @code {
+@@ -17,8 +17,6 @@
+     [Parameter] public IReadOnlyList<IntradayCprSegment> Segments { get; set; } = Array.Empty<IntradayCprSegment>();
+     [Parameter] public int ChartVersion { get; set; }
+     [Parameter] public string CssClass { get; set; } = string.Empty;
+-    [Parameter] public int Width { get; set; } = 1200;
+-    [Parameter] public int Height { get; set; } = 520;
+ 
+     private int _lastRenderedVersion = -1;
+ 
+@@ -34,9 +32,9 @@
+         await RenderAsync();
+     }
+ 
+-    private async Task ZoomIn() => await InvokeSafe("pgOneCprChart.zoom", CanvasId, 1.3);
+-    private async Task ZoomOut() => await InvokeSafe("pgOneCprChart.zoom", CanvasId, 1 / 1.3);
+-    private async Task ResetZoom() => await InvokeSafe("pgOneCprChart.resetZoom", CanvasId);
++    private async Task ZoomIn() => await InvokeSafe("pgOneCprChartZoom", CanvasId, 1.3);
++    private async Task ZoomOut() => await InvokeSafe("pgOneCprChartZoom", CanvasId, 1 / 1.3);
++    private async Task ResetZoom() => await InvokeSafe("pgOneCprChartResetZoom", CanvasId);
+ 
+     private async Task InvokeSafe(string fn, params object[] args)
+     {
+diff --git a/PGOne/Components/Pages/Chart.razor b/PGOne/Components/Pages/Chart.razor
+index f3d7766..29cb419 100644
+--- a/PGOne/Components/Pages/Chart.razor
++++ b/PGOne/Components/Pages/Chart.razor
+@@ -32,9 +32,7 @@
+                           ShowPivotLevels="ViewModel.ShowPivotOverlay"
+                           ShowCamarillaLevels="ViewModel.ShowCamarillaOverlay"
+                           Timeframe="ViewModel.SelectedTimeframe"
+-                          CssClass="large"
+-                          Width="1200"
+-                          Height="520" />
++                          CssClass="large" />
+         <div class="chart-toolbar">
+             <div class="timeframe-buttons">
+                 @foreach (var tf in new[] { "1m", "5m", "15m", "1H", "1D" })
+diff --git a/PGOne/Components/Pages/Cpr1m.razor b/PGOne/Components/Pages/Cpr1m.razor
+index ae29b3f..951c4ec 100644
+--- a/PGOne/Components/Pages/Cpr1m.razor
++++ b/PGOne/Components/Pages/Cpr1m.razor
+@@ -23,9 +23,7 @@
+                     Candles="ViewModel.ChartCandles"
+                     Segments="ViewModel.CprSegments"
+                     ChartVersion="ViewModel.ChartVersion"
+-                    CssClass="large"
+-                    Width="1200"
+-                    Height="520" />
++                    CssClass="large" />
+ 
+         <div class="chart-toolbar">
+             <div class="cpr-levels-strip">
+diff --git a/PGOne/Components/Pages/Dashboard.razor b/PGOne/Components/Pages/Dashboard.razor
+index d2af332..9f7cf61 100644
+--- a/PGOne/Components/Pages/Dashboard.razor
++++ b/PGOne/Components/Pages/Dashboard.razor
+@@ -96,9 +96,7 @@
+                                       ShowPocLevels="ViewModel.ShowPocOverlay"
+                                       ShowPivotLevels="ViewModel.ShowPivotOverlay"
+                                       ShowCamarillaLevels="ViewModel.ShowCamarillaOverlay"
+-                                      Timeframe="ViewModel.SelectedTimeframe"
+-                                      Width="900"
+-                                      Height="420" />
++                                      Timeframe="ViewModel.SelectedTimeframe" />
+                     <div class="chart-toolbar">
+                         <div class="timeframe-buttons">
+                         @foreach (var tf in new[] { "1m", "5m", "15m", "1H" })
+diff --git a/PGOne/wwwroot/css/app.css b/PGOne/wwwroot/css/app.css
+index 36dc722..b82f29c 100644
+--- a/PGOne/wwwroot/css/app.css
++++ b/PGOne/wwwroot/css/app.css
+@@ -563,7 +563,13 @@ html, body {
+ 
+ .chart-area.large { height: 540px; }
+ 
+-.chart-area canvas { display: block; cursor: crosshair; }
++.chart-area canvas,
++.chart-area .chart-canvas {
++    display: block;
++    width: 100%;
++    height: 100%;
++    cursor: crosshair;
++}
+ 
+ .chart-zoom-controls {
+     position: absolute;
+diff --git a/PGOne/wwwroot/js/chart-cpr.js b/PGOne/wwwroot/js/chart-cpr.js
+index cb4cf99..d2cfcc6 100644
+--- a/PGOne/wwwroot/js/chart-cpr.js
++++ b/PGOne/wwwroot/js/chart-cpr.js
+@@ -1,27 +1,38 @@
+ // 1-minute chart with intraday CPR bands (15m pivot refresh) and above/below CPR background.
+ window.pgOneCprChart = (function () {
+     const states = {};
++    const resizeObservers = {};
++    const DEFAULT_VISIBLE_BARS = 120;
++    const MIN_VISIBLE_BARS = 10;
++    const MAX_CANDLE_WIDTH = 16;
+ 
+     function num(v) { return v == null ? null : Number(v); }
+ 
+     function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+ 
+-    function parseTime(value) {
+-        if (!value) return null;
+-        var t = new Date(value);
+-        return Number.isNaN(t.getTime()) ? null : t;
++    function minVisibleBars(total) {
++        return Math.min(MIN_VISIBLE_BARS, total);
+     }
+ 
+-    function findSegment(segments, time) {
+-        if (!segments || !time) return null;
+-        for (var i = 0; i < segments.length; i++) {
+-            var s = segments[i];
+-            var start = parseTime(s.start);
+-            var end = parseTime(s.end);
+-            if (!start || !end) continue;
+-            if (time >= start && time < end) return s;
+-        }
+-        return segments.length ? segments[segments.length - 1] : null;
++    function defaultVisibleBars(total) {
++        return Math.min(DEFAULT_VISIBLE_BARS, total);
++    }
++
++    function getCanvas(id) {
++        return document.getElementById(id);
++    }
++
++    function ensureResizeObserver(id) {
++        if (resizeObservers[id]) return;
++        const canvas = getCanvas(id);
++        const container = canvas && canvas.parentElement;
++        if (!container) return;
++
++        const ro = new ResizeObserver(function () {
++            render(id);
++        });
++        ro.observe(container);
++        resizeObservers[id] = ro;
+     }
+ 
+     function ensureInteractions(canvas, id) {
+@@ -43,7 +54,9 @@ window.pgOneCprChart = (function () {
+             if (!dragging) return;
+             var st = states[id];
+             if (!st) return;
+-            var perBar = (canvas.clientWidth - 72) / st.count;
++            var canvasEl = getCanvas(id);
++            if (!canvasEl) return;
++            var perBar = (canvasEl.clientWidth - 72) / st.count;
+             var deltaBars = Math.round((e.clientX - lastX) / perBar);
+             if (deltaBars !== 0) {
+                 st.offset = clamp(st.offset + deltaBars, 0, st.candles.length - st.count);
+@@ -56,12 +69,31 @@ window.pgOneCprChart = (function () {
+     function zoomAt(id, factor) {
+         var st = states[id];
+         if (!st) return;
+-        var newCount = clamp(Math.round(st.count / factor), 20, st.candles.length);
++        var minBars = minVisibleBars(st.candles.length);
++        var newCount = clamp(Math.round(st.count / factor), minBars, st.candles.length);
+         st.count = newCount;
+         st.offset = clamp(st.offset, 0, st.candles.length - st.count);
+         render(id);
+     }
+ 
++    function parseTime(value) {
++        if (!value) return null;
++        var t = new Date(value);
++        return Number.isNaN(t.getTime()) ? null : t;
++    }
++
++    function findSegment(segments, time) {
++        if (!segments || !time) return null;
++        for (var i = 0; i < segments.length; i++) {
++            var s = segments[i];
++            var start = parseTime(s.start);
++            var end = parseTime(s.end);
++            if (!start || !end) continue;
++            if (time >= start && time < end) return s;
++        }
++        return segments.length ? segments[segments.length - 1] : null;
++    }
++
+     function drawCprBackground(ctx, view, segments, padding, slot, chartH, toY, toX) {
+         var leftBound = padding.left;
+         var top = padding.top;
+@@ -133,16 +165,17 @@ window.pgOneCprChart = (function () {
+     }
+ 
+     function setData(canvasId, candles, segments) {
+-        var canvas = document.getElementById(canvasId);
++        var canvas = getCanvas(canvasId);
+         if (!canvas || !candles || candles.length === 0) return;
+ 
+         var prev = states[canvasId];
++        var minBars = minVisibleBars(candles.length);
+         var count, offset;
+         if (prev) {
+-            count = clamp(prev.count, 20, candles.length);
++            count = clamp(prev.count, minBars, candles.length);
+             offset = clamp(prev.offset, 0, candles.length - count);
+         } else {
+-            count = candles.length;
++            count = defaultVisibleBars(candles.length);
+             offset = 0;
+         }
+ 
+@@ -154,6 +187,7 @@ window.pgOneCprChart = (function () {
+             offset: offset
+         };
+         ensureInteractions(canvas, canvasId);
++        ensureResizeObserver(canvasId);
+         render(canvasId);
+     }
+ 
+@@ -162,7 +196,7 @@ window.pgOneCprChart = (function () {
+     function resetZoom(canvasId) {
+         var st = states[canvasId];
+         if (!st) return;
+-        st.count = st.candles.length;
++        st.count = defaultVisibleBars(st.candles.length);
+         st.offset = 0;
+         render(canvasId);
+     }
+@@ -170,7 +204,11 @@ window.pgOneCprChart = (function () {
+     function render(id) {
+         var st = states[id];
+         if (!st) return;
+-        var canvas = st.canvas;
++
++        var canvas = getCanvas(id);
++        if (!canvas) return;
++        st.canvas = canvas;
++
+         var candles = st.candles;
+         var segments = st.segments;
+ 
+@@ -212,7 +250,7 @@ window.pgOneCprChart = (function () {
+         var minPrice = Math.min.apply(null, lows.concat(segPrices.length ? segPrices : [Number.MAX_VALUE]));
+         var priceRange = (maxPrice - minPrice) || 1;
+         var slot = chartW / view.length;
+-        var candleWidth = Math.max(1, slot - 2);
++        var candleWidth = Math.min(Math.max(1, slot - 2), MAX_CANDLE_WIDTH);
+ 
+         var toY = function (price) { return padding.top + ((maxPrice - price) / priceRange) * chartH; };
+         var toX = function (i) { return padding.left + slot * i + slot / 2; };
+@@ -276,6 +314,14 @@ window.pgOneCprChart = (function () {
+     return {
+         draw: setData,
+         zoom: zoom,
+-        resetZoom: resetZoom
++        resetZoom: resetZoom,
++        resize: render
+     };
+ })();
++
++window.pgOneCprChartZoom = function (canvasId, factor) {
++    window.pgOneCprChart.zoom(canvasId, factor);
++};
++window.pgOneCprChartResetZoom = function (canvasId) {
++    window.pgOneCprChart.resetZoom(canvasId);
++};
+diff --git a/PGOne/wwwroot/js/chart.js b/PGOne/wwwroot/js/chart.js
+index c48b5dd..f41a1fc 100644
+--- a/PGOne/wwwroot/js/chart.js
++++ b/PGOne/wwwroot/js/chart.js
+@@ -1,9 +1,40 @@
+ // Candlestick chart renderer for PG One with zoom/pan support.
+ window.pgOneChart = (function () {
+     const states = {};
++    const resizeObservers = {};
++    const DEFAULT_VISIBLE_BARS = 80;
++    const MIN_VISIBLE_BARS = 5;
++    const MAX_CANDLE_WIDTH = 16;
+ 
+     function num(v) { return v == null ? null : Number(v); }
+ 
++    function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
++
++    function minVisibleBars(total) {
++        return Math.min(MIN_VISIBLE_BARS, total);
++    }
++
++    function defaultVisibleBars(total) {
++        return Math.min(DEFAULT_VISIBLE_BARS, total);
++    }
++
++    function getCanvas(id) {
++        return document.getElementById(id);
++    }
++
++    function ensureResizeObserver(id) {
++        if (resizeObservers[id]) return;
++        const canvas = getCanvas(id);
++        const container = canvas && canvas.parentElement;
++        if (!container) return;
++
++        const ro = new ResizeObserver(function () {
++            render(id);
++        });
++        ro.observe(container);
++        resizeObservers[id] = ro;
++    }
++
+     function ensureInteractions(canvas, id) {
+         if (canvas.dataset.pgBound === '1') return;
+         canvas.dataset.pgBound = '1';
+@@ -25,7 +56,9 @@ window.pgOneChart = (function () {
+             if (!dragging) return;
+             const st = states[id];
+             if (!st) return;
+-            const perBar = (canvas.clientWidth - 72) / st.count;
++            const canvasEl = getCanvas(id);
++            if (!canvasEl) return;
++            const perBar = (canvasEl.clientWidth - 72) / st.count;
+             const deltaBars = Math.round((e.clientX - lastX) / perBar);
+             if (deltaBars !== 0) {
+                 st.offset = clamp(st.offset + deltaBars, 0, st.candles.length - st.count);
+@@ -35,13 +68,11 @@ window.pgOneChart = (function () {
+         });
+     }
+ 
+-    function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+-
+     function zoomAt(id, factor) {
+         const st = states[id];
+         if (!st) return;
+-        const newCount = clamp(Math.round(st.count / factor), 12, st.candles.length);
+-        // Keep the right edge roughly anchored while zooming.
++        const minBars = minVisibleBars(st.candles.length);
++        const newCount = clamp(Math.round(st.count / factor), minBars, st.candles.length);
+         st.count = newCount;
+         st.offset = clamp(st.offset, 0, st.candles.length - st.count);
+         render(id);
+@@ -216,7 +247,7 @@ window.pgOneChart = (function () {
+     }
+ 
+     function setData(canvasId, candles, timeframe, levels, pocToday, overlayOptions) {
+-        const canvas = document.getElementById(canvasId);
++        const canvas = getCanvas(canvasId);
+         if (!canvas || !candles || candles.length === 0) return;
+ 
+         const prev = states[canvasId];
+@@ -226,12 +257,13 @@ window.pgOneChart = (function () {
+         const showCamarilla = opts.showCamarilla !== false;
+         const showIntradaCpr = opts.showIntradaCpr === true;
+         const intradayCprSegments = opts.intradayCpr || [];
++        const minBars = minVisibleBars(candles.length);
+         let count, offset;
+         if (prev && prev.timeframe === timeframe) {
+-            count = clamp(prev.count, 12, candles.length);
++            count = clamp(prev.count, minBars, candles.length);
+             offset = clamp(prev.offset, 0, candles.length - count);
+         } else {
+-            count = candles.length; // show everything by default
++            count = defaultVisibleBars(candles.length);
+             offset = 0;
+         }
+ 
+@@ -246,6 +278,7 @@ window.pgOneChart = (function () {
+             intradayCprSegments: intradayCprSegments
+         };
+         ensureInteractions(canvas, canvasId);
++        ensureResizeObserver(canvasId);
+         render(canvasId);
+     }
+ 
+@@ -254,7 +287,7 @@ window.pgOneChart = (function () {
+     function resetZoom(canvasId) {
+         const st = states[canvasId];
+         if (!st) return;
+-        st.count = st.candles.length;
++        st.count = defaultVisibleBars(st.candles.length);
+         st.offset = 0;
+         render(canvasId);
+     }
+@@ -262,8 +295,12 @@ window.pgOneChart = (function () {
+     function render(id) {
+         const st = states[id];
+         if (!st) return;
+-        const { canvas, candles, timeframe } = st;
+ 
++        const canvas = getCanvas(id);
++        if (!canvas) return;
++        st.canvas = canvas;
++
++        const { candles, timeframe } = st;
+         const container = canvas.parentElement;
+         const cssW = Math.max((container ? container.clientWidth : canvas.clientWidth) - 4, 320);
+         const cssH = Math.max((container ? container.clientHeight : canvas.clientHeight) - 4, 240);
+@@ -309,7 +346,7 @@ window.pgOneChart = (function () {
+         const minPrice = Math.min(...lows, ...(extra.length ? extra : [Number.MAX_VALUE]), ...(levelPrices.length ? levelPrices : [Number.MAX_VALUE]), ...(intradayPrices.length ? intradayPrices : [Number.MAX_VALUE]));
+         const priceRange = (maxPrice - minPrice) || 1;
+         const slot = chartW / view.length;
+-        const candleWidth = Math.max(1.5, slot - 2);
++        const candleWidth = Math.min(Math.max(1.5, slot - 2), MAX_CANDLE_WIDTH);
+ 
+         const toY = (price) => padding.top + ((maxPrice - price) / priceRange) * chartH;
+         const toX = (i) => padding.left + slot * i + slot / 2;
+@@ -447,6 +484,15 @@ window.pgOneChart = (function () {
+     return {
+         drawCandlestickChart: setData,
+         zoom: zoom,
+-        resetZoom: resetZoom
++        resetZoom: resetZoom,
++        resize: render
+     };
+ })();
++
++// Flat globals for reliable Blazor MAUI WebView interop.
++window.pgOneChartZoom = function (canvasId, factor) {
++    window.pgOneChart.zoom(canvasId, factor);
++};
++window.pgOneChartResetZoom = function (canvasId) {
++    window.pgOneChart.resetZoom(canvasId);
++};
+-- 
+2.43.0
+
