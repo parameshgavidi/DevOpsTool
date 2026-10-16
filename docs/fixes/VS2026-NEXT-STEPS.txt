@@ -1,0 +1,170 @@
+================================================================================
+VS 2026 — NEXT STEPS FROM HERE
+File: docs/fixes/VS2026-NEXT-STEPS.txt
+Open in Notepad. Run commands in Administrator Command Prompt.
+Do NOT start over at STEP 1 of the old file.
+================================================================================
+
+WHERE YOU ARE NOW
+- Install is on F:  (good)
+- Cache is on F:\VS2026\Packages  (good)
+- devenv.exe exists, but it is a STUB
+- Launch error:  Cannot find one or more components. Please reinstall
+- MSBuild.exe is missing
+- Repair already failed once
+
+Do NOT click Launch, Modify, or Repair.
+Do NOT uninstall Visual Studio 2019.
+Do NOT uninstall Crystal Reports.
+
+
+--------------------------------------------------------------------------------
+STEP A — close Visual Studio
+--------------------------------------------------------------------------------
+Click OK on the red error popup.
+Close Visual Studio if it is still open.
+Close Visual Studio Installer.
+
+
+--------------------------------------------------------------------------------
+STEP B — remove ONLY the broken VS 2026 instance
+--------------------------------------------------------------------------------
+Open Administrator Command Prompt (Start → cmd → Run as administrator).
+
+Paste this whole block. Press Enter. Wait until the prompt comes back.
+
+  taskkill /IM devenv.exe /F >nul 2>&1
+  taskkill /IM vs_installer.exe /F >nul 2>&1
+  taskkill /IM vs_installershell.exe /F >nul 2>&1
+  "C:\Program Files (x86)\Microsoft Visual Studio\Installer\InstallCleanup.exe" -i 18
+  rmdir /s /q "F:\Program Files\Microsoft Visual Studio\18"
+
+"File not found" is OK.
+Never run InstallCleanup.exe without  -i 18
+
+
+--------------------------------------------------------------------------------
+STEP C — create the install script
+--------------------------------------------------------------------------------
+Paste this whole block. Press Enter.
+
+  mkdir F:\VS2026
+  mkdir F:\VS2026\Temp
+  mkdir F:\VS2026\Packages
+
+  (
+  echo @echo off
+  echo set TEMP=F:\VS2026\Temp
+  echo set TMP=F:\VS2026\Temp
+  echo cd /d %%USERPROFILE%%\Downloads
+  echo start /wait vs_Professional.exe --passive --norestart --installPath "F:\Program Files\Microsoft Visual Studio\18\Professional" --path cache="F:\VS2026\Packages" --add Microsoft.VisualStudio.Workload.CoreEditor;includeRecommended
+  echo echo EXIT=%%ERRORLEVEL%%
+  echo pause
+  ) > F:\VS2026\install-core.bat
+
+This installs ONLY the core IDE first (no ASP.NET, no MAUI).
+That is required so devenv.exe and its components can finish.
+
+
+--------------------------------------------------------------------------------
+STEP D — run the script
+--------------------------------------------------------------------------------
+Paste this. Press Enter.
+
+  F:\VS2026\install-core.bat
+
+A progress window must stay open for a long time (often 20–60 minutes).
+Do not close Command Prompt.
+Do not click Cancel.
+
+When it says  Press any key to continue  look at EXIT=
+
+  EXIT=0      good
+  EXIT=3010   good, reboot, then continue STEP E
+  any other   failed — go to STEP G
+
+
+--------------------------------------------------------------------------------
+STEP E — prove the IDE files exist
+--------------------------------------------------------------------------------
+Paste this block.
+
+  dir "F:\Program Files\Microsoft Visual Studio\18\Professional\Common7\IDE\devenv.exe"
+  dir "F:\Program Files\Microsoft Visual Studio\18\Professional\Common7\IDE\devenv.dll"
+
+MUST be true:
+  [ ] devenv.exe exists
+  [ ] devenv.dll exists
+
+If devenv.dll is File Not Found, STOP. Send that output.
+Do not Launch.
+
+
+--------------------------------------------------------------------------------
+STEP F — open VS 2026
+--------------------------------------------------------------------------------
+Paste this ONE line (quotes required):
+
+  "F:\Program Files\Microsoft Visual Studio\18\Professional\Common7\IDE\devenv.exe"
+
+Need: Visual Studio 2026 opens with NO red
+      "Cannot find one or more components" popup.
+
+Then Help → About must say Visual Studio Professional 2026.
+
+
+--------------------------------------------------------------------------------
+STEP G — only if STEP D or STEP F failed
+--------------------------------------------------------------------------------
+Paste this. Copy ALL output.
+
+  dir "F:\Program Files\Microsoft Visual Studio\18\Professional\Common7\IDE\devenv.exe"
+  dir "F:\Program Files\Microsoft Visual Studio\18\Professional\Common7\IDE\devenv.dll"
+  notepad "F:\VS2026\Temp\dd_setup_20261016144902_354_Microsoft.VisualStudio.Product.Professional.log"
+
+Also open Visual Studio Installer and screenshot the 2026 card.
+
+If devenv.dll is still missing, SentinelOne is blocking IDE files.
+Ask IT to exclude:
+
+  F:\Program Files\Microsoft Visual Studio\
+  F:\VS2026\
+  C:\Program Files (x86)\Microsoft Visual Studio\Installer\
+
+
+--------------------------------------------------------------------------------
+STEP H — after VS 2026 OPENS (not before)
+--------------------------------------------------------------------------------
+Open Visual Studio Installer as Administrator.
+Visual Studio Professional 2026 → Modify.
+
+Check:
+  [x] ASP.NET and web development
+  [x] .NET desktop development
+  [x] .NET Multi-platform App UI development
+
+Click Modify. Wait until it finishes.
+
+Then paste:
+
+  dir "F:\Program Files\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\MSBuild.exe"
+  dir "F:\Program Files\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe"
+
+Need at least one MSBuild.exe listed.
+
+
+--------------------------------------------------------------------------------
+DO NOT
+--------------------------------------------------------------------------------
+- Click Launch on a card that says Setup completed with warnings
+- Run InstallCleanup.exe with no  -i 18
+- Uninstall Visual Studio 2019
+- Uninstall Crystal Reports
+- Run path without quotes  (causes  F:\Program is not recognized)
+- Paste commands that contain  ^  (causes More? and a fake EXIT=0)
+- Add ASP.NET / MAUI until devenv.dll exists and VS opens
+
+
+================================================================================
+END
+================================================================================

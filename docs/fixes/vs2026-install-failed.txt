@@ -4,6 +4,9 @@ docs/fixes/vs2026-install-failed.txt
 
 Copy-paste steps only (same fix, shorter):
   docs/fixes/VS2026-INSTALL-STEPS.txt
+
+NOW (devenv stub exists, components missing):
+  docs/fixes/VS2026-NEXT-STEPS.txt
 ================================================================================
 Do the steps IN ORDER in a BLACK Administrator Command Prompt.
 Stop when Help → About shows Visual Studio Professional 2026 with
