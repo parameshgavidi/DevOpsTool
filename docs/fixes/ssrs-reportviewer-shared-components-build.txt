@@ -1,0 +1,124 @@
+================================================================================
+Shared Components — build failed (SSRSReportingObjects / ReportViewer)
+================================================================================
+
+Path:
+  F:\GSS\AppDev\gss-root\Shared Components\
+
+Error List (build) shows FAILING errors only in SSRSReportingObjects.
+CS0219 / CS0168 / MSB3884 are warnings — they do NOT fail the build.
+
+
+--------------------------------------------------------------------------------
+FAILING ERRORS (must fix)
+--------------------------------------------------------------------------------
+CS0234  The type or namespace name 'Reporting' does not exist in the namespace
+        'Microsoft' (are you missing an assembly reference?)
+
+  Shared Components\SSRSReportingObjects\CustomReportCredentials.cs
+  Shared Components\SSRSReportingObjects\SSRSReporting.cs
+
+MSB3245  Could not resolve this reference. Could not locate the assembly
+         "Microsoft.ReportViewer.WebForms, Version=12.0.0.0, ..."
+
+MSB3245  Could not resolve this reference. Could not locate the assembly
+         "System.Runtime.Serialization.Primitives, Version=4.1.2.0, ..."
+         (also under SSRSReportingObjects.csproj)
+
+
+Cause:
+  SSRSReportingObjects.csproj references Microsoft.ReportViewer.WebForms 12.0.0.0
+  but the DLL is not on this machine (no GAC / no packages path / broken HintPath).
+  Without that assembly, namespace Microsoft.Reporting.* is missing → CS0234.
+
+
+--------------------------------------------------------------------------------
+FIX — restore ReportViewer 12 on the build machine (keep local OK)
+--------------------------------------------------------------------------------
+1) Open Visual Studio → Tools → NuGet Package Manager → Package Manager Console
+
+2) Set Default project: SSRSReportingObjects
+   (under Shared Components)
+
+3) Install ReportViewer 12 runtime packages:
+
+     Install-Package Microsoft.ReportViewer.Runtime.WebForms -Version 12.0.2402.15
+     Install-Package Microsoft.ReportViewer.Runtime.Common -Version 12.0.2402.15
+
+   If those package IDs are unavailable on your feed, try:
+
+     Install-Package Microsoft.ReportViewer.WebForms.v12
+
+4) If MSB3245 for System.Runtime.Serialization.Primitives remains:
+
+     Install-Package System.Runtime.Serialization.Primitives -Version 4.1.2
+
+5) Rebuild Shared Components / the solution that references SSRSReportingObjects.
+
+6) Confirm Error List: CS0234 and ReportViewer MSB3245 are GONE.
+   Unused-variable warnings (CS0219/CS0168) can stay.
+
+
+ALTERNATE (machine-wide, if NuGet not allowed)
+----------------------------------------------
+Install Microsoft Report Viewer 2015 Runtime (ships 12.0.0.0 assemblies):
+  https://www.microsoft.com/en-us/download/details.aspx?id=45496
+
+Then rebuild. Prefer NuGet so the DLLs travel with packages\ / HintPath.
+
+
+--------------------------------------------------------------------------------
+DevOps tool — buildCommand / gitLatest (if Shared Components is an app)
+--------------------------------------------------------------------------------
+appsettings does NOT list NuGet package names. Put only:
+
+  "buildCommand"  → whatever msbuild/dotnet command builds this sln/csproj
+  "gitLatestCommand" → stash/fetch/restore/pop for the folder
+
+If Install-Package is LOCAL only (not pushed to remote), use empty-stash-safe
+gitLatestCommand so Get latest does not wipe packages:
+
+  git stash push -m "devops-pre-build" -- "Shared Components" && git fetch && git restore --source=@{u} --staged --worktree -- "Shared Components" && (git stash pop || ver > nul)
+
+Do NOT put "Microsoft.ReportViewer.WebForms" into a build field in appsettings.
+The build field (buildCommand) runs msbuild/dotnet — packages must already be
+restored or present under packages\ / references.
+
+
+Example if you add Shared Components as a buildable app:
+
+{
+  "name": "Shared Components",
+  "type": "DotNetFramework",
+  "projectPath": "Shared Components\\<YourSharedComponents.sln>",
+  "gitLatestCommand": "git stash push -m \"devops-pre-build\" -- \"Shared Components\" && git fetch && git restore --source=@{u} --staged --worktree -- \"Shared Components\" && (git stash pop || ver > nul)",
+  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /m",
+  "outputSubfolder": "SharedComponents"
+}
+
+Replace <YourSharedComponents.sln> with the real .sln name under Shared Components.
+
+
+--------------------------------------------------------------------------------
+What NOT to change for this error
+--------------------------------------------------------------------------------
+- Do NOT "fix" CS0219 / CS0168 unused variables to clear the build —
+  they are warnings only.
+- Do NOT upgrade to ReportViewer 15 NuGet unless you intentionally retarget
+  all Version=12.0.0.0 references / web.config — project asks for 12.0.0.0.
+- Do NOT add ReportViewer package names into appsettings buildCommand.
+
+
+--------------------------------------------------------------------------------
+Checklist
+--------------------------------------------------------------------------------
+[ ] SSRSReportingObjects builds without CS0234
+[ ] MSB3245 for Microsoft.ReportViewer.WebForms is gone
+[ ] ReportViewer 12 packages present under packages\ (or GAC runtime installed)
+[ ] Local Install-Package kept via stash gitLatestCommand if used by DevOps tool
+[ ] Rebuild dependent apps (GSSWeb / GSS Web Service / etc.) after Shared Components OK
+
+
+================================================================================
+END
+================================================================================
