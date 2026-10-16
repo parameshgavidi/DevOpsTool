@@ -1,0 +1,19 @@
+Open Administrator Command Prompt.
+Paste line 1. Press Enter.
+Then paste line 2. Press Enter.
+Do not use the .bat file.
+Do not change /d  — it is NOT the D: drive.
+
+
+LINE 1
+
+dir C:\Users\XHS2H0\Downloads\vs_Professional.exe
+
+
+LINE 2
+
+C:\Users\XHS2H0\Downloads\vs_Professional.exe --wait --passive --norestart --installPath "F:\Program Files\Microsoft Visual Studio\18\Professional" --path cache="F:\VS2026\Packages" --add Microsoft.VisualStudio.Workload.CoreEditor;includeRecommended
+
+
+Line 1 must show vs_Professional.exe.
+Line 2 must stay running. Do not close the window.
