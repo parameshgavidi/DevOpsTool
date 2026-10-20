@@ -12,6 +12,14 @@ GOAL
 4. Click Get latest → checkout that branch at Repo Root → get latest code
    → show APPLICATIONS grid
 
+IF OUTPUT LOG says "Checkout failed" / "Failed to checkout branch 'GSSv9.3S1'"
+at F:\GSS\AppDev\gss-root, but DB rollup folders still pull OK — do NOT debug
+this file first. Use:
+
+    docs/fixes/get-latest-checkout-failed-gss-root.txt
+
+(GET-LATEST-CHECKOUT-V2: log [GIT] lines, stash, ignore other worktrees)
+
 
 YOUR SCREENSHOT (red squiggles)
 ------------------------------
@@ -350,8 +358,13 @@ REPLACE your whole GetLatestAndShowAppsAsync with:
             }
 
             // A) Checkout selected branch at Repo Root (NO appsettings variable)
+            // If this still logs only "Checkout failed" with no git text:
+            //   docs/fixes/get-latest-checkout-failed-gss-root.txt  (GET-LATEST-CHECKOUT-V2)
             var checkoutCmd =
-                $"git fetch origin && git checkout {branch} && git pull --ff-only";
+                $"(git stash push -m \"devops-get-latest\" 2>&1 || ver > nul) && " +
+                $"git fetch origin 2>&1 && " +
+                $"git checkout --ignore-other-worktrees -B {branch} origin/{branch} 2>&1 && " +
+                $"git pull --ff-only 2>&1";
 
             AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Switching to branch '{branch}' at {root}...");
             AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Git: {checkoutCmd}");
@@ -379,7 +392,9 @@ REPLACE your whole GetLatestAndShowAppsAsync with:
             {
                 // Local branch missing — create tracking branch from origin/<branch>
                 var trackCmd =
-                    $"git fetch origin && git checkout -B {branch} origin/{branch}";
+                    $"(git stash push -m \"devops-get-latest\" 2>&1 || ver > nul) && " +
+                    $"git fetch origin 2>&1 && " +
+                    $"git checkout --ignore-other-worktrees {branch} 2>&1";
                 AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Checkout failed (exit {checkoutExit}). Trying track: {trackCmd}");
                 await InvokeAsync(StateHasChanged);
 
@@ -510,7 +525,7 @@ After Refresh / first open:
 After Get latest (selected GSSv8.9S2):
 
     [INFO] Switching to branch 'GSSv8.9S2' at F:\GSS\AppDev\gss-root...
-    [INFO] Git: git fetch origin && git checkout GSSv8.9S2 && git pull --ff-only
+    [INFO] Git: (git stash push ... && git fetch origin && git checkout --ignore-other-worktrees -B GSSv8.9S2 origin/GSSv8.9S2 && git pull --ff-only
     [INFO] On branch 'GSSv8.9S2' — getting latest per app...
     [INFO] Getting latest for GSS Web Service...
     [INFO] Git latest OK for GSS Web Service
