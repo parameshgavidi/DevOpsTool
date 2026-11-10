@@ -1,0 +1,418 @@
+================================================================================
+FOLLOW THIS FILE — File loader Service MSI on VS 2022 (no VS 2026)
+docs/fixes/fileloader-service-msi-vs2022.txt
+================================================================================
+You do NOT need Visual Studio 2026.
+You cannot build this MSI from VS Code.
+
+Use Visual Studio 2022 + "Microsoft Visual Studio Installer Projects 2022".
+Keep Visual Studio 2019. Do not uninstall it.
+
+
+--------------------------------------------------------------------------------
+YOUR CURRENT ERROR (from the OUTPUT LOG screenshot)
+--------------------------------------------------------------------------------
+  To attach the debugger from the command line, use:
+    VsJITDebugger.exe -p <pid>
+
+  [ERROR] Setup build failed for File loader Service with exit code 1.
+  Verifying that the Microsoft Visual Studio Installer Projects
+  extension is installed and the setup project loads in Visual Studio.
+
+What that means:
+  - devenv printed HELP and exited 1. VsJITDebugger is the last line
+    of devenv usage text. The MSI was never built.
+  - The "Installer Projects" sentence is the DevOps tool's generic
+    message after ANY setup exit != 0. It is a hint, not proof that
+    VS 2026 is required.
+  - VS Code cannot load .vdproj. Opening File loader Service there
+    will never produce an .msi.
+
+
+--------------------------------------------------------------------------------
+WHY VS 2026 IS NOT REQUIRED
+--------------------------------------------------------------------------------
+.vdproj MSI builds need:
+  1) devenv.com from a full Visual Studio IDE  (2019 or 2022)
+  2) "Microsoft Visual Studio Installer Projects" on THAT same IDE
+  3) a .sln that contains the Setup project
+  4) devenv /build "Release|Any CPU" /project "<Setup name>"
+
+VS 2026 is product folder "18". You do not have it. That is fine.
+
+VS 2022 is product folder "2022" (internal version 17). You already
+have it. Use that devenv.
+
+VS Code has no devenv and no Installer Projects. It can edit C#
+and run the DevOps tool, but it cannot build FileLoader.Setup.vdproj.
+
+
+--------------------------------------------------------------------------------
+STEP 0 — find the VS 2022 devenv you will use
+--------------------------------------------------------------------------------
+Open Command Prompt. Paste this block. Press Enter.
+
+  dir "C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\devenv.com"
+  dir "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\devenv.com"
+  dir "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\devenv.com"
+  dir "F:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\devenv.com"
+  dir "C:\Program Files (x86)\Microsoft Visual Studio\2019\Professional\Common7\IDE\devenv.com"
+  dir "F:\Program Files\Microsoft Visual Studio\18\Professional\Common7\IDE\devenv.com"
+
+Need:
+  [ ] ONE 2022 devenv.com exists   (use that path everywhere below)
+  [ ] the \18\ 2026 path is File Not Found   (expected — you do not have 2026)
+
+If 2022 Professional is missing but 2022 Enterprise / Community exists,
+use that edition in every command. Do not invent an 18 path.
+
+If ONLY 2019 devenv.com exists, you can still build the MSI on 2019
+(see STEP 1 note). Prefer 2022 when both exist.
+
+
+--------------------------------------------------------------------------------
+STEP 1 — install Installer Projects on VS 2022 (not VS Code, not 2026)
+--------------------------------------------------------------------------------
+1. Close VS Code if it has the File loader solution open.
+2. Open Visual Studio 2022 (Start menu — not VS Code, not 2019).
+3. Extensions → Manage Extensions → Online.
+4. Search:
+     Microsoft Visual Studio Installer Projects 2022
+5. Install it on THIS 2022 instance.
+6. Close ALL Visual Studio windows. Wait for the VSIX installer.
+   UAC / admin if prompted.
+7. Reopen Visual Studio 2022.
+8. Extensions → Manage Extensions → Installed.
+   Button must be Disable / Uninstall — NOT Install / Cancel Install.
+
+If the button still says "Cancel Install", the extension is not
+finished. Close VS and wait. The DevOps tool will keep failing
+until this is Disable / Uninstall.
+
+NOTE — VS 2019 only:
+  Install "Microsoft Visual Studio Installer Projects" (2019 VSIX)
+  on the 2019 instance, then use the 2019 devenv.com path from STEP 0.
+  The 2022 VSIX does not apply to devenv 2019.
+
+
+--------------------------------------------------------------------------------
+STEP 2 — find the real File loader Service files (do not guess)
+--------------------------------------------------------------------------------
+Repo root is usually F:\GSS\AppDev\gss-root
+
+  dir /s /b "F:\GSS\AppDev\gss-root\*File*Loader*.vdproj"
+  dir /s /b "F:\GSS\AppDev\gss-root\*File*Loader*.sln"
+  dir /s /b "F:\GSS\AppDev\gss-root\*FileLoader*.vdproj"
+  dir /s /b "F:\GSS\AppDev\gss-root\*FileLoader*.sln"
+  dir /s /b "F:\GSS\AppDev\gss-root\*File Loader*"
+
+Write down three paths:
+
+  A) service .csproj          → projectPath
+  B) installer .vdproj        → setupProjectPath
+  C) .sln that CONTAINS the Setup project → setupSolutionPath
+
+Typical layout (names will differ — use what dir printed):
+
+  Windows Services\File Loader Service\
+    FileLoaderService\
+      FileLoaderService.csproj
+      FileLoaderService.sln
+    FileLoaderServiceSetup\
+      FileLoaderServiceSetup.vdproj
+      Release\                    ← *.msi lands here after a good build
+
+setupSolutionPath MUST end in .sln
+Do NOT put the service .csproj in setupSolutionPath.
+That is the HELP dump you already have (VsJITDebugger).
+
+
+--------------------------------------------------------------------------------
+STEP 3 — prove the MSI in Visual Studio 2022 (required before the tool)
+--------------------------------------------------------------------------------
+VS Code cannot do this step. Use Visual Studio 2022.
+
+1. File → Open → the .sln from STEP 2 (C).
+2. Solution Explorer MUST show BOTH:
+     [x] the File loader service project
+     [x] the Setup / .vdproj project
+3. If Setup is incompatible / needs migration / missing:
+     - Confirm STEP 1 finished (Installer Projects Installed).
+     - If missing: right-click solution → Add → Existing Project
+       → the .vdproj from STEP 2 (B) → Save the .sln.
+4. Write down the EXACT Setup name from Solution Explorer.
+   That name is setupProjectName. It may differ from the .vdproj
+   file name (same bug as GSSDispServiceNet2Setup).
+5. Build → Configuration Manager… → Release | Any CPU
+     tick Build for the service AND the Setup project.
+6. Right-click the service project → Rebuild. Wait for success.
+7. Right-click the Setup project → Rebuild.
+8. Explorer must have a file:
+     <setup folder>\Release\*.msi
+     (and setup.exe if the vdproj writes a bootstrapper)
+
+STOP if step 8 is empty. The DevOps tool cannot invent an MSI.
+Fix the IDE build first.
+
+If Detected Dependencies says "unable to determine name":
+  the service was not built for Release | Any CPU. Redo 5–7.
+
+
+--------------------------------------------------------------------------------
+STEP 4 — point the DevOps tool at VS 2022 (not folder 18)
+--------------------------------------------------------------------------------
+Search GssDevOpsAutomationTool for:
+
+  Microsoft Visual Studio\18\
+  Visual Studio\18\
+  2026
+
+Replace every devenv / MSBuild path that uses \18\ with the
+2022 path from STEP 0, for example:
+
+  C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\devenv.com
+  C:\Program Files\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe
+
+If VS 2022 lives on F:, keep F: and only change \18\ → \2022\.
+
+Open BuildService.cs. If ResolveVisualStudioIdePath / FindVisualStudioIde
+has a version list, put 2022 FIRST (or remove 18) so MSI builds call
+2022 devenv after you dropped 2026.
+
+Do not leave a hardcoded 18 path "for later". That path does not exist
+on this machine.
+
+
+--------------------------------------------------------------------------------
+STEP 5 — appsettings.json (File loader Service only)
+--------------------------------------------------------------------------------
+REPLACE the File loader Service object. Change only the three
+paths / setupProjectName to match STEP 2 and STEP 3.
+
+{
+  "name": "File loader Service",
+  "type": "WindowsApplication",
+  "projectPath": "Windows Services\\File Loader Service\\FileLoaderService\\FileLoaderService.csproj",
+  "setupProjectPath": "Windows Services\\File Loader Service\\FileLoaderServiceSetup\\FileLoaderServiceSetup.vdproj",
+  "setupSolutionPath": "Windows Services\\File Loader Service\\FileLoaderService\\FileLoaderService.sln",
+  "setupProjectName": "FileLoaderServiceSetup",
+  "setupConfiguration": "Release",
+  "setupPlatform": "Any CPU",
+  "buildCommand": "msbuild \"{projectFile}\" /p:Configuration=Release /p:Platform=AnyCPU /t:Build /v:m",
+  "outputSubfolder": "FileLoaderService"
+}
+
+Rules:
+  projectPath          = service .csproj          (msbuild)
+  setupProjectPath     = installer .vdproj
+  setupSolutionPath    = .sln that contains Setup  ← MUST end in .sln
+  setupProjectName     = Solution Explorer name
+  setupConfiguration   = Release
+  setupPlatform        = Any CPU   (space)
+
+Do NOT:
+  - put a .csproj in setupSolutionPath
+  - add setupBuildCommand
+  - use /p:PublishProfile=FolderProfile on this WinService
+  - point devenv at \18\ or at VS Code
+
+If Application.SetupProjectName is missing, add:
+
+    public string? SetupProjectName { get; set; }
+
+and in BuildSetupProjectAsync use it when set
+(docs/fixes/gss-dispatch-setup-project-name.txt STEP 3).
+
+
+--------------------------------------------------------------------------------
+STEP 6 — devenv via Process, not cmd.exe (stops the HELP dump)
+--------------------------------------------------------------------------------
+VsJITDebugger in the log = devenv never received a real .sln
+as argument 1. Common causes:
+
+  A) setupSolutionPath is a .csproj
+  B) BuildSetupProjectAsync still uses RunCommandAsync / cmd.exe /c
+     around a "Program Files" devenv path
+  C) devenv path is the missing VS 2026 \18\ folder
+
+Use ProcessStartInfo on devenv.com (same as other MSI apps):
+
+  docs/fixes/web-to-client-bridge-msi-full-fix.txt STEP 6
+
+Args MUST be:
+
+  "<setupSolutionPath.sln>" /build "Release|Any CPU" /project "<setupProjectName>" /projectconfig "Release"
+
+Log these lines BEFORE starting devenv:
+
+  [INFO] Setup exe:  <the 2022 devenv.com from STEP 0>
+  [INFO] Setup args: "...FileLoader....sln" /build "Release|Any CPU" /project "..." /projectconfig "Release"
+
+Reject a non-.sln path:
+
+        if (!setupSolutionPath.EndsWith(".sln", StringComparison.OrdinalIgnoreCase))
+        {
+            _logService.AppendLog(
+                $"[{DateTime.Now:HH:mm:ss}] [ERROR] setupSolutionPath must be a .sln that contains the Setup project, not a .csproj: {setupSolutionPath}\r\n");
+            return -1;
+        }
+
+If Setup exe still shows \18\ or File Not Found, STEP 4 is not done.
+
+
+--------------------------------------------------------------------------------
+STEP 7 — DisableOutOfProcBuild on VS 2022 (only after HELP is gone)
+--------------------------------------------------------------------------------
+After STEP 6, if the log shows a REAL build then:
+
+  ERROR: An error occurred while validating. HRESULT = '8000000A'
+
+close Visual Studio and run the 2022 helper (not the 18 path):
+
+  cd /d "C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\CommonExtensions\Microsoft\VSI\DisableOutOfProcBuild"
+  DisableOutOfProcBuild.exe
+
+If that folder is missing:
+
+  dir /s /b "C:\Program Files\Microsoft Visual Studio\2022\DisableOutOfProcBuild.exe"
+
+Then cd to that folder and run DisableOutOfProcBuild.exe as the
+SAME Windows user that runs the DevOps tool.
+
+Registry fallback (VS 2022 = 17.0, NOT 18.0):
+
+  PowerShell as the DevOps tool user:
+
+  $names = @('17.0','17.0_Config') +
+    (Get-ChildItem HKCU:\Software\Microsoft\VisualStudio -ErrorAction SilentlyContinue |
+     Where-Object { $_.PSChildName -like '17.0*_Config' -or $_.PSChildName -eq '17.0' } |
+     ForEach-Object PSChildName)
+  $names = $names | Select-Object -Unique
+  foreach ($n in $names) {
+    $p = "HKCU:\Software\Microsoft\VisualStudio\$n\MSBuild"
+    New-Item -Path $p -Force | Out-Null
+    New-ItemProperty -Path $p -Name EnableOutOfProcBuild -PropertyType DWord -Value 0 -Force | Out-Null
+    Write-Host "Set $p\EnableOutOfProcBuild = 0"
+  }
+
+Do not set the 18.0 hive. You do not have VS 2026.
+
+
+--------------------------------------------------------------------------------
+STEP 8 — prove MSI from devenv (VS 2022, Visual Studio closed)
+--------------------------------------------------------------------------------
+Close ALL Visual Studio windows. Close VS Code if it has the .sln open.
+
+Use YOUR paths from STEP 0 and STEP 2. Example only:
+
+  cd /d "F:\GSS\AppDev\gss-root\Windows Services\File Loader Service"
+
+  "C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\devenv.com" ^
+    "F:\GSS\AppDev\gss-root\Windows Services\File Loader Service\FileLoaderService\FileLoaderService.sln" ^
+    /build "Release|Any CPU" /project "FileLoaderServiceSetup" /projectconfig Release
+
+Good:
+  - NO HELP text, NO VsJITDebugger, NO "first argument for devenv"
+  - Build started: Project: <your Setup name>
+  - *.msi under the Setup project's Release\ folder
+
+If this command still prints HELP → the .sln path is wrong or
+/project name does not match Solution Explorer.
+If HRESULT 8000000A → STEP 7.
+If "project does not exist" → add the .vdproj to the .sln (STEP 3)
+or fix setupProjectName.
+
+
+--------------------------------------------------------------------------------
+STEP 9 — rebuild the DevOps tool, then Build File loader Service
+--------------------------------------------------------------------------------
+You may keep using VS Code to edit / run the DevOps tool.
+You must NOT use VS Code to build the .vdproj.
+
+  1. STEP 3 produced Release\*.msi in Visual Studio 2022
+  2. STEP 4 paths use \2022\, not \18\
+  3. STEP 5 appsettings saved
+  4. STEP 6 Process + .sln guard saved; tool rebuilt / restarted
+  5. Visual Studio closed
+  6. In the DevOps tool: Build File loader Service
+
+Expected log:
+
+  [INFO] Setup exe: C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\devenv.com
+  [INFO] Setup args: "...FileLoader....sln" /build "Release|Any CPU" /project "<Setup name>" /projectconfig "Release"
+  (real devenv build lines — NO usage / VsJITDebugger / /useenv / /TfsLink)
+  [INFO] Setup MSI copied to F:\build-output\...\FileLoaderService\....msi
+  [INFO] Finished File loader Service with exit code 0
+
+
+--------------------------------------------------------------------------------
+If something is still wrong
+--------------------------------------------------------------------------------
+Still VsJITDebugger / /useenv / "first argument for devenv"
+  → setupSolutionPath is still a .csproj, missing, or cmd.exe quoting
+  → log Setup exe + Setup args
+  → first quoted path must exist and end with .sln
+  → Setup exe must be the 2022 devenv.com from STEP 0
+
+[ERROR] devenv not found  /  Setup exe is \18\
+  → STEP 4. You do not have VS 2026. Do not install it for this MSI.
+
+[ERROR] setupSolutionPath must be a .sln ... not a .csproj
+  → STEP 5. Fix the setting, restart the tool.
+
+devenv: project not found / invalid project
+  → /project != Solution Explorer name
+  → set setupProjectName (STEP 5)
+
+Setup project incompatible / will not load in VS 2022
+  → STEP 1 not finished, or you opened it in VS Code
+  → open the .sln in Visual Studio 2022 after the VSIX completes
+
+HRESULT 8000000A
+  → STEP 7 (17.0 hive / 2022 DisableOutOfProcBuild)
+
+IDE produces .msi but tool does not copy
+  → devenv still exiting != 0, or copy block looks under the wrong folder
+  → confirm Release\*.msi exists, then the copy uses setupProjectDir
+
+FolderProfile / web publish errors on this app
+  → old buildCommand. Use msbuild /t:Build from STEP 5.
+
+subversionScc / SccProvider
+  → ignore; not why the MSI is missing
+
+
+--------------------------------------------------------------------------------
+DO NOT
+--------------------------------------------------------------------------------
+- Install Visual Studio 2026 to fix this MSI
+- Open or build the .vdproj in VS Code
+- Uninstall Visual Studio 2019
+- Point devenv / MSBuild at Microsoft Visual Studio\18\
+- Set EnableOutOfProcBuild on the 18.0 registry hive
+- Put a .csproj in setupSolutionPath
+- Add setupBuildCommand
+- Use FolderProfile on File loader Service
+
+
+--------------------------------------------------------------------------------
+Checklist
+--------------------------------------------------------------------------------
+[ ] VS 2026 is NOT installed — that is OK
+[ ] STEP 0 found 2022 devenv.com
+[ ] Installer Projects 2022 is Installed on VS 2022 (Disable / Uninstall)
+[ ] File loader .sln opened in Visual Studio 2022, not VS Code
+[ ] Solution Explorer shows the Setup project
+[ ] IDE Rebuild created Setup\Release\*.msi
+[ ] appsettings setupSolutionPath ends with .sln
+[ ] setupProjectName matches Solution Explorer
+[ ] buildCommand is msbuild /t:Build (no FolderProfile)
+[ ] ResolveVisualStudioIdePath / appsettings use \2022\, not \18\
+[ ] devenv runs via Process (no cmd HELP / VsJITDebugger)
+[ ] manual devenv (STEP 8) creates .msi
+[ ] tool Build copies .msi into F:\build-output\...\FileLoaderService\
+
+
+================================================================================
+END
+================================================================================
