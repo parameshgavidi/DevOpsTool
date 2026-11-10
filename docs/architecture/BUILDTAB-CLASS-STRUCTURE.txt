@@ -141,6 +141,8 @@ METHOD → CLASS MAP (everything currently living in BuildTab @code)
           ShowApps, selected repo branch (RepoFromBranch), ResolvedBuildFilePath
   OnInitialized / OnInitializedAsync / OnAfterRenderAsync
   OnFromBranchChanged / OnToBranchChanged
+  OnRepoFromBranchChanged            ← clear ResolvedBuildFilePath on dropdown change
+                                      docs/fixes/buildtab-clear-path-on-branch-change.txt
   BrowseScripts / BrowseDbRollupBranchRoot
   SelectTab / HandleBuildSuccessChanged
   LoadApplicationsFromConfigAsync   (reads IConfiguration → BuildApps list)
