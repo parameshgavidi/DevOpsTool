@@ -117,21 +117,10 @@ Leave gitLatestCommand as you already have it (or keep it commented).
 
 
 --------------------------------------------------------------------------------
-STEP 3 — fix BuildSetupProjectAsync (this method)
+STEP 3 — PASTE THESE TWO IFS (replace your current pair)
 --------------------------------------------------------------------------------
-A) After setupSolutionPath is resolved, ADD a .sln check
-   (stops the old .csproj / HELP dump):
-
-        if (!string.IsNullOrWhiteSpace(setupSolutionPath)
-            && !setupSolutionPath.EndsWith(".sln", StringComparison.OrdinalIgnoreCase))
-        {
-            _logService.AppendLog(
-                $"[{DateTime.Now:HH:mm:ss}] [ERROR] setupSolutionPath must be a .sln, not {setupSolutionPath}\r\n");
-            return -1;
-        }
-
-B) REPLACE the fallback that only looks in the parent folder
-   (your .sln is under GSSDispatchService\, not next to the setup folder):
+Keep the lines that set setupSolutionPath from appsettings, then
+REPLACE both ifs you circled with exactly this:
 
         if (string.IsNullOrWhiteSpace(setupSolutionPath) || !File.Exists(setupSolutionPath))
         {
@@ -142,6 +131,21 @@ B) REPLACE the fallback that only looks in the parent folder
                     .FirstOrDefault();
             }
         }
+
+        if (string.IsNullOrWhiteSpace(setupSolutionPath)
+            || !setupSolutionPath.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)
+            || !File.Exists(setupSolutionPath))
+        {
+            _logService.AppendLog(
+                $"[{DateTime.Now:HH:mm:ss}] [ERROR] setupSolutionPath must be an existing .sln, not {setupSolutionPath}\r\n");
+            return -1;
+        }
+
+If 1 — missing/wrong path: search GSS Dispatch Service\**\*.sln
+        (finds GSSDispatchService\GSSDispatchServiceNet2.sln).
+If 2 — still empty, a .csproj, or not on disk: stop with a clear error
+        (do not call devenv / hit line 710).
+`||` short-circuits, so EndsWith/File.Exists do not run on null.
 
 C) UNCOMMENT the Setup args logs (you need these to debug line 710):
 
