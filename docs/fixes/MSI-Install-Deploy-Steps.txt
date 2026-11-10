@@ -1,0 +1,375 @@
+================================================================================
+MSI INSTALL AND DEPLOY STEPS — IIS SITE + WINDOWS SERVICE
+File: docs/fixes/MSI-Install-Deploy-Steps.txt
+
+Follow-along notepad. Swap the PLACEHOLDERS to match your product.
+Pairs with the root Jenkinsfile (windows agent: build MSI, silent install,
+verify service, post uninstall).
+================================================================================
+
+PLACEHOLDERS (same names as Jenkinsfile environment)
+----------------------------------------------------
+  MSI_NAME        = YourProduct.msi
+  SERVICE_NAME    = YourWindowsService
+  WIX_PROJECT     = installer\YourProduct.wixproj
+  MSI_OUTPUT_DIR  = dist                         (workspace-relative)
+  IIS_SITE_NAME   = YourIisSite                  (swap)
+  IIS_APP_POOL    = YourAppPool                  (swap)
+  IIS_PHYSICAL    = C:\inetpub\wwwroot\YourSite  (swap; MSI TARGETDIR)
+
+Product map in this DevOps repo (examples, not the only names):
+
+  IIS / website MSI
+    GSSDMI / GSSWeb     → GSSWebSiteInstaller.msi
+                          (often GSSWebInboundWebsiteInstaller.msi)
+    Web2ClientBridge    → Web2ClientBridge.msi
+
+  Windows service MSI
+    GSS DispatchService → GSSDispServiceSetup Release\*.msi
+                          (service project GSSDispatchServiceNet2)
+
+  No MSI (publish / Copy Files only)
+    GSS API, IMC
+
+DevOps tool UI (MAUI Blazor BUILD / SIT / CAT / PROD tabs):
+  Web Forms / API / MVC / ASMX  → Copy Files → Ready
+  Win Service (MSI)             → Install MSI → Confirm → Copy Config → Ready
+
+Migration share (after a good build):
+  Win Service MSI + setup.exe  →  ...\Sprint N\server_application\
+  Web publish / site files     →  ...\Sprint N\server_web\{appName}\
+  Keep .msi AND setup.exe together. msiexec the .msi when prerequisites
+  are already on the box; otherwise run setup.exe first.
+
+
+--------------------------------------------------------------------------------
+HOW TO OPEN ADMINISTRATOR COMMAND PROMPT
+--------------------------------------------------------------------------------
+IIS changes and silent MSI install need elevation.
+
+1. Start → type: cmd
+2. Right-click Command Prompt → Run as administrator
+3. Click Yes
+
+
+================================================================================
+PART 1 — BUILD THE MSI (Jenkinsfile stage "Build MSI")
+================================================================================
+On the Windows Jenkins node (label windows), or on the VDI:
+
+  if not exist "dist" mkdir "dist"
+
+  REM PLACEHOLDER — swap for your real build (Jenkinsfile Options A/B/C)
+  msbuild "installer\YourProduct.wixproj" /p:Configuration=Release /p:OutputPath="dist\\" /t:Build /v:minimal
+
+  REM Option B (WiX candle + light):
+  REM   candle -nologo -out "dist\YourProduct.wixobj" "installer\YourProduct.wxs"
+  REM   light  -nologo -out "dist\YourProduct.msi" "dist\YourProduct.wixobj"
+
+  REM Option C:
+  REM   call build-msi.cmd
+
+Confirm the file exists before install:
+
+  dir dist\YourProduct.msi
+
+GSS website installer (GSSDMI / WebV4) lands here after a Release setup build:
+
+  F:\GSS\AppDev\gss-root\WebV4\installers\GSSWebSiteInstaller\Release\
+    *.msi
+    setup.exe
+
+GSS DispatchService installer lands here:
+
+  ...\Windows Services\GSS Dispatch Service\GSSDispServiceSetup\Release\*.msi
+
+The DevOps tool copies a successful MSI into F:\build-output\...\{app}\.
+
+
+================================================================================
+PART 2 — IIS: WHAT THE WEBSITE MSI DOES
+================================================================================
+A website / web-app MSI (GSSWebSiteInstaller, Web2ClientBridge.Setup, or
+your WiX .wixproj) is a Windows Installer package. During msiexec it:
+
+  1. Copies packaged site files into the IIS physical path (TARGETDIR /
+     Application Folder in the Setup project's File System editor).
+  2. Creates or updates the IIS site / virtual directory and app pool
+     (custom actions in the .vdproj / WiX authoring — product-specific).
+  3. Writes or overwrites Web.config in that folder (env-specific config
+     is often applied AFTER install — see STEP 6 Copy Config).
+
+IIS needs these published files (skip packages, .sln, .resx):
+
+  Bin\
+  *.aspx / *.ascx
+  Web.config
+  App_Themes\  (and other static assets)
+
+GSS API and IMC do not use this path — they are FolderProfile publish
++ Copy Files, not MSI.
+
+
+--------------------------------------------------------------------------------
+STEP 1 — backup the existing IIS site folder
+--------------------------------------------------------------------------------
+DevOps SIT / CAT / PROD lock deploy until application backup completes.
+Copy the current site to the env backup folder first, for example:
+
+  xcopy /E /I /Y "C:\inetpub\wwwroot\YourSite" "D:\backups\SIT\YourSite"
+
+PROD also drains the load balancer first (rename health.gif → health.dat)
+and waits until active connections = 0.
+
+
+--------------------------------------------------------------------------------
+STEP 2 — silently install the website MSI
+--------------------------------------------------------------------------------
+Same command as Jenkinsfile stage "Install MSI". Run as Administrator.
+Prerequisites already installed → msiexec the .msi. Otherwise run setup.exe.
+
+  msiexec /i "dist\YourProduct.msi" /quiet /norestart /l*v "%CD%\msiexec-install.log"
+
+Exit codes (Jenkinsfile treats both as success):
+  0     = success
+  3010  = success, reboot required (/norestart so reboot is skipped)
+  other = failure — read msiexec-install.log
+
+Verbose log is archived by the Jenkinsfile post { always } block
+(dist\*.msi, msiexec-*.log).
+
+
+--------------------------------------------------------------------------------
+STEP 3 — confirm files landed in IIS
+--------------------------------------------------------------------------------
+  dir "C:\inetpub\wwwroot\YourSite"
+  dir "C:\inetpub\wwwroot\YourSite\Bin"
+  dir "C:\inetpub\wwwroot\YourSite\Web.config"
+
+You should see the published layout from STEP 1's MSI payload
+(Bin, pages, Web.config, themes/assets). Empty folder = MSI did not
+use this TARGETDIR — check the Setup File System editor / WiX INSTALLFOLDER
+and the msiexec log (FileCopy / InstallFiles).
+
+
+--------------------------------------------------------------------------------
+STEP 4 — confirm the IIS site and app pool
+--------------------------------------------------------------------------------
+  %windir%\system32\inetsrv\appcmd.exe list site
+  %windir%\system32\inetsrv\appcmd.exe list site /site.name:"YourIisSite"
+  %windir%\system32\inetsrv\appcmd.exe list apppool
+  %windir%\system32\inetsrv\appcmd.exe list vdir /app.name:"YourIisSite/"
+
+Or PowerShell (IIS Administration):
+
+  Import-Module WebAdministration
+  Get-Website -Name "YourIisSite"
+  Get-WebAppPoolState -Name "YourAppPool"
+  Get-WebFilePath -PSPath "IIS:\Sites\YourIisSite"
+
+Site missing after MSI = the installer did not include IIS custom actions.
+Then use PART 2 STEP 5 (manual site) or the DevOps Copy Files path below.
+
+
+--------------------------------------------------------------------------------
+STEP 5 — if the MSI only copied files (no IIS objects)
+--------------------------------------------------------------------------------
+Create / bind the site to the folder the MSI filled:
+
+  %windir%\system32\inetsrv\appcmd.exe add apppool /name:"YourAppPool"
+  %windir%\system32\inetsrv\appcmd.exe add site /name:"YourIisSite" /physicalPath:"C:\inetpub\wwwroot\YourSite" /bindings:"http/*:80:YourIisSite"
+  %windir%\system32\inetsrv\appcmd.exe set app "YourIisSite/" /applicationPool:"YourAppPool"
+
+Swap port, host header, and paths for the environment.
+
+
+--------------------------------------------------------------------------------
+STEP 6 — after MSI: env config + recycle (DevOps "Copy Config")
+--------------------------------------------------------------------------------
+SIT / CAT / PROD Win Service flow copies config after install. Web apps
+that used Copy Files instead of MSI do the equivalent here: overlay the
+environment Web.config / appsettings after files are in place.
+
+  copy /Y "D:\configs\SIT\Web.config" "C:\inetpub\wwwroot\YourSite\Web.config"
+
+  %windir%\system32\inetsrv\appcmd.exe recycle apppool /apppool.name:"YourAppPool"
+
+Optional smoke check:
+
+  curl -I http://localhost/YourIisSite/
+
+
+--------------------------------------------------------------------------------
+ALTERNATE WEB PATH — DevOps Copy Files (no MSI)
+--------------------------------------------------------------------------------
+On SIT / CAT / PROD the UI treats Web Forms / API / MVC / ASMX as
+Copy Files, not Install MSI. That is the FolderProfile / PrecompiledWeb
+output copied onto the IIS physical path (same file set IIS needs).
+
+  1. Backup current site (STEP 1)
+  2. Copy from F:\build-output\{App}\ (or server_web\{appName}\)
+     into C:\inetpub\wwwroot\YourSite\
+     Skip: packages, .sln, .resx
+  3. Copy env Web.config if it is not in the publish output
+  4. Recycle the app pool (STEP 6)
+  5. Status = Ready (Rollback is available for web Copy Files)
+
+Use this for GSS API / IMC. Use PART 2 STEPS 2–6 when the product
+ships a website MSI (GSSDMI installer, Web2ClientBridge.Setup).
+
+
+================================================================================
+PART 3 — WINDOWS SERVICE: WHAT THE SERVICE MSI DOES
+================================================================================
+A Windows service MSI (GSS DispatchService / GSSDispServiceSetup, or
+your WiX ServiceInstall) during msiexec:
+
+  1. Copies the service binaries (Primary Output of the .csproj) to
+     the install folder (Program Files\... or the path in File System).
+  2. Registers the Windows service (ServiceInstall / sc create equivalent
+     inside the MSI).
+  3. Starts the service when ServiceControl Start="install" is authored
+     (or the service starts because StartType is Automatic).
+
+Do NOT use FolderProfile on a service app. buildCommand is msbuild /t:Build.
+
+
+--------------------------------------------------------------------------------
+STEP 1 — backup / stop the existing service (if already installed)
+--------------------------------------------------------------------------------
+  sc.exe query "YourWindowsService"
+  sc.exe stop "YourWindowsService"
+
+If the service does not exist yet, query returns a non-zero exit.
+That is OK for a first install. Continue.
+
+Backup the current install folder and config (DevOps application backup
+must finish before Install MSI is enabled):
+
+  xcopy /E /I /Y "C:\Program Files\YourProduct" "D:\backups\SIT\YourProduct"
+
+
+--------------------------------------------------------------------------------
+STEP 2 — silently install the service MSI
+--------------------------------------------------------------------------------
+Same command as Jenkinsfile stage "Install MSI":
+
+  msiexec /i "dist\YourProduct.msi" /quiet /norestart /l*v "%CD%\msiexec-install.log"
+
+  set EXITCODE=%ERRORLEVEL%
+  REM 0 = success; 3010 = success, reboot required
+  if %EXITCODE% EQU 0 goto :ok
+  if %EXITCODE% EQU 3010 goto :ok
+  echo msiexec failed with exit code %EXITCODE%. See msiexec-install.log
+  exit /b %EXITCODE%
+  :ok
+
+On SIT / CAT / PROD the DevOps UI: Install MSI → Confirm install.
+
+
+--------------------------------------------------------------------------------
+STEP 3 — verify the service was created
+--------------------------------------------------------------------------------
+Jenkinsfile stage "Verify Service" (PowerShell on the windows agent):
+
+  sc.exe query YourWindowsService
+
+  powershell -NoProfile -Command ^
+    "$name = 'YourWindowsService'; " ^
+    "$svc = Get-Service -Name $name -ErrorAction SilentlyContinue; " ^
+    "if (-not $svc) { throw \"Service '$name' was not created after MSI install.\" }; " ^
+    "Write-Host \"Service found: $($svc.Name)  Status=$($svc.Status)  StartType=$($svc.StartType)\"; " ^
+    "if ($svc.Status -ne 'Running') { throw \"Service '$name' exists but is not Running (Status=$($svc.Status)).\" }"
+
+Pass = service exists AND Status = Running.
+Fail = missing service, or created but Stopped / StartPending forever.
+
+If it exists but is not Running:
+
+  sc.exe start "YourWindowsService"
+  sc.exe qc "YourWindowsService"
+
+Check StartType. If the MSI registered it as demand-start, either start
+it here or change the WiX/vdproj ServiceInstall to Automatic.
+
+
+--------------------------------------------------------------------------------
+STEP 4 — Copy Config (after confirm install)
+--------------------------------------------------------------------------------
+DevOps Win Service path: Install MSI → Confirm install → Copy Config
+→ Status = Ready.
+
+Overlay environment config (connection strings, appsettings) onto the
+folder the MSI installed, then restart so the service picks them up:
+
+  copy /Y "D:\configs\SIT\YourService.exe.config" "C:\Program Files\YourProduct\YourService.exe.config"
+  sc.exe stop "YourWindowsService"
+  sc.exe start "YourWindowsService"
+  sc.exe query "YourWindowsService"
+
+
+--------------------------------------------------------------------------------
+STEP 5 — uninstall / node cleanup
+--------------------------------------------------------------------------------
+Jenkinsfile post { cleanup } best-effort uninstall (does not fail the build):
+
+  msiexec /x "dist\YourProduct.msi" /quiet /norestart /l*v "%CD%\msiexec-uninstall.log"
+
+That removes the service registration and installed files so the next
+pipeline run starts clean. Skip this on a real SIT/CAT/PROD box unless
+you are rolling back.
+
+post { always } also archives dist\*.msi and msiexec-*.log.
+post { success } logs that the MSI installed and the service is running.
+post { failure } points at msiexec-*.log and the Verify Service stage.
+
+
+================================================================================
+PART 4 — JENKINSFILE vs DEVOPS UI (quick map)
+================================================================================
+Jenkinsfile (root) — automated on agent { label 'windows' }:
+  Build MSI     → msbuild / candle+light / build-msi.cmd  (PLACEHOLDER)
+  Install MSI   → msiexec /i /quiet /norestart
+  Verify Service→ sc query + Get-Service must be Running
+  post          → archive logs/MSI; msiexec /x cleanup
+
+DevOps tool SIT / CAT / PROD tabs:
+  Web           → Copy Files (IIS physical path) → Ready
+  Win Service   → Install MSI → Confirm → Copy Config → Ready
+  PROD extra    → backup → drain LB (health.gif) → deploy → return LB
+
+Use PART 2 for IIS (website MSI or Copy Files).
+Use PART 3 for Windows service MSI (matches the Jenkinsfile verify stage).
+
+
+================================================================================
+CHECKLIST
+================================================================================
+[ ] Swapped MSI_NAME, SERVICE_NAME, IIS_SITE_NAME, IIS_PHYSICAL
+[ ] dist\YourProduct.msi (or Release\*.msi) exists
+[ ] Ran msiexec /i ... /quiet /norestart as Administrator
+[ ] Exit 0 or 3010
+[ ] IIS: site folder has Bin, pages, Web.config (or Copy Files done)
+[ ] IIS: appcmd list site shows YourIisSite; app pool started
+[ ] Service: sc query shows the service
+[ ] Service: Get-Service Status = Running
+[ ] Env config copied after install where required
+[ ] msiexec-install.log kept (Jenkins archives it)
+
+
+================================================================================
+RELATED FILES
+================================================================================
+  Jenkinsfile
+  docs/deployment-flow.md
+  docs/fixes/gss-website-installer-msi-release-build.txt
+  docs/fixes/gssdmi-msi-setup-exe-follow.txt
+  docs/fixes/web-to-client-bridge-setup-msi.txt
+  docs/fixes/gss-dispatch-service-net2-msi.txt
+  docs/fixes/gssweb-aspnet-webforms-build-publish.txt
+  docs/fixes/MIGRATION-FOLDER-MAINTENANCE.txt
+
+
+================================================================================
+END
+================================================================================
