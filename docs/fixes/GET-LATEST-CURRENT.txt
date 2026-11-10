@@ -3,6 +3,15 @@ USE THIS FILE ONLY — Get latest (toolbar) + Build (no git)
 Pointers + current flow for BuildTab.razor
 ================================================================================
 
+SYMPTOM — OUTPUT LOG: Checkout failed. / Failed to checkout branch 'GSSv9.3S1'
+  while DB rollup still says Git OK for the same branch under DBRollupScript:
+
+    docs/fixes/get-latest-checkout-failed-gss-root.txt
+
+  That is Get latest switching F:\GSS\AppDev\gss-root (dirty tree / worktree lock /
+  hidden git stderr). It is NOT a Copilot fusion-model error.
+
+
 CURRENT FLOW (with branch dropdown)
 -----------------------------------
 Full step-by-step paste guide (USE THIS):

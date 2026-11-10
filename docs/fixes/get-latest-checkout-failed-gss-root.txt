@@ -1,0 +1,298 @@
+================================================================================
+FIX NOW — Get latest: "Checkout failed" for GSSv9.3S1 at gss-root
+DB rollup folders still pull OK. OUTPUT LOG has no git fatal/error lines.
+================================================================================
+
+YOUR LOG (this is Get latest, NOT a Copilot / fusion-model error)
+-----------------------------------------------------------------
+    [INFO] Loading repo branches from F:\GSS\AppDev\gss-root...
+    [ERROR] Parsed 0 GSS branches. Check Repo Root is a Git repo.
+    [INFO] Switching to branch 'GSSv9.3S1' at F:\GSS\AppDev\gss-root...
+    [ERROR] Checkout failed.
+    [INFO] Failed to checkout branch 'GSSv9.3S1'.
+    [INFO] Pull branch 'GSSv9.3S2' into rollup folder...
+    [INFO] Git OK for GSSv9.3S2 -> F:\GSS\DBRollupScript\GSSv9.3S2
+    [INFO] Pull branch 'GSSv9.3S1' into rollup folder...
+    [INFO] Git OK for GSSv9.3S1 -> F:\GSS\DBRollupScript\GSSv9.3S1
+
+
+WHAT FAILED vs WHAT SUCCEEDED
+-----------------------------
+FAILED  = Get latest checkout INSIDE the one working tree
+          F:\GSS\AppDev\gss-root
+          Command (today): git fetch origin && git checkout GSSv9.3S1 && git pull --ff-only
+          That SWITCHES the whole app repo to GSSv9.3S1.
+
+OK      = DB ROLLUP pull into SEPARATE folders
+          F:\GSS\DBRollupScript\GSSv9.3S1
+          F:\GSS\DBRollupScript\GSSv9.3S2
+          Those folders are already on that branch (gss-database worktree/clone).
+          Pull there does not switch gss-root.
+
+So git is fine. The branch exists. Only in-place checkout of gss-root failed.
+
+The log never printed git's own message (no "fatal:" / "error:"). That is why
+it looks mysterious. The tool swallowed stderr / did not flush git stdout.
+
+
+WHY CHECKOUT AT gss-root FAILS (pick one — cmd below tells you which)
+---------------------------------------------------------------------
+1) BRANCH ALREADY CHECKED OUT IN A WORKTREE  ← best match for THIS log
+     fatal: 'GSSv9.3S1' is already used by worktree at
+            'F:\GSS\DBRollupScript\GSSv9.3S1'
+     Happens if From/To folders were created with
+       git worktree add  FROM gss-root
+     instead of from gss-database.
+     Pull in that folder still succeeds (already on the branch).
+     Checkout in gss-root is blocked instantly — matches
+     "Switching..." and "Checkout failed." in the same second.
+
+2) DIRTY TREE (local NuGet / csproj edits that differ on the other branch)
+     error: Your local changes to the following files would be overwritten by checkout
+     Please commit your changes or stash them before you switch branches.
+
+3) --ff-only REJECTED (diverged local branch)
+     fatal: Not possible to fast-forward, aborting.
+
+4) origin/GSSv9.3S1 missing in gss-root
+     Matches the earlier "Parsed 0 GSS branches" line if remotes were empty.
+     git checkout GSSv9.3S1 then dies immediately.
+
+
+CONFIRM IN CMD (run this — paste the output if it still fails)
+--------------------------------------------------------------
+    cd /d F:\GSS\AppDev\gss-root
+    git status -sb
+    git worktree list
+    git branch -r | findstr GSSv9.3
+    git checkout GSSv9.3S1
+
+Read the LAST command's fatal/error. That is the real reason.
+
+
+================================================================================
+FIX — REPLACE GetLatestAndShowAppsAsync in BuildTab.razor
+================================================================================
+DELETE your current GetLatestAndShowAppsAsync.
+
+PASTE this whole method (GET-LATEST-CHECKOUT-V2). It:
+
+  A) Logs every git line immediately ([GIT] prefix) so fatal/error is visible
+  B) Redirects stderr (2>&1) so cmd.exe errors reach RunCommandAsync
+  C) Stashes local changes before switching (same idea as per-app gitLatestCommand)
+  D) Uses  git checkout --ignore-other-worktrees -B <branch> origin/<branch>
+     so a DB-rollup worktree cannot block gss-root
+  E) On failure runs  git status -sb  +  git worktree list  into OUTPUT LOG
+
+Keep GetLatestFromRepoAsync / LoadApplicationsFromConfigAsync unchanged.
+
+    private async Task GetLatestAndShowAppsAsync()
+    {
+        if (_isGettingLatest)
+            return;
+
+        _isGettingLatest = true;
+        _showApplications = false;
+        try
+        {
+            var root = RepoRoot?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Repo Root not found: {root}");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            var gitDir = Path.Combine(root, ".git");
+            if (!Directory.Exists(gitDir) && !File.Exists(gitDir))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Not a git repo (missing .git): {root}");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            var branch = RepoFromBranch?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(branch))
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Select a branch in Get Latest From Repo Branch (click Refresh first).");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            // GET-LATEST-CHECKOUT-V2 — stash + fetch + force-track origin/<branch>
+            var checkoutCmd =
+                $"(git stash push -m \"devops-get-latest\" 2>&1 || ver > nul) && " +
+                $"git fetch origin 2>&1 && " +
+                $"git checkout --ignore-other-worktrees -B {branch} origin/{branch} 2>&1 && " +
+                $"git pull --ff-only 2>&1";
+
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] GET-LATEST-CHECKOUT-V2 Switching to branch '{branch}' at {root}...");
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Git: {checkoutCmd}");
+            await InvokeAsync(StateHasChanged);
+
+            StartLogFlushTimer();
+
+            var checkoutExit = await RunGitLoggedAsync(root, checkoutCmd);
+
+            if (checkoutExit != 0)
+            {
+                var trackCmd =
+                    $"(git stash push -m \"devops-get-latest\" 2>&1 || ver > nul) && " +
+                    $"git fetch origin 2>&1 && " +
+                    $"git checkout --ignore-other-worktrees {branch} 2>&1";
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Checkout failed (exit {checkoutExit}). Trying local: {trackCmd}");
+                await InvokeAsync(StateHasChanged);
+
+                checkoutExit = await RunGitLoggedAsync(root, trackCmd);
+            }
+
+            if (checkoutExit != 0)
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Failed to checkout branch '{branch}' (exit {checkoutExit})");
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Diagnostic git status / worktrees:");
+                await RunGitLoggedAsync(root, "git status -sb 2>&1 & git worktree list 2>&1 & git branch -vv 2>&1");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] On branch '{branch}' — getting latest per app...");
+            await InvokeAsync(StateHasChanged);
+
+            await LoadApplicationsFromConfigAsync();
+
+            if (BuildApps.Count == 0)
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] No applications in appsettings (build:applications)");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            var okCount = 0;
+            var failCount = 0;
+
+            foreach (var app in BuildApps)
+            {
+                app.Status = "Getting latest...";
+                await InvokeAsync(StateHasChanged);
+
+                var ok = await GetLatestFromRepoAsync(app, root, CancellationToken.None);
+                if (ok)
+                {
+                    app.Status = "Ready";
+                    okCount++;
+                }
+                else
+                {
+                    app.Status = "Failed";
+                    failCount++;
+                }
+
+                await InvokeAsync(StateHasChanged);
+            }
+
+            FlushPendingLogs();
+
+            _showApplications = true;
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [INFO] Get latest complete on '{branch}' — OK: {okCount}, Failed: {failCount}");
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"[{DateTime.Now:HH:mm:ss}] [ERROR] Get latest failed: {ex.Message}");
+            _showApplications = false;
+            await InvokeAsync(StateHasChanged);
+        }
+        finally
+        {
+            StopLogFlushTimer();
+            _isGettingLatest = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    /// <summary>
+    /// Run git and print every stdout/stderr line immediately ([GIT]).
+    /// Do NOT only buffer — that is why "Checkout failed" had no git text.
+    /// </summary>
+    private async Task<int> RunGitLoggedAsync(string workingDir, string command)
+    {
+        return await BuildService.RunCommandAsync(
+            workingDir,
+            command,
+            line =>
+            {
+                var text = (line ?? string.Empty).TrimEnd('\r', '\n');
+                if (text.Length == 0)
+                    return;
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] [GIT] {text}");
+            },
+            CancellationToken.None);
+    }
+
+
+================================================================================
+ALSO — DB rollup folders must NOT be worktrees of gss-root
+================================================================================
+From/To pull uses gss-database (dbScriptSource), NOT Repo Root.
+
+    docs/fixes/db-rollup-from-to-folder-create-getlatest.txt
+
+If cmd  git worktree list  (run in gss-root) shows:
+
+    F:\GSS\DBRollupScript\GSSv9.3S1    <hash>    GSSv9.3S1
+
+those folders were added from gss-root. After Get latest works, fix that:
+
+  1. Close the DevOps tool
+  2. cd /d F:\GSS\AppDev\gss-root
+  3. git worktree remove "F:\GSS\DBRollupScript\GSSv9.3S1" --force
+     git worktree remove "F:\GSS\DBRollupScript\GSSv9.3S2" --force
+     (only if they are listed under gss-root)
+  4. Recreate From/To folders using the gss-database guide above
+
+
+"Parsed 0 GSS branches" (14:17:41) is a SEPARATE parser bug
+(git stdout as one blob + Contains("HEAD") wipes every name):
+
+    docs/fixes/db-rollup-parsed-zero-multiline.txt
+
+Apply that to LoadRepoBranchesAsync if Refresh still shows 0 branches.
+
+
+================================================================================
+EXPECTED OUTPUT LOG after paste (Get latest on GSSv9.3S1)
+================================================================================
+    [INFO] GET-LATEST-CHECKOUT-V2 Switching to branch 'GSSv9.3S1' at F:\GSS\AppDev\gss-root...
+    [INFO] Git: (git stash push ... && git fetch origin && git checkout --ignore-other-worktrees -B GSSv9.3S1 origin/GSSv9.3S1 && git pull --ff-only
+    [GIT] Saved working directory and index state On ...: devops-get-latest
+          (or: No local changes to save)
+    [GIT] From ...
+    [GIT] Switched to and reset branch 'GSSv9.3S1'
+          (or: Already on 'GSSv9.3S1' / branch set up to track ...)
+    [INFO] On branch 'GSSv9.3S1' — getting latest per app...
+    [INFO] Get latest complete on 'GSSv9.3S1' — OK: N, Failed: 0
+
+If it still fails you WILL now see the real git line, e.g.:
+
+    [GIT] fatal: 'GSSv9.3S1' is already used by worktree at 'F:\GSS\DBRollupScript\GSSv9.3S1'
+    [GIT] ## GSSv9.3S2...origin/GSSv9.3S2
+    [GIT]  F:\GSS\AppDev\gss-root              <hash>  GSSv9.3S2
+    [GIT]  F:\GSS\DBRollupScript\GSSv9.3S1     <hash>  GSSv9.3S1
+
+
+================================================================================
+CHECKLIST
+================================================================================
+[ ] REPLACE GetLatestAndShowAppsAsync (do not keep old "Checkout failed." method)
+[ ] ADD RunGitLoggedAsync (one helper)
+[ ] Rebuild + run the DevOps tool
+[ ] OUTPUT LOG contains GET-LATEST-CHECKOUT-V2  (proves you pasted this)
+[ ] Click Get latest on GSSv9.3S1
+[ ] [GIT] lines appear (stash / fetch / checkout)
+[ ] APPLICATIONS grid shows after success
+[ ] If still failed: paste the [GIT] diagnostic lines (status + worktree list)
+
+
+================================================================================
+END
+================================================================================
