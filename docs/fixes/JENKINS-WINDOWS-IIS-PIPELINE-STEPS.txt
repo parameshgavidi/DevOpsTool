@@ -289,6 +289,16 @@ First-run wizard:
 
 You should see the Jenkins dashboard (New Item on the left).
 
+If the wizard says Offline, or Available plugins is empty with
+SocketException: Connection reset: skip plugins, finish the admin user,
+then install Git + Pipeline from this script (Administrator PowerShell):
+
+  docs/fixes/JENKINS-INSTALL-PIPELINE-GIT-PLUGINS.ps1
+
+On GitHub (open this on the Jenkins PC and copy the script):
+
+  https://github.com/parameshgavidi/DevOpsTool/blob/main/docs/fixes/JENKINS-INSTALL-PIPELINE-GIT-PLUGINS.ps1
+
 
 --------------------------------------------------------------------------------
 Confirm Git inside Jenkins
@@ -899,6 +909,10 @@ RELATED FILES
 
   docs/fixes/gssweb-aspnet-webforms-build-publish.txt
       Web Forms msbuild / publish flags used by GSSWeb
+
+  docs/fixes/JENKINS-INSTALL-PIPELINE-GIT-PLUGINS.ps1
+      Offline / Connection reset: download Pipeline + Git plugins
+      with PowerShell (Chrome network), copy into Jenkins, restart
 
 
 ================================================================================
