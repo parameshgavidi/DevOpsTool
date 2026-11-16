@@ -78,7 +78,7 @@ pipeline {
     agent any
 
     options {
-        timestamps()
+        // Do not use timestamps() unless the Timestamper plugin is installed.
         skipDefaultCheckout()
     }
 
