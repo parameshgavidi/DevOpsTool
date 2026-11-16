@@ -76,6 +76,8 @@ If "msbuild" is not on PATH, use full path from VS, e.g.:
 --------------------------------------------------------------------------------
 NOTES (GSSWeb only — does not change GSS Web Service post-build copy)
 --------------------------------------------------------------------------------
+- Jenkins IIS deploy (local Windows job gssweb-iis):
+  docs/fixes/JENKINS-GSSWEB-IIS-PIPELINE.txt
 - Legacy ASP.NET site path: WebV3\gssweb\gssweb.sln
   Site content folder: WebV3\gssweb\gssweb\  (Bin, App_Code, aspx, etc.)
 - Same publish copy pattern as GSS Web Service AFTER build succeeds:
