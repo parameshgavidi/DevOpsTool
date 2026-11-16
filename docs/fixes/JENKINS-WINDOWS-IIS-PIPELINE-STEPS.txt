@@ -914,6 +914,10 @@ RELATED FILES
       Offline / Connection reset: download Pipeline + Git plugins
       with PowerShell (Chrome network), copy into Jenkins, restart
 
+  docs/fixes/JENKINS-GSSWEB-IIS-PIPELINE.txt
+      Jenkins job gssweb-iis: get latest, FolderProfile publish,
+      copy GSSWeb into IIS (not the website MSI)
+
 
 ================================================================================
 END
