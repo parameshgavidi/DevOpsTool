@@ -1,0 +1,906 @@
+================================================================================
+JENKINS ON YOUR WINDOWS LAPTOP — GIT REPO TO IIS DEPLOY
+File: docs/fixes/JENKINS-WINDOWS-IIS-PIPELINE-STEPS.txt
+
+Follow-along notepad. Do these steps ON YOUR WINDOWS LAPTOP, in this order.
+Goal: install Jenkins locally, enable IIS, then run a Jenkins pipeline that
+clones a Git repository and deploys the site into IIS.
+
+This is a local laptop pipeline (Jenkins + IIS on the same machine).
+It is not the SIT / CAT / PROD DevOps tool flow in docs/deployment-flow.md.
+For MSI + Windows service on a Jenkins windows agent, use:
+
+  docs/fixes/MSI-Install-Deploy-Steps.txt
+  (pairs with the root Jenkinsfile)
+================================================================================
+
+
+PLACEHOLDERS — swap these before you run the pipeline
+----------------------------------------------------
+  GIT_URL            = https://github.com/YourOrg/YourWebApp.git
+  GIT_BRANCH         = main
+  JENKINS_PORT       = 8080
+  IIS_SITE_NAME      = YourIisSite
+  IIS_APP_POOL       = YourAppPool
+  IIS_PHYSICAL       = C:\inetpub\wwwroot\YourSite
+  IIS_HTTP_PORT      = 8081
+                       (use 8081 so IIS does not fight Jenkins on 8080)
+  PUBLISH_DIR        = publish
+                       (folder the pipeline writes, then copies into IIS)
+  MSBUILD_EXE        = C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe
+                       (or Professional / Community / 18 for VS 2026)
+  CSPROJ_OR_SLN      = src\YourWebApp\YourWebApp.csproj
+                       (or YourWebApp.sln)
+
+If the Git repo is already a ready website (aspx + Bin + Web.config,
+or a static site with index.html), you can skip BUILD TOOLS and use
+PATH B (copy files only) in PART 8.
+
+If the Git repo is source code (.csproj / .sln), use PATH A (build,
+then publish, then copy into IIS).
+
+
+--------------------------------------------------------------------------------
+HOW TO OPEN ADMINISTRATOR POWERSHELL
+--------------------------------------------------------------------------------
+IIS, Windows Features, and the first Jenkins service start need elevation.
+
+1. Start → type: powershell
+2. Right-click Windows PowerShell → Run as administrator
+3. Click Yes
+
+Keep that window open. Paste one block at a time. Wait for the prompt.
+
+
+--------------------------------------------------------------------------------
+WHAT YOU WILL INSTALL (in this order)
+--------------------------------------------------------------------------------
+  1. Git for Windows          — Jenkins uses this to clone the repo
+  2. Java 17 or 21 (Temurin)  — Jenkins itself runs on Java
+  3. IIS                      — the web server that will host the site
+  4. ASP.NET / Hosting Bundle — so IIS can run ASP.NET / ASP.NET Core
+  5. Build Tools (optional)   — only if you must compile the Git repo
+  6. Jenkins (Windows .msi)   — the CI server + pipeline
+
+Do not skip Git or Java. Jenkins will not clone or start without them.
+
+
+================================================================================
+PART 1 — INSTALL GIT FOR WINDOWS
+================================================================================
+1. Open a browser.
+2. Go to:  https://git-scm.com/download/win
+3. Download Git for Windows (64-bit).
+4. Run the installer. Click Next through the screens.
+   Keep these defaults unless you know you need something else:
+     - Git from the command line and also from 3rd-party software
+     - OpenSSL library
+     - Checkout as-is, commit Unix-style line endings is OK
+     - Use MinTTY  OR  Use Windows' default console  — either is fine
+5. Finish. Close the installer.
+
+Verify in Administrator PowerShell:
+
+  git --version
+
+You should see a version, for example:  git version 2.47.0.windows.1
+
+If it says 'git' is not recognized:
+  1. Close PowerShell
+  2. Open a NEW Administrator PowerShell
+  3. Run  git --version  again
+  4. If still missing, reinstall Git and tick
+     "Git from the command line and also from 3rd-party software"
+
+
+================================================================================
+PART 2 — INSTALL JAVA 17 OR 21 (JENKINS NEEDS THIS)
+================================================================================
+Jenkins LTS runs on Java 17 or Java 21. Use Eclipse Temurin (Adoptium).
+Do not install Java 8. Do not install a JRE-only package if the page
+offers a JDK — pick the JDK.
+
+1. Open a browser.
+2. Go to:  https://adoptium.net/temurin/releases/
+3. Operating System:  Windows
+   Architecture:      x64
+   Package Type:      JDK
+   Version:           21  (or 17)
+4. Download the .msi
+5. Run the .msi
+6. During setup, tick:
+     Set JAVA_HOME variable
+     Add to PATH  (or "JavaSoft (Oracle) registry keys" if you see it)
+7. Finish.
+
+Verify in a NEW Administrator PowerShell:
+
+  java -version
+  echo %JAVA_HOME%
+
+java -version should print a line with  21  or  17.
+If PowerShell prints 21/17 but echo %JAVA_HOME% is empty, that is OK
+as long as  java -version  works. Jenkins .msi also lets you pick
+the Java home during install.
+
+
+================================================================================
+PART 3 — TURN ON IIS ON THIS LAPTOP
+================================================================================
+Windows 10 / 11 Pro, Enterprise, and Home can enable IIS.
+
+GUI way (easiest):
+
+1. Start → type:  Turn Windows features on or off
+2. Open it.
+3. Tick  Internet Information Services
+4. Expand it and also tick these (if they are not already ticked):
+
+     Internet Information Services
+       Web Management Tools
+         IIS Management Console
+       World Wide Web Services
+         Application Development Features
+           .NET Extensibility 4.8
+           ASP
+           ASP.NET 4.8
+           ISAPI Extensions
+           ISAPI Filters
+         Common HTTP Features
+           Default Document
+           Directory Browsing
+           HTTP Errors
+           Static Content
+         Health and Diagnostics
+           HTTP Logging
+         Performance Features
+           Static Content Compression
+         Security
+           Request Filtering
+
+5. Click OK. Wait. Reboot if Windows asks.
+
+PowerShell way (same result, paste in Administrator PowerShell):
+
+  Enable-WindowsOptionalFeature -Online -FeatureName IIS-WebServerRole,IIS-WebServer,IIS-CommonHttpFeatures,IIS-HttpErrors,IIS-ApplicationDevelopment,IIS-NetFxExtensibility45,IIS-HealthAndDiagnostics,IIS-HttpLogging,IIS-Security,IIS-RequestFiltering,IIS-Performance,IIS-WebServerManagementTools,IIS-ManagementConsole,IIS-ASPNET45,IIS-ISAPIExtensions,IIS-ISAPIFilter,IIS-DefaultDocument,IIS-DirectoryBrowsing,IIS-StaticContent,IIS-HttpCompressionStatic,NetFx4Extended-ASPNET45 -All
+
+If a feature name is unknown on your SKU, skip that one name and continue.
+
+Verify IIS is running:
+
+  Get-Service W3SVC
+  Get-Website
+
+W3SVC Status should be Running.
+Get-Website should list at least  Default Web Site  on port 80.
+
+Open a browser on the laptop:
+
+  http://localhost/
+
+You should see the IIS welcome page (or an existing site). If the page
+does not load, go to PART 10 Troubleshooting, "IIS not serving".
+
+
+--------------------------------------------------------------------------------
+ASP.NET Core apps (extra)
+--------------------------------------------------------------------------------
+If the Git repo is ASP.NET Core (.NET 6 / 8 / 9), also install the
+ASP.NET Core Hosting Bundle so IIS can run it:
+
+  https://dotnet.microsoft.com/download/dotnet
+
+Pick the Hosting Bundle for the runtime your app uses (example: .NET 8).
+Run the installer. After it finishes, recycle IIS:
+
+  iisreset
+
+Classic ASP.NET / Web Forms / .NET Framework sites do NOT need this
+bundle. PART 3 ASP.NET 4.8 is enough for those.
+
+
+================================================================================
+PART 4 — BUILD TOOLS (ONLY IF THE GIT REPO MUST BE COMPILED)
+================================================================================
+Skip this whole PART if the repo is already a website folder
+(Bin, Web.config, aspx, html). Go to PART 5.
+
+If the repo has a .sln / .csproj and you need msbuild / dotnet publish:
+
+Option 1 — Visual Studio already installed
+  You already have MSBuild. Find it:
+
+    dir "C:\Program Files\Microsoft Visual Studio\2022\*\MSBuild\Current\Bin\MSBuild.exe"
+    dir "C:\Program Files\Microsoft Visual Studio\18\*\MSBuild\Current\Bin\MSBuild.exe"
+
+  Copy the full path. That is MSBUILD_EXE.
+
+Option 2 — Build Tools only (no full Visual Studio)
+  1. Go to:  https://visualstudio.microsoft.com/downloads/
+  2. Download Build Tools for Visual Studio
+  3. Run vs_BuildTools.exe
+  4. Tick:
+       ASP.NET and web development
+       .NET desktop build tools   (if the solution needs it)
+  5. Install. Reboot if asked.
+
+Verify:
+
+  & "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe" -version
+
+Swap the path if yours is Professional / Community / 2026.
+
+For ASP.NET Core you can also use:
+
+  dotnet --version
+
+If that fails, install the .NET SDK from the same download page as
+the Hosting Bundle (SDK, not only Runtime).
+
+
+================================================================================
+PART 5 — INSTALL JENKINS ON THIS LAPTOP
+================================================================================
+1. Open a browser.
+2. Go to:  https://www.jenkins.io/download/
+3. Download  Long-Term Support (LTS)  for Windows (.msi)
+4. Run  jenkins.msi
+5. When it asks for the Java home, pick the Temurin folder from PART 2.
+   Typical:
+
+     C:\Program Files\Eclipse Adoptium\jdk-21.x.x-hotspot
+
+6. Service logon: leave  Local System  (it can write to inetpub).
+7. Port: leave  8080  unless something else already uses 8080.
+   IIS will use 80 (Default Web Site) and 8081 (your app). Jenkins = 8080.
+8. Finish. Wait until the Jenkins service starts.
+
+Verify the Windows service:
+
+  Get-Service Jenkins
+
+Status should be Running. If Stopped:
+
+  Start-Service Jenkins
+  Get-Service Jenkins
+
+Unlock Jenkins (first login):
+
+1. Browser:  http://localhost:8080
+2. It asks for an initial admin password.
+3. In Administrator PowerShell:
+
+     Get-Content "C:\Program Files\Jenkins\secrets\initialAdminPassword"
+
+   If that file is missing, try:
+
+     Get-Content "C:\ProgramData\Jenkins\.jenkins\secrets\initialAdminPassword"
+
+4. Paste the password into the browser. Continue.
+
+First-run wizard:
+
+1. Click  Install suggested plugins
+   Wait until the plugin list finishes (Git, Pipeline, Credentials
+   are in that set).
+2. Create the first admin user (remember this username / password).
+3. Jenkins URL: leave  http://localhost:8080/
+4. Save and Finish. Click Start using Jenkins.
+
+You should see the Jenkins dashboard (New Item on the left).
+
+
+--------------------------------------------------------------------------------
+Confirm Git inside Jenkins
+--------------------------------------------------------------------------------
+1. Jenkins dashboard →  Manage Jenkins  →  Tools
+    (older UI: Global Tool Configuration)
+2. Git → if there is no Git installation, click Add Git
+     Name:  Default
+     Path to Git executable:  git.exe
+     (PATH from PART 1 is enough; Jenkins finds git.exe)
+3. Save.
+
+Optional — MSBuild tool (PATH A only):
+
+1. Manage Jenkins → Plugins → Available
+2. Search  MSBuild  → install  MSBuild plugin  if it is not there
+3. Manage Jenkins → Tools → MSBuild
+4. Add MSBuild
+     Name:  MSBuild
+     Path to MSBuild:  (the MSBUILD_EXE folder, not the .exe)
+     Example:
+       C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin
+5. Save.
+
+
+--------------------------------------------------------------------------------
+Git credentials (private repo only)
+--------------------------------------------------------------------------------
+Skip this if GIT_URL is a public HTTPS repo.
+
+1. Dashboard →  Manage Jenkins  →  Credentials
+2. (global) → Add Credentials
+3. Kind:  Username with password
+     Username:  your GitHub / Azure DevOps / GitLab username
+     Password:  a Personal Access Token (not your account password)
+     ID:        git-repo
+     Description: Git clone for IIS pipeline
+4. Create.
+
+HTTPS clone with a token is enough for this laptop pipeline.
+You do not need a Jenkins Windows agent on another machine — this
+laptop IS the Jenkins controller and the Windows node.
+
+
+================================================================================
+PART 6 — CREATE THE IIS SITE ONCE (MANUAL, BEFORE THE PIPELINE)
+================================================================================
+Do this once. The pipeline will copy files into this folder and recycle
+the app pool. It will not recreate the site every build.
+
+Paste in Administrator PowerShell. Swap the PLACEHOLDERS first.
+
+  $siteName  = "YourIisSite"
+  $poolName  = "YourAppPool"
+  $physPath  = "C:\inetpub\wwwroot\YourSite"
+  $port      = 8081
+
+  Import-Module WebAdministration
+
+  if (-not (Test-Path $physPath)) {
+      New-Item -ItemType Directory -Path $physPath | Out-Null
+  }
+
+  @"
+  <!DOCTYPE html>
+  <html>
+  <head><title>$siteName</title></head>
+  <body>
+    <h1>$siteName placeholder</h1>
+    <p>Jenkins has not deployed the Git repo yet.</p>
+  </body>
+  </html>
+  "@ | Set-Content -Path (Join-Path $physPath "index.html") -Encoding UTF8
+
+  if (-not (Test-Path "IIS:\AppPools\$poolName")) {
+      New-WebAppPool -Name $poolName
+  }
+
+  # .NET Framework / Web Forms sites:
+  Set-ItemProperty "IIS:\AppPools\$poolName" -Name managedRuntimeVersion -Value "v4.0"
+  # ASP.NET Core sites: use this instead of the line above:
+  # Set-ItemProperty "IIS:\AppPools\$poolName" -Name managedRuntimeVersion -Value ""
+
+  if (-not (Get-Website -Name $siteName -ErrorAction SilentlyContinue)) {
+      New-Website -Name $siteName -Port $port -PhysicalPath $physPath -ApplicationPool $poolName
+  }
+
+  Get-Website -Name $siteName
+  Get-WebAppPoolState -Name $poolName
+
+Browser check:
+
+  http://localhost:8081/
+
+You should see the placeholder page. If port 8081 is already in use,
+pick another port (8082, 8090) and swap IIS_HTTP_PORT everywhere.
+
+Leave Default Web Site on port 80. Do not bind your app to 8080
+(Jenkins). Do not bind it to 80 unless you have stopped Default Web Site.
+
+
+================================================================================
+PART 7 — CREATE THE JENKINS PIPELINE JOB
+================================================================================
+1. Jenkins dashboard →  New Item
+2. Name:  deploy-to-iis
+   (any name is fine; no spaces is easier)
+3. Type:  Pipeline
+4. Click OK
+
+On the job config page:
+
+  General
+    [optional] tick  GitHub project  and paste GIT_URL if it is GitHub
+
+  Pipeline
+    Definition:  Pipeline script
+    (use "Pipeline script from SCM" later, after this Jenkinsfile
+     lives in the Git repo. For the first run, paste the script.)
+
+5. Paste ONE of the two scripts from PART 8 (PATH A or PATH B).
+6. Swap every PLACEHOLDER in the script.
+7. Click Save.
+
+Do not click Build yet. Finish PART 8 swaps first.
+
+
+================================================================================
+PART 8 — PIPELINE SCRIPT (PICK PATH A OR PATH B)
+================================================================================
+PATH A — Git has source code. Jenkins builds / publishes, then copies
+         the publish folder into IIS.
+
+PATH B — Git already has the website files. Jenkins copies them into IIS.
+         No msbuild / dotnet.
+
+Both paths:
+  1. Checkout GIT_URL / GIT_BRANCH
+  2. Backup the current IIS folder
+  3. Stop the app pool
+  4. Copy files into IIS_PHYSICAL
+  5. Start / recycle the app pool
+  6. Hit http://localhost:IIS_HTTP_PORT/ and fail the build if it is down
+
+Paste into the job's Pipeline script box. This is Declarative Pipeline.
+It runs on the built-in node (your laptop). agent any  is correct here
+because Jenkins is installed on this same Windows machine.
+
+
+--------------------------------------------------------------------------------
+PATH A — build, publish, copy to IIS
+--------------------------------------------------------------------------------
+pipeline {
+    agent any
+
+    environment {
+        GIT_URL       = 'https://github.com/YourOrg/YourWebApp.git'
+        GIT_BRANCH    = 'main'
+        IIS_SITE_NAME = 'YourIisSite'
+        IIS_APP_POOL  = 'YourAppPool'
+        IIS_PHYSICAL  = 'C:\\inetpub\\wwwroot\\YourSite'
+        IIS_HTTP_PORT = '8081'
+        PUBLISH_DIR   = 'publish'
+        CSPROJ_OR_SLN = 'src\\YourWebApp\\YourWebApp.csproj'
+        MSBUILD_EXE   = 'C:\\Program Files\\Microsoft Visual Studio\\2022\\BuildTools\\MSBuild\\Current\\Bin\\MSBuild.exe'
+        BACKUP_ROOT   = 'C:\\inetpub\\backups'
+    }
+
+    options {
+        timestamps()
+    }
+
+    stages {
+        stage('Checkout Git') {
+            steps {
+                git branch: "${env.GIT_BRANCH}", url: "${env.GIT_URL}"
+                // Private repo: add   credentialsId: 'git-repo'
+                // git branch: "${env.GIT_BRANCH}", credentialsId: 'git-repo', url: "${env.GIT_URL}"
+            }
+        }
+
+        stage('Build and publish') {
+            steps {
+                bat '''
+                    if not exist "%PUBLISH_DIR%" mkdir "%PUBLISH_DIR%"
+
+                    REM ---- .NET Framework / Web Forms / ASP.NET 4.x ----
+                    "%MSBUILD_EXE%" "%CSPROJ_OR_SLN%" /p:Configuration=Release /p:DeployOnBuild=true /p:WebPublishMethod=FileSystem /p:PublishUrl="%CD%\\%PUBLISH_DIR%" /p:DeleteExistingFiles=true /v:minimal
+
+                    REM ---- ASP.NET Core instead of the msbuild line ----
+                    REM dotnet publish "%CSPROJ_OR_SLN%" -c Release -o "%PUBLISH_DIR%"
+
+                    if not exist "%PUBLISH_DIR%\\Web.config" (
+                        if not exist "%PUBLISH_DIR%\\web.config" (
+                            if not exist "%PUBLISH_DIR%\\index.html" (
+                                echo ERROR: publish folder has no Web.config or index.html
+                                dir /s /b "%PUBLISH_DIR%"
+                                exit /b 1
+                            )
+                        )
+                    )
+                '''
+            }
+        }
+
+        stage('Backup IIS site') {
+            steps {
+                powershell '''
+                    $stamp  = Get-Date -Format "yyyyMMdd-HHmmss"
+                    $src    = $env:IIS_PHYSICAL
+                    $dest   = Join-Path $env:BACKUP_ROOT $stamp
+                    New-Item -ItemType Directory -Path $dest -Force | Out-Null
+                    if (Test-Path $src) {
+                        Copy-Item -Path (Join-Path $src "*") -Destination $dest -Recurse -Force
+                    }
+                    Write-Host "Backup written to $dest"
+                '''
+            }
+        }
+
+        stage('Deploy to IIS') {
+            steps {
+                powershell '''
+                    Import-Module WebAdministration
+                    $pool = $env:IIS_APP_POOL
+                    $dest = $env:IIS_PHYSICAL
+                    $src  = Join-Path $env:WORKSPACE $env:PUBLISH_DIR
+
+                    if (-not (Test-Path $src)) { throw "Publish folder missing: $src" }
+                    if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest | Out-Null }
+
+                    Write-Host "Stopping app pool $pool"
+                    Stop-WebAppPool -Name $pool -ErrorAction SilentlyContinue
+                    $deadline = (Get-Date).AddSeconds(30)
+                    do {
+                        Start-Sleep -Seconds 1
+                        $state = (Get-WebAppPoolState -Name $pool).Value
+                    } while ($state -ne "Stopped" -and (Get-Date) -lt $deadline)
+
+                    Write-Host "Copying $src -> $dest"
+                    Copy-Item -Path (Join-Path $src "*") -Destination $dest -Recurse -Force
+
+                    Write-Host "Starting app pool $pool"
+                    Start-WebAppPool -Name $pool
+                    Start-Sleep -Seconds 2
+                    $state = (Get-WebAppPoolState -Name $pool).Value
+                    Write-Host "App pool state: $state"
+                    if ($state -ne "Started") { throw "App pool '$pool' is $state" }
+                '''
+            }
+        }
+
+        stage('Smoke test') {
+            steps {
+                powershell '''
+                    $url = "http://localhost:$($env:IIS_HTTP_PORT)/"
+                    Write-Host "GET $url"
+                    try {
+                        $r = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 30
+                    } catch {
+                        throw "Smoke test failed for $url : $_"
+                    }
+                    if ($r.StatusCode -ge 400) { throw "HTTP $($r.StatusCode) from $url" }
+                    Write-Host "HTTP $($r.StatusCode) from $url"
+                '''
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "Pipeline finished: ${currentBuild.currentResult}"
+        }
+        success {
+            echo "Git ${env.GIT_BRANCH} is on IIS site ${env.IIS_SITE_NAME}  http://localhost:${env.IIS_HTTP_PORT}/"
+        }
+        failure {
+            echo "Failed. Open the failed stage log. Confirm Git clone, publish folder, and IIS app pool."
+        }
+    }
+}
+
+
+--------------------------------------------------------------------------------
+PATH B — copy Git files straight into IIS (no compile)
+--------------------------------------------------------------------------------
+Use this when the repo root (or a subfolder) already is the website.
+
+pipeline {
+    agent any
+
+    environment {
+        GIT_URL       = 'https://github.com/YourOrg/YourWebApp.git'
+        GIT_BRANCH    = 'main'
+        IIS_SITE_NAME = 'YourIisSite'
+        IIS_APP_POOL  = 'YourAppPool'
+        IIS_PHYSICAL  = 'C:\\inetpub\\wwwroot\\YourSite'
+        IIS_HTTP_PORT = '8081'
+        SITE_SUBDIR   = '.'
+                        // '.' = repo root. Or 'src\\Website' if the site
+                        // files live in a subfolder.
+        BACKUP_ROOT   = 'C:\\inetpub\\backups'
+    }
+
+    options {
+        timestamps()
+    }
+
+    stages {
+        stage('Checkout Git') {
+            steps {
+                git branch: "${env.GIT_BRANCH}", url: "${env.GIT_URL}"
+                // Private repo:
+                // git branch: "${env.GIT_BRANCH}", credentialsId: 'git-repo', url: "${env.GIT_URL}"
+            }
+        }
+
+        stage('Backup IIS site') {
+            steps {
+                powershell '''
+                    $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+                    $src   = $env:IIS_PHYSICAL
+                    $dest  = Join-Path $env:BACKUP_ROOT $stamp
+                    New-Item -ItemType Directory -Path $dest -Force | Out-Null
+                    if (Test-Path $src) {
+                        Copy-Item -Path (Join-Path $src "*") -Destination $dest -Recurse -Force
+                    }
+                    Write-Host "Backup written to $dest"
+                '''
+            }
+        }
+
+        stage('Deploy to IIS') {
+            steps {
+                powershell '''
+                    Import-Module WebAdministration
+                    $pool = $env:IIS_APP_POOL
+                    $dest = $env:IIS_PHYSICAL
+                    $src  = Join-Path $env:WORKSPACE $env:SITE_SUBDIR
+
+                    if (-not (Test-Path $src)) { throw "Site folder missing: $src" }
+                    if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest | Out-Null }
+
+                    Stop-WebAppPool -Name $pool -ErrorAction SilentlyContinue
+                    $deadline = (Get-Date).AddSeconds(30)
+                    do {
+                        Start-Sleep -Seconds 1
+                        $state = (Get-WebAppPoolState -Name $pool).Value
+                    } while ($state -ne "Stopped" -and (Get-Date) -lt $deadline)
+
+                    Write-Host "Copying $src -> $dest"
+                    # Skip .git so the site folder is not a nested clone
+                    Get-ChildItem -Path $src -Force |
+                        Where-Object { $_.Name -ne '.git' } |
+                        Copy-Item -Destination $dest -Recurse -Force
+
+                    Start-WebAppPool -Name $pool
+                    Start-Sleep -Seconds 2
+                    $state = (Get-WebAppPoolState -Name $pool).Value
+                    Write-Host "App pool state: $state"
+                    if ($state -ne "Started") { throw "App pool '$pool' is $state" }
+                '''
+            }
+        }
+
+        stage('Smoke test') {
+            steps {
+                powershell '''
+                    $url = "http://localhost:$($env:IIS_HTTP_PORT)/"
+                    Write-Host "GET $url"
+                    try {
+                        $r = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 30
+                    } catch {
+                        throw "Smoke test failed for $url : $_"
+                    }
+                    if ($r.StatusCode -ge 400) { throw "HTTP $($r.StatusCode) from $url" }
+                    Write-Host "HTTP $($r.StatusCode) from $url"
+                '''
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "Pipeline finished: ${currentBuild.currentResult}"
+        }
+        success {
+            echo "Git ${env.GIT_BRANCH} is on IIS site ${env.IIS_SITE_NAME}  http://localhost:${env.IIS_HTTP_PORT}/"
+        }
+        failure {
+            echo "Failed. Open the failed stage log. Confirm Git clone, SITE_SUBDIR, and IIS app pool."
+        }
+    }
+}
+
+
+--------------------------------------------------------------------------------
+After the first green build — store the script in Git
+--------------------------------------------------------------------------------
+1. Copy the same Pipeline script into a file named  Jenkinsfile  in
+   YOUR WEB APP repo (not required in this DevOpsTool repo).
+2. In the Jenkins job → Configure → Pipeline
+     Definition:  Pipeline script from SCM
+     SCM:         Git
+     Repository URL:  GIT_URL
+     Credentials:     git-repo  (if private)
+     Branch:          */main     (or */GIT_BRANCH)
+     Script Path:     Jenkinsfile
+3. Save.
+
+Next builds will clone that Jenkinsfile from Git. You stop pasting
+the script in the Jenkins UI.
+
+
+================================================================================
+PART 9 — RUN THE FIRST BUILD
+================================================================================
+1. Open the job  deploy-to-iis
+2. Click  Build Now
+3. Click the build number (example: #1) →  Console Output
+4. Watch the stages:
+     Checkout Git
+     Build and publish     (PATH A only)
+     Backup IIS site
+     Deploy to IIS
+     Smoke test
+
+Pass:
+  Console ends with  Finished: SUCCESS
+  Browser  http://localhost:8081/  shows the Git site, not the
+  PART 6 placeholder page.
+
+Fail:
+  Open the red stage. Use PART 10. Fix. Click Build Now again.
+  Do not skip reading the Console Output.
+
+
+================================================================================
+PART 10 — TROUBLESHOOTING
+================================================================================
+Jenkins page will not open (http://localhost:8080)
+
+  Get-Service Jenkins
+  Start-Service Jenkins
+  Get-Content "C:\Program Files\Jenkins\jenkins.err.log" -Tail 80
+
+  If the log says port 8080 is in use:
+    1. Stop the other app on 8080, OR
+    2. Edit  C:\ProgramData\Jenkins\.jenkins\httpPort  /  jenkins.xml
+       <arguments> ... --httpPort=8099</arguments>
+    3. Restart-Service Jenkins
+
+
+'java' is not recognized, or Jenkins service stuck on Starting
+
+  java -version
+  Reinstall Temurin JDK 17/21 with JAVA_HOME ticked.
+  In  C:\Program Files\Jenkins\jenkins.xml  confirm the Java path
+  inside <executable> points at the Temurin javaw.exe.
+  Restart-Service Jenkins
+
+
+Checkout Git fails (authentication)
+
+  Public HTTPS URL: confirm it opens in a browser.
+  Private repo: add credentialsId: 'git-repo' as in PART 5 / PART 8.
+  Use a Personal Access Token as the password, not the Git website
+  password.
+  Corporate Git: confirm git clone works in PowerShell first:
+
+    git clone https://github.com/YourOrg/YourWebApp.git %TEMP%\git-test
+
+
+Checkout Git fails ('git' is not recognized in the job)
+
+  Jenkins service started before Git was on PATH.
+  Restart-Service Jenkins
+  In the job log, Jenkins prints the PATH. Confirm git.exe is on it.
+  Or set the Git tool path to the full executable:
+
+    C:\Program Files\Git\cmd\git.exe
+
+
+MSBuild / dotnet publish fails (PATH A)
+
+  Confirm CSPROJ_OR_SLN is relative to the repo root.
+  Confirm MSBUILD_EXE exists (dir that path).
+  Restore NuGet if the log says packages are missing:
+
+    "%MSBUILD_EXE%" "%CSPROJ_OR_SLN%" /t:Restore /p:Configuration=Release
+
+  ASP.NET Core: install the SDK (PART 4), then use  dotnet publish.
+  Web Forms: see docs/fixes/gssweb-aspnet-webforms-build-publish.txt
+  in this repo for GSS-specific msbuild flags.
+
+
+Deploy to IIS fails — cannot stop / start app pool
+
+  Import-Module WebAdministration must run 64-bit PowerShell.
+  Jenkins on Windows already does that.
+  Confirm the site from PART 6 exists:
+
+    Import-Module WebAdministration
+    Get-Website
+    Get-WebAppPoolState -Name "YourAppPool"
+
+  If the pool is Stopping forever:  iisreset   then Build Now again.
+
+
+Deploy copies files but the browser still shows the placeholder
+
+  You are hitting the wrong port (80 = Default Web Site).
+  Use  http://localhost:8081/
+  Confirm physical path:
+
+    Import-Module WebAdministration
+    Get-WebFilePath -PSPath "IIS:\Sites\YourIisSite"
+
+  It must be  C:\inetpub\wwwroot\YourSite
+  dir that folder — you should see the Git / publish files.
+
+
+Smoke test HTTP 500
+
+  Site files arrived, but the app crashed.
+  Check:
+    C:\inetpub\wwwroot\YourSite\Web.config
+    Windows Event Viewer → Windows Logs → Application
+  ASP.NET Core: confirm the Hosting Bundle is installed (PART 3)
+  and the app pool managedRuntimeVersion is empty (no v4.0).
+  .NET Framework: app pool must be v4.0, not "No Managed Code".
+
+
+IIS not serving at all
+
+  Get-Service W3SVC
+  Start-Service W3SVC
+  Get-Website
+  New-NetFirewallRule is usually not needed for localhost.
+  If http://localhost/  (port 80) also fails, rerun PART 3.
+
+
+Firewall / other PCs on the LAN
+
+  Localhost-only is enough for this laptop lab.
+  To open the site from another machine:
+    http://YOUR-LAPTOP-IP:8081/
+  Allow inbound TCP 8081 (IIS) and 8080 (Jenkins) in Windows Defender
+  Firewall. Do not do this on an untrusted network.
+
+
+================================================================================
+PART 11 — DAILY USE (AFTER IT WORKS ONCE)
+================================================================================
+Change code → push to GIT_BRANCH → in Jenkins click Build Now.
+
+Optional — build on every push (local laptop, polling):
+
+  Job → Configure → Build Triggers → poll SCM
+  Schedule:  H/5 * * * *     (about every 5 minutes)
+
+Webhooks from GitHub to localhost will not work unless you expose
+the laptop. Polling is the right trigger for this setup.
+
+Rollback one deploy:
+
+  dir C:\inetpub\backups
+  Pick the stamp folder from before the bad build.
+  Copy it back over  C:\inetpub\wwwroot\YourSite
+  Recycle:
+
+    Import-Module WebAdministration
+    Restart-WebAppPool -Name "YourAppPool"
+
+
+================================================================================
+CHECKLIST
+================================================================================
+[ ] Git for Windows installed;  git --version  works
+[ ] Temurin JDK 17 or 21;  java -version  works
+[ ] IIS enabled;  http://localhost/  shows the IIS page
+[ ] ASP.NET 4.8 features on  (and Hosting Bundle if ASP.NET Core)
+[ ] Build Tools / VS only if PATH A
+[ ] Jenkins .msi installed; service Running
+[ ] http://localhost:8080  unlocked; admin user created
+[ ] Suggested plugins installed (Git + Pipeline)
+[ ] Private repo: credential ID  git-repo
+[ ] IIS site YourIisSite on port 8081; placeholder page loads
+[ ] Job  deploy-to-iis  created; PLACEHOLDERS swapped
+[ ] First build Finished: SUCCESS
+[ ] http://localhost:8081/  shows the Git site
+[ ] Optional: Jenkinsfile committed in the web app repo; job set to
+    Pipeline script from SCM
+
+
+================================================================================
+RELATED FILES
+================================================================================
+  Jenkinsfile
+      MSI build → silent install → verify Windows service
+      (different from this laptop IIS copy-files pipeline)
+
+  docs/fixes/MSI-Install-Deploy-Steps.txt
+      IIS site + Windows service after an MSI, on a windows agent
+
+  docs/deployment-flow.md
+      DevOps tool BUILD → SIT → CAT → PROD (not Jenkins)
+
+  docs/fixes/gssweb-aspnet-webforms-build-publish.txt
+      Web Forms msbuild / publish flags used by GSSWeb
+
+
+================================================================================
+END
+================================================================================

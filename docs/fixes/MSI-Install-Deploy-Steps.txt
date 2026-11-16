@@ -362,6 +362,9 @@ RELATED FILES
 ================================================================================
   Jenkinsfile
   docs/deployment-flow.md
+  docs/fixes/JENKINS-WINDOWS-IIS-PIPELINE-STEPS.txt
+      Local Windows laptop: install Git, Java, IIS, Jenkins; pipeline
+      clones a Git repo and deploys it into IIS (copy-files, not MSI)
   docs/fixes/gss-website-installer-msi-release-build.txt
   docs/fixes/gssdmi-msi-setup-exe-follow.txt
   docs/fixes/web-to-client-bridge-setup-msi.txt
