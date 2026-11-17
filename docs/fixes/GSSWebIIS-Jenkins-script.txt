@@ -1,7 +1,5 @@
-// NEW FILE — paste this entire file into Jenkins job GSSWebIIS.
-// Configure → Pipeline script → replace all → Save → Build Now.
-// FETCH_FAILED using local files is OK. IIS is port 80.
-// Skip Crystal Reports backup csproj. Skip SSRS .rptproj / .vdproj (same as VS / DevOpsTool).
+// GSSWebIIS-Jenkins-script.txt — same as GSSWebIIS-Jenkins-script-2.txt
+// Prefer pasting docs/fixes/GSSWebIIS-Jenkins-script-2.txt into Jenkins.
 pipeline {
     agent any
 
@@ -89,9 +87,16 @@ pipeline {
                     Copy-Item $dll (Join-Path $bin "GSSWebComponent.dll") -Force
                     Write-Host "Copied $dll -> $bin\\GSSWebComponent.dll"
 
-                    Write-Host "Publishing $($env:SLN) FolderProfile (skip .rptproj .vdproj)"
-                    & $msbuild $env:SLN /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile "/ignoreprojectextensions:.rptproj;.vdproj" /v:m
-                    if ($LASTEXITCODE -ne 0) { throw "gssweb.sln publish failed: $LASTEXITCODE" }
+                    $aspnet = @(
+                        (Join-Path $env:WINDIR 'Microsoft.NET\\Framework64\\v4.0.30319\\aspnet_compiler.exe'),
+                        (Join-Path $env:WINDIR 'Microsoft.NET\\Framework\\v4.0.30319\\aspnet_compiler.exe')
+                    ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+                    if (-not $aspnet) { throw "aspnet_compiler.exe not found" }
+                    $out = Join-Path $env:WEB_DIR 'PrecompiledWeb\\gssweb'
+                    New-Item -ItemType Directory -Path $out -Force | Out-Null
+                    Write-Host "aspnet_compiler website $($env:SITE_FOLDER) -> $out"
+                    & $aspnet -v / -p $env:SITE_FOLDER -f $out
+                    if ($LASTEXITCODE -ne 0) { throw "aspnet_compiler failed: $LASTEXITCODE" }
                 '''
             }
         }

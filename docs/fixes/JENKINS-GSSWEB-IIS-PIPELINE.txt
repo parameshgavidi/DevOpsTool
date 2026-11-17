@@ -167,9 +167,16 @@ pipeline {
                     Copy-Item $dll (Join-Path $bin "GSSWebComponent.dll") -Force
                     Write-Host "Copied $dll -> $bin\\GSSWebComponent.dll"
 
-                    Write-Host "Publishing $($env:SLN) FolderProfile (skip .rptproj .vdproj)"
-                    & $msbuild $env:SLN /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile "/ignoreprojectextensions:.rptproj;.vdproj" /v:m
-                    if ($LASTEXITCODE -ne 0) { throw "gssweb.sln publish failed: $LASTEXITCODE" }
+                    $aspnet = @(
+                        (Join-Path $env:WINDIR 'Microsoft.NET\\Framework64\\v4.0.30319\\aspnet_compiler.exe'),
+                        (Join-Path $env:WINDIR 'Microsoft.NET\\Framework\\v4.0.30319\\aspnet_compiler.exe')
+                    ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+                    if (-not $aspnet) { throw "aspnet_compiler.exe not found" }
+                    $out = Join-Path $env:WEB_DIR 'PrecompiledWeb\\gssweb'
+                    New-Item -ItemType Directory -Path $out -Force | Out-Null
+                    Write-Host "aspnet_compiler website $($env:SITE_FOLDER) -> $out"
+                    & $aspnet -v / -p $env:SITE_FOLDER -f $out
+                    if ($LASTEXITCODE -ne 0) { throw "aspnet_compiler failed: $LASTEXITCODE" }
                 '''
             }
         }
@@ -294,13 +301,11 @@ GSSWebComponent.csproj — Crystal Reports Backup Files
   Skip any path under "Crystal Reports Backup Files".
 
 gssweb.sln publish — MSB4226 SSRSReports.rptproj
-  VS 2019 MSBuild tries every project in the .sln, including
-  SSRSReports.rptproj. VS IDE and the DevOpsTool MAUI build skip that.
-  Reporting Services targets are missing:
-    ...\MSBuild\Reporting Services\Microsoft.ReportingServices.MsBuild.targets
-  Same FolderProfile command as appsettings, plus:
-    /ignoreprojectextensions:.rptproj;.vdproj
-  Prefer VS 18 MSBuild (the path that worked in DevOpsTool) when present.
+  VS 2019 msbuild of the .sln still loads SSRSReports.rptproj.
+  /ignoreprojectextensions does NOT skip sln projects.
+  Do not FolderProfile the .sln. Precompile the website folder:
+    aspnet_compiler -v / -p WebV3\gssweb\gssweb -f PrecompiledWeb\gssweb
+  Same output FolderProfile would have written, without SSRS.
 
 MSB3277 TlcDdpDataProcessingTests
   Binding-redirect warnings. They do not fail the build.
@@ -324,8 +329,10 @@ Smoke test wrong site
 ================================================================================
 RELATED FILES
 ================================================================================
+  docs/fixes/GSSWebIIS-Jenkins-script-2.txt
+      NEW paste file for job GSSWebIIS (use this — aspnet_compiler)
   docs/fixes/GSSWebIIS-Jenkins-script.txt
-      NEW paste file for job GSSWebIIS (use this)
+      Previous paste file
   docs/fixes/GSSWebIIS-pipeline.txt
       Earlier paste-only Jenkins job script
   docs/fixes/JENKINS-WINDOWS-IIS-PIPELINE-STEPS.txt
