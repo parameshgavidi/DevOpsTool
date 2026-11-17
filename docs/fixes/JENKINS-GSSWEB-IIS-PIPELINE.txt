@@ -167,16 +167,11 @@ pipeline {
                     Copy-Item $dll (Join-Path $bin "GSSWebComponent.dll") -Force
                     Write-Host "Copied $dll -> $bin\\GSSWebComponent.dll"
 
-                    $aspnet = @(
-                        (Join-Path $env:WINDIR 'Microsoft.NET\\Framework64\\v4.0.30319\\aspnet_compiler.exe'),
-                        (Join-Path $env:WINDIR 'Microsoft.NET\\Framework\\v4.0.30319\\aspnet_compiler.exe')
-                    ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-                    if (-not $aspnet) { throw "aspnet_compiler.exe not found" }
-                    $out = Join-Path $env:WEB_DIR 'PrecompiledWeb\\gssweb'
-                    New-Item -ItemType Directory -Path $out -Force | Out-Null
-                    Write-Host "aspnet_compiler website $($env:SITE_FOLDER) -> $out"
-                    & $aspnet -v / -p $env:SITE_FOLDER -f $out
-                    if ($LASTEXITCODE -ne 0) { throw "aspnet_compiler failed: $LASTEXITCODE" }
+                    Write-Host "Skipping gssweb.sln FolderProfile (SSRS MSB4226) and aspnet_compiler (CS1647)"
+                    Write-Host "IIS deploy source is the website folder (64-bit app pool compiles on first request)"
+                    if (-not (Test-Path (Join-Path $bin "GSSWebComponent.dll"))) {
+                        throw "GSSWebComponent.dll missing from site Bin after copy"
+                    }
                 '''
             }
         }
@@ -199,13 +194,8 @@ pipeline {
             steps {
                 powershell '''
                     Import-Module WebAdministration
-                    $srcCandidates = @(
-                        (Join-Path $env:WEB_DIR "PrecompiledWeb\\GSSWeb"),
-                        (Join-Path $env:WEB_DIR "PrecompiledWeb\\gssweb"),
-                        $env:SITE_FOLDER
-                    )
-                    $src = $srcCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-                    if (-not $src) { throw "No GSSWeb publish folder found" }
+                    $src = $env:SITE_FOLDER
+                    if (-not (Test-Path $src)) { throw "No GSSWeb website folder found: $src" }
                     Write-Host "Deploy source: $src"
 
                     $dest = $env:IIS_PHYSICAL
@@ -301,11 +291,15 @@ GSSWebComponent.csproj — Crystal Reports Backup Files
   Skip any path under "Crystal Reports Backup Files".
 
 gssweb.sln publish — MSB4226 SSRSReports.rptproj
-  VS 2019 msbuild of the .sln still loads SSRSReports.rptproj.
-  /ignoreprojectextensions does NOT skip sln projects.
-  Do not FolderProfile the .sln. Precompile the website folder:
-    aspnet_compiler -v / -p WebV3\gssweb\gssweb -f PrecompiledWeb\gssweb
-  Same output FolderProfile would have written, without SSRS.
+  Do not FolderProfile the .sln.
+
+aspnet_compiler — CS1647
+  Precompile fails: "An expression is too long or complex to compile"
+  (often currentDispatch.aspx). 32/64-bit aspnet_compiler hits the same limit.
+  Copy website folder + fresh Bin\GSSWebComponent.dll to IIS instead.
+  64-bit IIS app pool compiles on first request. Smoke test hits http://localhost/
+
+  Paste file: docs/fixes/GSSWebIIS-Jenkins-script-3.txt
 
 MSB3277 TlcDdpDataProcessingTests
   Binding-redirect warnings. They do not fail the build.
@@ -329,10 +323,12 @@ Smoke test wrong site
 ================================================================================
 RELATED FILES
 ================================================================================
+  docs/fixes/GSSWebIIS-Jenkins-script-3.txt
+      NEW paste file for job GSSWebIIS (use this — copy site to IIS)
   docs/fixes/GSSWebIIS-Jenkins-script-2.txt
-      NEW paste file for job GSSWebIIS (use this — aspnet_compiler)
+      Previous (aspnet_compiler — CS1647 on this site)
   docs/fixes/GSSWebIIS-Jenkins-script.txt
-      Previous paste file
+      Earlier paste file
   docs/fixes/GSSWebIIS-pipeline.txt
       Earlier paste-only Jenkins job script
   docs/fixes/JENKINS-WINDOWS-IIS-PIPELINE-STEPS.txt
