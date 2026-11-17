@@ -1,0 +1,170 @@
+// GSSWebIIS — paste this entire file into Pipeline script. Save. Build Now.
+// FETCH_FAILED using local files is OK. IIS is port 80. Skip Crystal Reports backup csproj.
+pipeline {
+    agent any
+
+    options {
+        skipDefaultCheckout()
+    }
+
+    environment {
+        REPO_ROOT     = 'F:\\GSS\\AppDev\\gss-root'
+        MSBUILD_EXE   = 'F:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Professional\\MSBuild\\Current\\Bin\\amd64\\MSBuild.exe'
+        SLN           = 'F:\\GSS\\AppDev\\gss-root\\WebV3\\gssweb\\gssweb.sln'
+        SITE_FOLDER   = 'F:\\GSS\\AppDev\\gss-root\\WebV3\\gssweb\\gssweb'
+        WEB_DIR       = 'F:\\GSS\\AppDev\\gss-root\\WebV3\\gssweb'
+        IIS_SITE_NAME = 'GSSWeb'
+        IIS_APP_POOL  = 'GSSWeb'
+        IIS_PHYSICAL  = 'C:\\inetpub\\wwwroot\\GSSWeb'
+        IIS_HTTP_PORT = '80'
+        BACKUP_ROOT   = 'C:\\inetpub\\backups\\GSSWeb'
+    }
+
+    stages {
+        stage('Get latest GSSWeb') {
+            steps {
+                bat '''
+                    cd /d "%REPO_ROOT%"
+                    set GIT_TERMINAL_PROMPT=0
+                    git -c credential.helper= fetch || echo FETCH_FAILED using local files
+                    git restore --source=@{u} --staged --worktree -- "WebV3\\gssweb" "Shared Components\\GSSWebComponent" || ver > nul
+                    git status -sb
+                '''
+            }
+        }
+
+        stage('Build GSSWebComponent + publish GSSWeb') {
+            steps {
+                powershell '''
+                    $msbuild = $env:MSBUILD_EXE
+                    if (-not (Test-Path $msbuild)) {
+                        throw "MSBuild not found: $msbuild"
+                    }
+                    if (-not (Test-Path $env:SLN)) {
+                        throw "gssweb.sln not found: $($env:SLN)"
+                    }
+
+                    $pre = Join-Path $env:WEB_DIR "PrecompiledWeb"
+                    if (Test-Path $pre) {
+                        Write-Host "Cleaning $pre"
+                        Remove-Item $pre -Recurse -Force
+                    }
+
+                    $preferred = @(
+                        (Join-Path $env:REPO_ROOT "Shared Components\\GSSWebComponent\\GSSWebComponent.csproj"),
+                        (Join-Path $env:REPO_ROOT "Shared Components\\GSSWebComponent\\GSSWebComponent\\GSSWebComponent.csproj")
+                    ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+                    if ($preferred) {
+                        $csproj = Get-Item $preferred
+                    } else {
+                        $csproj = Get-ChildItem -Path (Join-Path $env:REPO_ROOT "Shared Components") -Filter "GSSWebComponent.csproj" -Recurse -ErrorAction SilentlyContinue |
+                            Where-Object { $_.FullName -notmatch 'Crystal Reports Backup Files' } |
+                            Select-Object -First 1
+                    }
+                    if (-not $csproj) {
+                        throw "GSSWebComponent.csproj not found under Shared Components"
+                    }
+                    if ($csproj.FullName -match 'Crystal Reports Backup Files') {
+                        throw "Refusing backup csproj: $($csproj.FullName)"
+                    }
+                    Write-Host "Building $($csproj.FullName)"
+                    & $msbuild $csproj.FullName /p:Configuration=Release /t:Build /v:m
+                    if ($LASTEXITCODE -ne 0) { throw "GSSWebComponent msbuild failed: $LASTEXITCODE" }
+
+                    $dll = @(
+                        (Join-Path $csproj.DirectoryName "bin\\Release\\GSSWebComponent.dll"),
+                        (Join-Path $csproj.DirectoryName "bin\\Release\\net48\\GSSWebComponent.dll")
+                    ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+                    if (-not $dll) { throw "GSSWebComponent.dll not found after build" }
+
+                    $bin = Join-Path $env:SITE_FOLDER "Bin"
+                    if (-not (Test-Path $bin)) { New-Item -ItemType Directory -Path $bin | Out-Null }
+                    Copy-Item $dll (Join-Path $bin "GSSWebComponent.dll") -Force
+                    Write-Host "Copied $dll -> $bin\\GSSWebComponent.dll"
+
+                    Write-Host "Publishing $($env:SLN) FolderProfile"
+                    & $msbuild $env:SLN /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile /v:m
+                    if ($LASTEXITCODE -ne 0) { throw "gssweb.sln publish failed: $LASTEXITCODE" }
+                '''
+            }
+        }
+
+        stage('Backup IIS') {
+            steps {
+                powershell '''
+                    $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+                    $dest  = Join-Path $env:BACKUP_ROOT $stamp
+                    New-Item -ItemType Directory -Path $dest -Force | Out-Null
+                    if (Test-Path $env:IIS_PHYSICAL) {
+                        Copy-Item (Join-Path $env:IIS_PHYSICAL "*") $dest -Recurse -Force
+                    }
+                    Write-Host "Backup: $dest"
+                '''
+            }
+        }
+
+        stage('Deploy to IIS') {
+            steps {
+                powershell '''
+                    Import-Module WebAdministration
+                    $srcCandidates = @(
+                        (Join-Path $env:WEB_DIR "PrecompiledWeb\\GSSWeb"),
+                        (Join-Path $env:WEB_DIR "PrecompiledWeb\\gssweb"),
+                        $env:SITE_FOLDER
+                    )
+                    $src = $srcCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+                    if (-not $src) { throw "No GSSWeb publish folder found" }
+                    Write-Host "Deploy source: $src"
+
+                    $dest = $env:IIS_PHYSICAL
+                    $pool = $env:IIS_APP_POOL
+                    if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest | Out-Null }
+
+                    Write-Host "Stopping app pool $pool"
+                    Stop-WebAppPool -Name $pool -ErrorAction SilentlyContinue
+                    $deadline = (Get-Date).AddSeconds(30)
+                    do {
+                        Start-Sleep -Seconds 1
+                        $state = (Get-WebAppPoolState -Name $pool).Value
+                    } while ($state -ne "Stopped" -and (Get-Date) -lt $deadline)
+
+                    Get-ChildItem $src -Force |
+                        Where-Object { $_.Name -notin @('.git','packages') -and $_.Extension -notin @('.sln','.resx') } |
+                        Copy-Item -Destination $dest -Recurse -Force
+
+                    Write-Host "Starting app pool $pool"
+                    Start-WebAppPool -Name $pool
+                    Start-Sleep -Seconds 2
+                    $state = (Get-WebAppPoolState -Name $pool).Value
+                    Write-Host "App pool: $state"
+                    if ($state -ne "Started") { throw "App pool '$pool' is $state" }
+                '''
+            }
+        }
+
+        stage('Smoke test') {
+            steps {
+                powershell '''
+                    $url = "http://localhost:$($env:IIS_HTTP_PORT)/"
+                    Write-Host "GET $url"
+                    try {
+                        $r = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 60
+                    } catch {
+                        throw "Smoke test failed for $url : $_"
+                    }
+                    if ($r.StatusCode -ge 400) { throw "HTTP $($r.StatusCode) from $url" }
+                    Write-Host "HTTP $($r.StatusCode) from $url"
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "GSSWeb is on IIS http://localhost:${env.IIS_HTTP_PORT}/"
+        }
+        failure {
+            echo "Failed. Check Console Output: git, MSBuild path, PrecompiledWeb, IIS app pool."
+        }
+    }
+}

@@ -307,6 +307,8 @@ Smoke test wrong site
 ================================================================================
 RELATED FILES
 ================================================================================
+  docs/fixes/GSSWebIIS-pipeline.txt
+      Paste-only Jenkins job script (GSSWebIIS)
   docs/fixes/JENKINS-WINDOWS-IIS-PIPELINE-STEPS.txt
       Laptop Jenkins + IIS install
   docs/fixes/JENKINS-INSTALL-PIPELINE-GIT-PLUGINS.ps1
