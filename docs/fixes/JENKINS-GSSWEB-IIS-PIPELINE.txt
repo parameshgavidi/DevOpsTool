@@ -14,20 +14,22 @@ This is NOT GSS Web Service (ASMX). This is GSSWeb:
 ================================================================================
 
 
-PLACEHOLDERS (already filled for this VDI / laptop)
+PLACEHOLDERS (this VDI / job GSSWebIIS)
 ----------------------------------------------------
   REPO_ROOT     = F:\GSS\AppDev\gss-root
-  MSBUILD_EXE   = F:\Program Files\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe
+  MSBUILD_EXE   = F:\Program Files (x86)\Microsoft Visual Studio\2019\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe
   SLN           = F:\GSS\AppDev\gss-root\WebV3\gssweb\gssweb.sln
   SITE_FOLDER   = F:\GSS\AppDev\gss-root\WebV3\gssweb\gssweb
   IIS_SITE_NAME = GSSWeb
   IIS_APP_POOL  = GSSWeb
   IIS_PHYSICAL  = C:\inetpub\wwwroot\GSSWeb
-  IIS_HTTP_PORT = 8081
-                  (Jenkins is 8080; Default Web Site is 80)
+  IIS_HTTP_PORT = 80
+                  (GSSWeb IIS is already on 80. Jenkins stays on 8080.)
 
-If Get-Website already shows a GSSWeb / GSSDMI site, swap IIS_SITE_NAME,
+If Get-Website shows a different site name / folder, swap IIS_SITE_NAME,
 IIS_APP_POOL, IIS_PHYSICAL, and IIS_HTTP_PORT to match that site.
+
+If MSBuild is VS 18 / 2022 instead of 2019, swap MSBUILD_EXE only.
 
 
 ================================================================================
@@ -56,19 +58,23 @@ Empty / placeholder is OK. Jenkins will copy GSSWeb files here.
 
 
 ================================================================================
-PART 2 — CREATE THE JENKINS JOB
+PART 2 — CREATE THE JENKINS JOB (or update GSSWebIIS)
 ================================================================================
+Job GSSWebIIS already exists on this VDI. Do not create a second job.
+
 1. Jenkins dashboard (http://localhost:8080)
-2. + New Item
-3. Name:  gssweb-iis
-4. Type:  Pipeline
-5. OK
-6. Scroll to Pipeline
-     Definition:  Pipeline script
-7. Paste the script in PART 3
-8. Save
-9. Build Now
-10. Open the build → Console Output
+2. Open GSSWebIIS → Configure
+3. Pipeline → Definition: Pipeline script
+4. Replace the whole script with PART 3 (or replace only
+   stage('Get latest GSSWeb') if the rest is already correct)
+5. Save
+6. If a build is stuck on git fetch, abort it (red X)
+7. Build Now
+8. Open the new build → Console Output
+
+To create from scratch instead:
+1. Dashboard → + New Item → Name: GSSWebIIS → Pipeline → OK
+2. Paste PART 3 → Save → Build Now
 
 
 ================================================================================
@@ -78,20 +84,19 @@ pipeline {
     agent any
 
     options {
-        timestamps()
         skipDefaultCheckout()
     }
 
     environment {
         REPO_ROOT     = 'F:\\GSS\\AppDev\\gss-root'
-        MSBUILD_EXE   = 'F:\\Program Files\\Microsoft Visual Studio\\18\\Professional\\MSBuild\\Current\\Bin\\amd64\\MSBuild.exe'
+        MSBUILD_EXE   = 'F:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Professional\\MSBuild\\Current\\Bin\\amd64\\MSBuild.exe'
         SLN           = 'F:\\GSS\\AppDev\\gss-root\\WebV3\\gssweb\\gssweb.sln'
         SITE_FOLDER   = 'F:\\GSS\\AppDev\\gss-root\\WebV3\\gssweb\\gssweb'
         WEB_DIR       = 'F:\\GSS\\AppDev\\gss-root\\WebV3\\gssweb'
         IIS_SITE_NAME = 'GSSWeb'
         IIS_APP_POOL  = 'GSSWeb'
         IIS_PHYSICAL  = 'C:\\inetpub\\wwwroot\\GSSWeb'
-        IIS_HTTP_PORT = '8081'
+        IIS_HTTP_PORT = '80'
         BACKUP_ROOT   = 'C:\\inetpub\\backups\\GSSWeb'
     }
 
@@ -100,7 +105,8 @@ pipeline {
             steps {
                 bat '''
                     cd /d "%REPO_ROOT%"
-                    git fetch
+                    set GIT_TERMINAL_PROMPT=0
+                    git -c credential.helper= fetch || echo FETCH_FAILED using local files
                     git restore --source=@{u} --staged --worktree -- "WebV3\\gssweb" "Shared Components\\GSSWebComponent" || ver > nul
                     git status -sb
                 '''
@@ -236,7 +242,7 @@ pipeline {
 PART 4 — WHAT A GREEN BUILD LOOKS LIKE
 ================================================================================
 Console Output ends with  Finished: SUCCESS
-Browser  http://localhost:8081/  shows GSSWeb (not the empty IIS folder).
+Browser  http://localhost/  shows GSSWeb (port 80). Jenkins stays at http://localhost:8080/
 
 IIS folder should contain Bin\ and Web.config:
 
@@ -247,16 +253,19 @@ IIS folder should contain Bin\ and Web.config:
 ================================================================================
 PART 5 — IF A STAGE FAILS
 ================================================================================
-Get latest GSSWeb — git auth
-  Jenkins runs as LocalSystem. If git fetch fails, run the same git
-  commands in your own Administrator cmd under F:\GSS\AppDev\gss-root
-  first. Then we can add a Jenkins git credential.
+Get latest GSSWeb — git fetch hangs
+  Jenkins runs as LocalSystem. A credential GUI never appears, so
+  git fetch waits forever. The job disables the prompt and helper:
+    set GIT_TERMINAL_PROMPT=0
+    git -c credential.helper= fetch || echo FETCH_FAILED using local files
+  Fetch may print FETCH_FAILED; the build continues from
+  F:\GSS\AppDev\gss-root. To update from origin, run git fetch in
+  your own cmd in that folder, then Build Now again.
 
 MSBuild not found
-  Confirm this file exists:
-    F:\Program Files\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe
-  If VS is 2022 instead, swap MSBUILD_EXE to:
-    C:\Program Files\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe
+  This VDI uses VS 2019:
+    F:\Program Files (x86)\Microsoft Visual Studio\2019\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe
+  If that file is missing, swap MSBUILD_EXE to VS 18 or VS 2022.
 
 GSSWebComponent.csproj not found
   See docs/fixes/gssweb-msb1009-csproj-not-exist.txt
@@ -276,7 +285,8 @@ App pool stop/start
   once so the site and pool exist.
 
 Smoke test wrong site
-  Port 80 is Default Web Site. Use http://localhost:8081/
+  This VDI serves GSSWeb on port 80. Smoke test is http://localhost/
+  Jenkins is 8080 — do not point IIS_HTTP_PORT at 8080.
 
 
 ================================================================================
