@@ -116,10 +116,15 @@ pipeline {
         stage('Build GSSWebComponent + publish GSSWeb') {
             steps {
                 powershell '''
-                    $msbuild = $env:MSBUILD_EXE
-                    if (-not (Test-Path $msbuild)) {
-                        throw "MSBuild not found: $msbuild"
+                    $msbuild = @(
+                        'F:\\Program Files\\Microsoft Visual Studio\\18\\Professional\\MSBuild\\Current\\Bin\\amd64\\MSBuild.exe',
+                        'C:\\Program Files\\Microsoft Visual Studio\\2022\\Professional\\MSBuild\\Current\\Bin\\amd64\\MSBuild.exe',
+                        $env:MSBUILD_EXE
+                    ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+                    if (-not $msbuild) {
+                        throw "MSBuild not found. Tried VS 18, VS 2022, and MSBUILD_EXE=$($env:MSBUILD_EXE)"
                     }
+                    Write-Host "Using MSBuild: $msbuild"
                     if (-not (Test-Path $env:SLN)) {
                         throw "gssweb.sln not found: $($env:SLN)"
                     }
@@ -162,8 +167,8 @@ pipeline {
                     Copy-Item $dll (Join-Path $bin "GSSWebComponent.dll") -Force
                     Write-Host "Copied $dll -> $bin\\GSSWebComponent.dll"
 
-                    Write-Host "Publishing $($env:SLN) FolderProfile"
-                    & $msbuild $env:SLN /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile /v:m
+                    Write-Host "Publishing $($env:SLN) FolderProfile (skip .rptproj .vdproj)"
+                    & $msbuild $env:SLN /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile "/ignoreprojectextensions:.rptproj;.vdproj" /v:m
                     if ($LASTEXITCODE -ne 0) { throw "gssweb.sln publish failed: $LASTEXITCODE" }
                 '''
             }
@@ -287,6 +292,18 @@ GSSWebComponent.csproj — Crystal Reports Backup Files
     Shared Components\GSSWebComponent\GSSWebComponent.csproj
     Shared Components\GSSWebComponent\GSSWebComponent\GSSWebComponent.csproj
   Skip any path under "Crystal Reports Backup Files".
+
+gssweb.sln publish — MSB4226 SSRSReports.rptproj
+  VS 2019 MSBuild tries every project in the .sln, including
+  SSRSReports.rptproj. VS IDE and the DevOpsTool MAUI build skip that.
+  Reporting Services targets are missing:
+    ...\MSBuild\Reporting Services\Microsoft.ReportingServices.MsBuild.targets
+  Same FolderProfile command as appsettings, plus:
+    /ignoreprojectextensions:.rptproj;.vdproj
+  Prefer VS 18 MSBuild (the path that worked in DevOpsTool) when present.
+
+MSB3277 TlcDdpDataProcessingTests
+  Binding-redirect warnings. They do not fail the build.
 
 MSB4249 / dotnet
   Do not add dotnet restore. GSSWeb is classic ASP.NET Web Site.

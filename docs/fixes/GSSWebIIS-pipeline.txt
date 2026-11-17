@@ -1,5 +1,6 @@
 // GSSWebIIS — paste this entire file into Pipeline script. Save. Build Now.
-// FETCH_FAILED using local files is OK. IIS is port 80. Skip Crystal Reports backup csproj.
+// FETCH_FAILED using local files is OK. IIS is port 80.
+// Skip Crystal Reports backup csproj. Skip SSRS .rptproj / .vdproj (same as VS / DevOpsTool).
 pipeline {
     agent any
 
@@ -36,10 +37,15 @@ pipeline {
         stage('Build GSSWebComponent + publish GSSWeb') {
             steps {
                 powershell '''
-                    $msbuild = $env:MSBUILD_EXE
-                    if (-not (Test-Path $msbuild)) {
-                        throw "MSBuild not found: $msbuild"
+                    $msbuild = @(
+                        'F:\\Program Files\\Microsoft Visual Studio\\18\\Professional\\MSBuild\\Current\\Bin\\amd64\\MSBuild.exe',
+                        'C:\\Program Files\\Microsoft Visual Studio\\2022\\Professional\\MSBuild\\Current\\Bin\\amd64\\MSBuild.exe',
+                        $env:MSBUILD_EXE
+                    ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+                    if (-not $msbuild) {
+                        throw "MSBuild not found. Tried VS 18, VS 2022, and MSBUILD_EXE=$($env:MSBUILD_EXE)"
                     }
+                    Write-Host "Using MSBuild: $msbuild"
                     if (-not (Test-Path $env:SLN)) {
                         throw "gssweb.sln not found: $($env:SLN)"
                     }
@@ -82,8 +88,8 @@ pipeline {
                     Copy-Item $dll (Join-Path $bin "GSSWebComponent.dll") -Force
                     Write-Host "Copied $dll -> $bin\\GSSWebComponent.dll"
 
-                    Write-Host "Publishing $($env:SLN) FolderProfile"
-                    & $msbuild $env:SLN /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile /v:m
+                    Write-Host "Publishing $($env:SLN) FolderProfile (skip .rptproj .vdproj)"
+                    & $msbuild $env:SLN /p:Configuration=Release /p:DeployOnBuild=true /p:PublishProfile=FolderProfile "/ignoreprojectextensions:.rptproj;.vdproj" /v:m
                     if ($LASTEXITCODE -ne 0) { throw "gssweb.sln publish failed: $LASTEXITCODE" }
                 '''
             }
