@@ -130,10 +130,22 @@ pipeline {
                         Remove-Item $pre -Recurse -Force
                     }
 
-                    $csproj = Get-ChildItem -Path (Join-Path $env:REPO_ROOT "Shared Components") -Filter "GSSWebComponent.csproj" -Recurse -ErrorAction SilentlyContinue |
-                        Select-Object -First 1
+                    $preferred = @(
+                        (Join-Path $env:REPO_ROOT "Shared Components\\GSSWebComponent\\GSSWebComponent.csproj"),
+                        (Join-Path $env:REPO_ROOT "Shared Components\\GSSWebComponent\\GSSWebComponent\\GSSWebComponent.csproj")
+                    ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+                    if ($preferred) {
+                        $csproj = Get-Item $preferred
+                    } else {
+                        $csproj = Get-ChildItem -Path (Join-Path $env:REPO_ROOT "Shared Components") -Filter "GSSWebComponent.csproj" -Recurse -ErrorAction SilentlyContinue |
+                            Where-Object { $_.FullName -notmatch 'Crystal Reports Backup Files' } |
+                            Select-Object -First 1
+                    }
                     if (-not $csproj) {
                         throw "GSSWebComponent.csproj not found under Shared Components"
+                    }
+                    if ($csproj.FullName -match 'Crystal Reports Backup Files') {
+                        throw "Refusing backup csproj: $($csproj.FullName)"
                     }
                     Write-Host "Building $($csproj.FullName)"
                     & $msbuild $csproj.FullName /p:Configuration=Release /t:Build /v:m
@@ -267,11 +279,14 @@ MSBuild not found
     F:\Program Files (x86)\Microsoft Visual Studio\2019\Professional\MSBuild\Current\Bin\amd64\MSBuild.exe
   If that file is missing, swap MSBUILD_EXE to VS 18 or VS 2022.
 
-GSSWebComponent.csproj not found
-  See docs/fixes/gssweb-msb1009-csproj-not-exist.txt
-  Typical extra folder:
+GSSWebComponent.csproj — Crystal Reports Backup Files
+  Recurse + First 1 picked:
+    Shared Components\Crystal Reports Backup Files\GSSWebComponent.csproj
+  That copy has no .cs files (CS2001) and broken project references.
+  Use the real project:
+    Shared Components\GSSWebComponent\GSSWebComponent.csproj
     Shared Components\GSSWebComponent\GSSWebComponent\GSSWebComponent.csproj
-  The pipeline searches under Shared Components (recurse).
+  Skip any path under "Crystal Reports Backup Files".
 
 MSB4249 / dotnet
   Do not add dotnet restore. GSSWeb is classic ASP.NET Web Site.
