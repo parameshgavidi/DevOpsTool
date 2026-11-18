@@ -1,0 +1,190 @@
+================================================================================
+BuildTab / GSS.GSSEmail — FileNotFoundException: Encryption.dll
+MAUI Blazor Hybrid (GssDevOpsAutomationTool) on .NET 10 / Windows
+================================================================================
+
+ERROR (Exception Caught while debugging BuildTab.razor)
+-------------------------------------------------------
+System.IO.FileNotFoundException:
+  Could not load file or assembly 'Encryption, Version=2.7.9726.41398,
+  Culture=neutral, PublicKeyToken=null'. The system cannot find the file
+  specified.
+
+Where it throws:
+  try { ... GSS.GSSEmail.SendEmail(...); ... }
+  catch (Exception emailEx)  ← debugger pauses here (emailEx)
+
+Typical Copilot / clean advice that does NOT fix it:
+  - Encryption.dll already exists under
+      bin\Debug\net10.0-windows10.0.19041.0\win-x64\Encryption.dll
+  - Version matches 2.7.9726.41398
+  - Stop app, delete bin + obj, rebuild, F5 again
+  → still FileNotFoundException
+
+
+CAUSE (why "DLL is in bin" still fails)
+---------------------------------------
+GSS.GSSEmail.SendEmail depends on Encryption.dll (decrypt settings /
+connection string / mail credentials).
+
+On .NET Framework, the binder probes the app folder and loads a loose DLL
+that is sitting next to the exe.
+
+On .NET Core / .NET 5+ / MAUI, the default AssemblyLoadContext resolves
+managed deps from the app's *.deps.json (and NuGet assets), NOT by
+"any DLL that happens to be in the folder".
+
+So:
+  - Referencing only GSSEmail.dll (or a NuGet that ships GSSEmail) copies
+    Encryption.dll as a loose file sometimes, but
+  - If Encryption is NOT listed in GssDevOpsAutomationTool.deps.json,
+    runtime throws FileNotFoundException even when the file is on disk.
+
+Clean bin/obj cannot fix a missing deps.json entry.
+
+
+--------------------------------------------------------------------------------
+FIX A (preferred) — explicit Reference to Encryption.dll in the MAUI csproj
+--------------------------------------------------------------------------------
+
+1. Find Encryption.dll on disk (same place you already use for GSSEmail), e.g.:
+     libs\Encryption.dll
+     Dependencies\Encryption.dll
+     ..\..\GSS\...\Encryption.dll
+
+2. In GssDevOpsAutomationTool.csproj (or the startup MAUI project), ADD an
+   explicit Reference (keep your existing GSSEmail / GSS reference too):
+
+  <ItemGroup>
+    <Reference Include="Encryption">
+      <HintPath>libs\Encryption.dll</HintPath>
+      <Private>true</Private>
+      <SpecificVersion>false</SpecificVersion>
+    </Reference>
+  </ItemGroup>
+
+  Adjust HintPath to the real path. Private=true forces Copy Local.
+
+3. Also force copy for MAUI Windows publish / packaged runs (belt and suspenders):
+
+  <ItemGroup>
+    <None Include="libs\Encryption.dll" Condition="Exists('libs\Encryption.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <Link>Encryption.dll</Link>
+    </None>
+  </ItemGroup>
+
+4. If GSSEmail itself is a DLL reference, keep BOTH:
+
+  <ItemGroup>
+    <Reference Include="GSSEmail">
+      <HintPath>libs\GSSEmail.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Encryption">
+      <HintPath>libs\Encryption.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+5. Rebuild, then VERIFY deps.json (this is the proof clean/rebuild was not enough):
+
+  Open:
+    bin\Debug\net10.0-windows10.0.19041.0\win-x64\GssDevOpsAutomationTool.deps.json
+  Search for:  "Encryption"
+  You MUST see an entry under "targets" / "libraries".
+  If Encryption is missing from deps.json → Reference did not apply; fix HintPath
+  / project that was edited / rebuild the STARTUP project.
+
+
+--------------------------------------------------------------------------------
+FIX B — runtime preload (only if you cannot change csproj right now)
+--------------------------------------------------------------------------------
+Call once before SendEmail (e.g. in the same method, or app startup):
+
+  var encPath = Path.Combine(AppContext.BaseDirectory, "Encryption.dll");
+  if (File.Exists(encPath))
+      System.Runtime.Loader.AssemblyLoadContext.Default.LoadFromAssemblyPath(encPath);
+  else
+      throw new FileNotFoundException("Encryption.dll missing next to app", encPath);
+
+  GSS.GSSEmail.SendEmail(...);
+
+Still copy Encryption.dll to output (None/Content CopyToOutputDirectory).
+Prefer FIX A so deps.json stays correct.
+
+
+--------------------------------------------------------------------------------
+CHECKLIST before F5 again
+--------------------------------------------------------------------------------
+[ ] Startup project is the MAUI Windows app (NOT Mac Catalyst)
+      Debug dropdown target: net10.0-windows* / Windows Machine
+      (net10.0-maccatalyst will not load your win-x64 Encryption.dll)
+[ ] Encryption.dll HintPath points at the DLL whose version is 2.7.9726.41398
+      (Properties → Product version / ildasm / right-click Details)
+[ ] Explicit <Reference Include="Encryption"> in the STARTUP .csproj
+[ ] After rebuild, GssDevOpsAutomationTool.deps.json contains "Encryption"
+[ ] Encryption.dll exists under AppContext.BaseDirectory at runtime
+      (see diagnostic snippet below)
+[ ] Same folder also has GSSEmail.dll and any other GSS helpers it needs
+
+
+--------------------------------------------------------------------------------
+DIAGNOSTIC (paste temporarily above SendEmail, remove after)
+--------------------------------------------------------------------------------
+
+  var baseDir = AppContext.BaseDirectory;
+  var enc = Path.Combine(baseDir, "Encryption.dll");
+  LogOutput += $"[{DateTime.Now:HH:mm:ss}] [DEBUG] BaseDirectory={baseDir}\r\n";
+  LogOutput += $"[{DateTime.Now:HH:mm:ss}] [DEBUG] Encryption.dll exists={File.Exists(enc)}\r\n";
+  var deps = Directory.GetFiles(baseDir, "*.deps.json").FirstOrDefault();
+  if (deps != null)
+  {
+      var text = File.ReadAllText(deps);
+      LogOutput += $"[{DateTime.Now:HH:mm:ss}] [DEBUG] deps has Encryption={text.Contains("Encryption", StringComparison.OrdinalIgnoreCase)} ({Path.GetFileName(deps)})\r\n";
+  }
+
+
+HOW TO READ THE DIAGNOSTIC
+--------------------------
+1. exists=False
+   → copy/path problem. Fix HintPath / CopyToOutputDirectory / wrong TFM.
+
+2. exists=True AND deps has Encryption=False
+   → classic .NET Core bind failure. Apply FIX A (explicit Reference).
+
+3. exists=True AND deps has Encryption=True AND still FileNotFound
+   → Encryption.dll itself depends on another missing assembly (or wrong
+     bitness). Check emailEx.InnerException / Fusion-style load with:
+       set DOTNET_AdditionalDeps=
+     or temporarily:
+       ExceptionDispatchInfo / LoaderExceptions
+   Copy every DLL that sits next to Encryption.dll in the original GSS folder
+   into libs\ and Reference or CopyToOutputDirectory them the same way.
+
+
+--------------------------------------------------------------------------------
+OPTIONAL — softer email failure (already partially there)
+--------------------------------------------------------------------------------
+You already catch Exception around SendEmail. After the Encryption load is
+fixed, keep logging emailEx.Message so a mail outage never fails the build:
+
+  catch (Exception emailEx)
+  {
+      LogOutput += $"[{DateTime.Now:HH:mm:ss}] [WARN] Email notification failed: {emailEx.Message}\r\n";
+  }
+
+
+--------------------------------------------------------------------------------
+DO NOT
+--------------------------------------------------------------------------------
+- Rely on "DLL is in bin so it must load" on MAUI / .NET 10
+- Expect clean bin/obj alone to register Encryption in deps.json
+- Debug with Mac Catalyst TFM when Encryption is a Windows win-x64 binary
+- Add only a Content copy without a Reference (file present, binder still fails)
+
+
+================================================================================
+END
+================================================================================
