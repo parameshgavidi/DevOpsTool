@@ -2,6 +2,10 @@
 FOLLOW THIS FILE — switch GssDevOpsAutomationTool from VS 2026 to VS 2022
 docs/fixes/vs2022-retarget-gssdevops-from-net10.txt
 ================================================================================
+File loader Service MSI (VS 2019/2022 installed, no VS 2026, VS Code):
+
+  docs/fixes/fileloader-service-msi-vs2022.txt
+
 VS 2022 cannot load a .NET 10 MAUI project. Do not keep net10.0-*.
 Do not try to "just open" the same csproj in VS 2022.
 
