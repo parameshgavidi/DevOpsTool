@@ -1,0 +1,187 @@
+================================================================================
+QUESTIONS TO ASK THE TEAM — JENKINS + AWS (AND AZURE IF USED)
+File: docs/fixes/AWS-JENKINS-TEAM-QUESTIONS.txt
+
+What we already did on the laptop:
+  Jenkins on Windows → build GSSWeb → copy files into local IIS.
+
+What we need next:
+  The same flow, but Jenkins deploys to AWS (IIS on EC2 / Elastic Beanstalk).
+  Ask the Jenkins team and the AWS team these questions.
+  Short list only. Tick each answer as you get it.
+
+Local IIS job we used:
+  docs/fixes/JENKINS-GSSWEB-IIS-PIPELINE.txt
+================================================================================
+
+
+HOW TO USE THIS FILE
+--------------------
+Send PART A–E to the Jenkins / AWS team in one email or Teams message.
+Skip PART F unless they also deploy to Azure.
+Do not mix GSSWeb (Copy Files to IIS) with MSI (Windows service) until
+question 15 is answered.
+
+
+================================================================================
+PART A — JENKINS SERVER
+================================================================================
+1. What is the Jenkins URL we must use? (not localhost:8080)
+
+2. How do we log in? Username, or SSO, or a service account?
+
+3. Who owns this Jenkins? Who do we call when a job is blocked?
+
+4. Is Git and Pipeline already installed on that Jenkins?
+
+5. Can this Jenkins reach our Git repo? Which credentials ID do we use?
+
+6. Can this Jenkins talk to AWS? (AWS CLI installed? Outbound HTTPS allowed?)
+
+
+================================================================================
+PART B — ONE JOB OR TWO? (BUILD vs DEPLOY)
+================================================================================
+Confirm this first. It changes everything else.
+
+7. Do we use TWO jobs, or ONE job?
+
+   Option 1 — TWO jobs (usual)
+     Job A BUILD:  compile / publish → save ZIP or folder as an artifact
+     Job B DEPLOY: take that artifact → install on IIS in AWS
+
+   Option 2 — ONE job
+     Same pipeline: build then deploy, no separate artifact job
+
+8. If TWO jobs: what is the artifact?
+     ZIP of published website?
+     Web Deploy (.zip / .cmd)?
+     Folder copy (same as our local IIS Copy Files)?
+     MSI + setup.exe?
+
+9. Where is the artifact stored?
+     Jenkins archive, S3 bucket, shared drive, Artifactory?
+
+10. Does AWS already have an approved template for IIS apps
+    (Elastic Beanstalk / CodeDeploy / SSM)?
+    Does that template expect a ZIP, Web Deploy package, or MSI?
+
+
+================================================================================
+PART C — AWS CREDENTIALS (same idea as Azure service principal)
+================================================================================
+In Azure this is: Tenant, Subscription, App ID, Secret (service principal).
+In AWS this is: Account, Region, IAM role or access keys.
+
+11. AWS Account ID and Region? (example: us-east-1)
+
+12. How must Jenkins authenticate to AWS?
+      IAM role on the Jenkins server  (preferred)
+      IAM user access key + secret in Jenkins Credentials
+      Assume-role into another account?
+
+13. What IAM role / user name is already registered for Jenkins?
+    Please send: Role ARN (or Access Key ID — never paste the secret in chat).
+
+14. What can that role do? (S3 upload, Elastic Beanstalk deploy,
+    SSM to the IIS server, EC2, CloudWatch)
+
+15. Where do we store the AWS credential in Jenkins?
+    Credentials ID name? Who is allowed to use it?
+
+16. Is AWS CLI already on the Jenkins Windows node? Which version?
+
+
+================================================================================
+PART D — WHERE DOES THE APP RUN IN AWS?
+================================================================================
+17. What is the target?
+      EC2 Windows + IIS  (closest to our local GSSWeb job)
+      Elastic Beanstalk (Windows / IIS)
+      Other?
+
+18. Server / environment name? (example: AWS-SIT-WEB-01 or ebs-gssweb-sit)
+
+19. How does Jenkins reach that server?
+      SSM (Systems Manager), WinRM, RDP, load balancer URL?
+
+20. IIS site name, app pool, and physical path on that server?
+    (On our VDI: site GSSWeb, port 80. AWS may differ.)
+
+21. Network already in place?
+      VPC, security groups, Jenkins → AWS, HTTPS endpoint, firewall.
+    If yes, send the list. If no, who creates it?
+
+22. Health check URL after deploy? (example: https://sit.example.com/ )
+    If the health check fails, does AWS auto-rollback to the last version?
+
+
+================================================================================
+PART E — SECRETS, MSI, SQL ORDER
+================================================================================
+23. How do we apply secrets (Web.config, connection strings) in AWS?
+    Parameter Store, Secrets Manager, env-specific config copy, other?
+
+24. For website apps (GSSWeb): Copy Files only, or also an MSI?
+
+25. For Windows service MSI:
+      After Jenkins publishes the MSI, is install automatic?
+      Or does someone run msiexec / setup.exe by hand?
+      Which prerequisites must already be on the AWS box?
+      How do we confirm the version that was installed?
+      Where are installer logs? (msiexec log, CloudWatch, Jenkins archive)
+
+26. If one release has SQL rollup + IIS files + MSI:
+      What is the required order?
+      If step 1 fails, must Jenkins stop and NOT run IIS / MSI?
+
+27. Can onboarding give a deploy_manifest / deploy_request sample
+    for each type we support? (IIS Copy Files, MSI, SQL)
+
+
+================================================================================
+PART F — AZURE (only if we also deploy to Azure)
+================================================================================
+Same questions as PART C, Azure names:
+
+28. Tenant ID, Subscription ID, Resource Group?
+
+29. Service principal (App ID) already registered? Who owns the secret?
+
+30. Where is that credential stored in Jenkins? Credentials ID?
+
+31. Target: App Service, VM + IIS, or other?
+
+32. Approved ARM/Bicep template for IIS? ZIP or Web Deploy?
+
+Skip this part if AWS is the only cloud.
+
+
+================================================================================
+ANSWERS WE NEED BEFORE WE WRITE THE AWS PIPELINE
+================================================================================
+[ ] Jenkins URL + login
+[ ] One job or two (build / deploy)
+[ ] Artifact type (ZIP / Web Deploy / folder / MSI)
+[ ] AWS account, region, IAM role or keys, Jenkins credential ID
+[ ] Target (EC2 IIS vs Elastic Beanstalk) + IIS site path
+[ ] How Jenkins connects to the server
+[ ] Secrets + health check / rollback
+[ ] IIS vs MSI vs SQL order
+[ ] Azure principal details only if Azure is in scope
+
+
+================================================================================
+RELATED FILES
+================================================================================
+  docs/fixes/JENKINS-WINDOWS-IIS-PIPELINE-STEPS.txt
+      Local laptop Jenkins + IIS install
+  docs/fixes/JENKINS-GSSWEB-IIS-PIPELINE.txt
+      Local GSSWeb Copy Files job (what we already ran)
+  docs/fixes/MSI-Install-Deploy-Steps.txt
+      MSI + IIS / Windows service (different from Copy Files)
+
+
+================================================================================
+END
+================================================================================
