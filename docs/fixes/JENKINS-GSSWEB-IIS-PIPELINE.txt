@@ -342,6 +342,10 @@ RELATED FILES
   docs/fixes/MSI-Install-Deploy-Steps.txt
       Website MSI path (not this job)
 
+  docs/fixes/AWS-JENKINS-TEAM-QUESTIONS.txt
+      Questions to ask Jenkins / AWS team before the same
+      GSSWeb IIS flow is run in AWS (not localhost)
+
 
 ================================================================================
 END
