@@ -1,0 +1,185 @@
+================================================================================
+USE THIS FILE — Clear "build file path" when Get Latest From Repo Branch changes
+BuildTab.razor — paste-ready
+================================================================================
+
+GOAL
+----
+When the user picks a different value in "Get Latest From Repo Branch",
+clear the "build file path" label (ResolvedBuildFilePath).
+
+The old path is stale for the new branch. Example from your screenshot:
+
+    Get Latest From Repo Branch:  GSSv9.252
+    build file path label:        F:\build-output\9.351
+
+Change the dropdown → the label must go blank. Click "Build file path"
+again to show the path for the newly selected branch.
+
+NO new appsettings / configuration variable.
+
+
+YOUR SCREENSHOT (RZ10008)
+-------------------------
+BuildTab.razor Error List:
+
+    RZ10008 The attribute 'onchange' is used two or more times for this
+            element. Attributes must be unique (case-insensitive). The
+            attribute 'onchange' is used by the '@bind' directive attribute.
+
+Your <select> currently has BOTH (this is the bug):
+
+    <select class="form-control"
+            @bind="RepoFromBranch"
+            @onchange="OnRepoFromBranchChanged"
+            disabled="@(RepoBranchOptions.Count == 0)">
+
+@bind already owns onchange. You cannot add @onchange next to it.
+
+FIX: DELETE the @bind line. Keep @onchange. Add value="@RepoFromBranch".
+Do NOT use @bind:after. Do NOT keep both.
+
+
+================================================================================
+CHANGE 1 — FIX RZ10008 (DELETE @bind, keep @onchange)
+================================================================================
+In BuildTab.razor, Get Latest From Repo Branch <select>, FIND this exact block:
+
+    <select class="form-control"
+            @bind="RepoFromBranch"
+            @onchange="OnRepoFromBranchChanged"
+            disabled="@(RepoBranchOptions.Count == 0)">
+
+DELETE the line:
+
+            @bind="RepoFromBranch"
+
+so the four attributes become THREE:
+
+    <select class="form-control"
+            value="@RepoFromBranch"
+            @onchange="OnRepoFromBranchChanged"
+            disabled="@(RepoBranchOptions.Count == 0)">
+
+After DELETE + ADD value=  (copy this whole opening tag):
+
+    <select class="form-control"
+            value="@RepoFromBranch"
+            @onchange="OnRepoFromBranchChanged"
+            disabled="@(RepoBranchOptions.Count == 0)">
+
+Leave the <option> loop and Refresh button as they are.
+Rebuild — RZ10008 must disappear.
+
+Full block after the edit:
+
+    <div class="config-group">
+        <label>Get Latest From Repo Branch</label>
+        <div class="config-row">
+            <select class="form-control"
+                    value="@RepoFromBranch"
+                    @onchange="OnRepoFromBranchChanged"
+                    disabled="@(RepoBranchOptions.Count == 0)">
+                @if (RepoBranchOptions.Count == 0)
+                {
+                    <option value="">No branches loaded</option>
+                }
+                else
+                {
+                    @foreach (var b in RepoBranchOptions)
+                    {
+                        <option value="@b">@b</option>
+                    }
+                }
+            </select>
+            <button class="btn btn-secondary"
+                    disabled="@_isLoadingRepoBranches"
+                    @onclick="LoadRepoBranchesAsync">
+                @(_isLoadingRepoBranches ? "Loading..." : "Refresh")
+            </button>
+        </div>
+    </div>
+
+
+================================================================================
+CHANGE 2 — ADD OnRepoFromBranchChanged (inside @code / BuildTab.razor.cs)
+================================================================================
+PASTE next to BuildFilePathClicked / RepoFromBranch.
+
+    private Task OnRepoFromBranchChanged(ChangeEventArgs e)
+    {
+        RepoFromBranch = e.Value?.ToString()?.Trim() ?? string.Empty;
+        ResolvedBuildFilePath = string.Empty;
+        return InvokeAsync(StateHasChanged);
+    }
+
+What this does:
+  1. Writes the newly selected branch into RepoFromBranch (replaces @bind).
+  2. Clears the "build file path" label so F:\build-output\9.351 disappears.
+  3. Re-renders. The @if (!string.IsNullOrWhiteSpace(ResolvedBuildFilePath))
+     span is hidden until the user clicks "Build file path" again.
+
+
+================================================================================
+DO NOT CHANGE / DO NOT ADD
+================================================================================
+[ ] Do NOT keep @bind="RepoFromBranch" on this <select>
+    (RZ10008: The attribute 'onchange' is used two or more times)
+[ ] Do NOT use @bind + @onchange together. @bind already uses onchange.
+[ ] Do NOT clear RepoFromBranch — only clear ResolvedBuildFilePath
+[ ] Do NOT auto-call BuildFilePathClicked on change
+[ ] Do NOT change GetBuildFilePath / BuildFilePathClicked combine logic
+[ ] Do NOT add keys to appsettings.json
+[ ] Refresh / LoadRepoBranchesAsync does not need to clear the label
+    (@onchange fires only on a user pick)
+
+
+================================================================================
+STEP-BY-STEP WORK ORDER
+================================================================================
+1. CHANGE 1 — DELETE @bind="RepoFromBranch", ADD value="@RepoFromBranch"
+   (keep the @onchange line you already added)
+2. CHANGE 2 — paste OnRepoFromBranchChanged if it is not already in @code
+3. Rebuild — RZ10008 must be gone; red squiggles on the handler go away
+4. Run the tool
+5. Click Build file path → label shows F:\build-output\9.351 (or your path)
+6. Change Get Latest From Repo Branch to a different branch
+7. Confirm the label next to "Build file path" is empty
+8. Click Build file path again → label shows the path for the new branch
+
+
+================================================================================
+EXPECTED BEHAVIOR
+================================================================================
+Before change (label already set):
+
+    Get Latest From Repo Branch:  GSSv9.252
+    build file path:              F:\build-output\9.351
+
+After changing the dropdown to GSSv9.3S1:
+
+    Get Latest From Repo Branch:  GSSv9.3S1
+    build file path:              (blank — span hidden)
+
+Click Build file path:
+
+    [INFO] Build file path: F:\build-output\9.3S1
+    label shows F:\build-output\9.3S1
+
+
+================================================================================
+CHECKLIST
+================================================================================
+[ ] <select> uses value="@RepoFromBranch" + @onchange="OnRepoFromBranchChanged"
+[ ] @bind="RepoFromBranch" is GONE from this dropdown
+[ ] OnRepoFromBranchChanged sets RepoFromBranch AND clears ResolvedBuildFilePath
+[ ] Changing the dropdown hides the build file path label
+[ ] Clicking Build file path still creates/opens the folder and shows the label
+[ ] Get latest still uses the selected RepoFromBranch
+[ ] No new keys in appsettings.json
+[ ] Red squiggles gone after Rebuild
+
+
+================================================================================
+END
+================================================================================
