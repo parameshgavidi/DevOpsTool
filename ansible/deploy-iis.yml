@@ -1,0 +1,173 @@
+---
+# Configure Windows Server + deploy the GSSWeb zip into IIS.
+# This is the Ansible replacement for Jenkins stages:
+#   Backup IIS, Deploy to IIS, Smoke test
+# from docs/fixes/JENKINS-GSSWEB-IIS-PIPELINE.txt
+#
+# Server config (IIS features, app pool, site) replaces the one-time
+# Administrator PowerShell in PART 1 of that same file.
+#
+# Official EBS path: NIT Ansible templates (request IIS / Windows).
+# This playbook is the lab / draft until those templates exist.
+#
+# Usage:
+#   ansible-playbook -i ansible/inventories/dev.ini ansible/deploy-iis.yml \
+#     --extra-vars "artifact_version=42"
+#
+# Collections:
+#   ansible-galaxy collection install ansible.windows community.windows
+
+- name: Configure Windows Server and deploy IIS site
+  hosts: iis_servers
+  gather_facts: true
+  vars:
+    iis_site_name: GSSWeb
+    iis_app_pool: GSSWeb
+    iis_physical: 'C:\inetpub\wwwroot\GSSWeb'
+    iis_http_port: 80
+    backup_root: 'C:\inetpub\backups\GSSWeb'
+    artifact_zip_name: gssweb-iis.zip
+    artifactory_url: ""
+    artifactory_repo: generic-local
+    staging_dir: 'C:\temp\gssweb-deploy'
+    skip_feature_install: false
+
+  tasks:
+    - name: Ensure IIS and ASP.NET 4.8 Windows features
+      ansible.windows.win_feature:
+        name:
+          - Web-Server
+          - Web-WebServer
+          - Web-Common-Http
+          - Web-Default-Doc
+          - Web-Dir-Browsing
+          - Web-Http-Errors
+          - Web-Static-Content
+          - Web-Http-Logging
+          - Web-Stat-Compression
+          - Web-Filtering
+          - Web-Net-Ext45
+          - Web-Asp-Net45
+          - Web-ISAPI-Ext
+          - Web-ISAPI-Filter
+          - Web-Mgmt-Console
+        state: present
+      when: not skip_feature_install
+      register: iis_features
+
+    - name: Reboot if feature install requires it
+      ansible.windows.win_reboot:
+      when: iis_features is changed and iis_features.reboot_required | default(false)
+
+    - name: Ensure staging, site, and backup folders
+      ansible.windows.win_file:
+        path: "{{ item }}"
+        state: directory
+      loop:
+        - "{{ staging_dir }}"
+        - "{{ iis_physical }}"
+        - "{{ backup_root }}"
+
+    - name: Ensure IIS app pool (v4.0, same as the old GSSWeb job)
+      community.windows.win_iis_webapppool:
+        name: "{{ iis_app_pool }}"
+        state: started
+        attributes:
+          managedRuntimeVersion: v4.0
+          managedPipelineMode: Integrated
+
+    - name: Ensure IIS website bound to the physical path
+      community.windows.win_iis_website:
+        name: "{{ iis_site_name }}"
+        state: started
+        port: "{{ iis_http_port }}"
+        physical_path: "{{ iis_physical }}"
+        application_pool: "{{ iis_app_pool }}"
+
+    - name: Download artifact zip from Artifactory
+      ansible.windows.win_get_url:
+        url: "{{ artifactory_url }}/{{ artifactory_repo }}/gssweb/{{ artifact_version }}/{{ artifact_zip_name }}"
+        dest: "{{ staging_dir }}\\{{ artifact_zip_name }}"
+        url_username: "{{ artifactory_user | default(omit) }}"
+        url_password: "{{ artifactory_password | default(omit) }}"
+      when:
+        - artifactory_url | length > 0
+        - artifact_version is defined
+        - artifact_version | length > 0
+
+    - name: Fail if no zip is on the server yet
+      ansible.windows.win_stat:
+        path: "{{ staging_dir }}\\{{ artifact_zip_name }}"
+      register: zip_stat
+
+    - name: Require the CI zip (copy it to staging_dir if Artifactory URL is empty)
+      ansible.windows.win_copy:
+        src: "{{ playbook_dir }}/../artifacts/{{ artifact_zip_name }}"
+        dest: "{{ staging_dir }}\\{{ artifact_zip_name }}"
+      when: not zip_stat.stat.exists
+      ignore_errors: true
+
+    - name: Recheck zip after optional copy
+      ansible.windows.win_stat:
+        path: "{{ staging_dir }}\\{{ artifact_zip_name }}"
+      register: zip_stat2
+
+    - name: Stop if the CI zip is still missing
+      ansible.builtin.fail:
+        msg: "{{ staging_dir }}\\{{ artifact_zip_name }} is missing. Run Jenkins CI (gssweb-ci) first, upload to Artifactory, or copy gssweb-iis.zip onto the Windows server staging folder."
+      when: not zip_stat2.stat.exists
+
+    - name: Unzip artifact into staging\site
+      community.windows.win_unzip:
+        src: "{{ staging_dir }}\\{{ artifact_zip_name }}"
+        dest: "{{ staging_dir }}\\site"
+        delete_archive: false
+
+    - name: Backup IIS, stop pool, copy files, start pool, smoke test
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          Import-Module WebAdministration
+
+          $pool = '{{ iis_app_pool }}'
+          $dest = '{{ iis_physical }}'
+          $src  = '{{ staging_dir }}\site'
+          $backupRoot = '{{ backup_root }}'
+          $port = '{{ iis_http_port }}'
+
+          if (-not (Test-Path $src)) { throw "Unzipped site missing: $src" }
+          if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest | Out-Null }
+
+          $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+          $backup = Join-Path $backupRoot $stamp
+          New-Item -ItemType Directory -Path $backup -Force | Out-Null
+          if (Test-Path $dest) {
+              Copy-Item (Join-Path $dest '*') $backup -Recurse -Force
+          }
+          Write-Host "Backup: $backup"
+
+          Write-Host "Stopping app pool $pool"
+          Stop-WebAppPool -Name $pool -ErrorAction SilentlyContinue
+          $deadline = (Get-Date).AddSeconds(30)
+          do {
+              Start-Sleep -Seconds 1
+              $state = (Get-WebAppPoolState -Name $pool).Value
+          } while ($state -ne 'Stopped' -and (Get-Date) -lt $deadline)
+
+          Get-ChildItem $src -Force |
+              Where-Object { $_.Name -notin @('.git','packages') -and $_.Extension -notin @('.sln','.resx') } |
+              Copy-Item -Destination $dest -Recurse -Force
+
+          Write-Host "Starting app pool $pool"
+          Start-WebAppPool -Name $pool
+          Start-Sleep -Seconds 2
+          $state = (Get-WebAppPoolState -Name $pool).Value
+          Write-Host "App pool: $state"
+          if ($state -ne 'Started') { throw "App pool '$pool' is $state" }
+
+          $url = "http://localhost:$port/"
+          Write-Host "GET $url"
+          $r = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 60
+          if ($r.StatusCode -ge 400) { throw "HTTP $($r.StatusCode) from $url" }
+          Write-Host "HTTP $($r.StatusCode) from $url"
+          Write-Host "Application is running on IIS site {{ iis_site_name }}"

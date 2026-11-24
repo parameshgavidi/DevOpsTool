@@ -1,0 +1,658 @@
+================================================================================
+JENKINS CI + ANSIBLE CD — .NET TO WINDOWS IIS
+File: docs/fixes/JENKINS-ANSIBLE-IIS-WINDOWS-STEPS.txt
+
+Follow-along notepad. Same GSSWeb Copy Files path we already ran in
+Jenkins, split the way the FY26 DevSecOps Transition Guide does it:
+
+  Developer commits code in Git
+  Jenkins builds the .NET code, runs tests, creates artifacts
+  Ansible configures the Windows Server and deploys into IIS
+  Application runs in the target environment (DEV / SIT / CAT / PRD)
+
+This is NOT the MAUI DevOps tool BUILD / SIT / CAT / PROD flow
+(docs/deployment-flow.md).
+
+This is NOT the local laptop / VDI job that both built AND copied
+into localhost IIS (job GSSWebIIS). That job is the PREVIOUS process.
+Keep it for reference. Do not keep using it as the enterprise deploy.
+
+Official guide (screenshot): FY26 DevSecOps Transition Guide
+  Prerequisites
+  Deploy Manifest and Deploy Request
+  Uploading Deploy Manifest to Artifactory
+  Artifactory Release Bundles
+  Running your pipeline for DEV/SIT
+  Generating a CR with your Deploy Request Payload (CAT/PRD)
+================================================================================
+
+
+WHAT WE ALREADY DID (JENKINS DID EVERYTHING)
+--------------------------------------------
+Job GSSWebIIS (local Windows Jenkins) ran these stages in ONE job:
+
+  1. Get latest GSSWeb          git fetch / restore
+  2. Build GSSWebComponent      MSBuild, copy DLL into site Bin
+  3. Backup IIS                 copy C:\inetpub\wwwroot\GSSWeb
+  4. Deploy to IIS              stop app pool, Copy-Item, start pool
+  5. Smoke test                 GET http://localhost/
+
+Paste file we used:
+  docs/fixes/GSSWebIIS-Jenkins-script-3.txt
+  docs/fixes/JENKINS-GSSWEB-IIS-PIPELINE.txt
+
+Laptop install we used:
+  docs/fixes/JENKINS-WINDOWS-IIS-PIPELINE-STEPS.txt
+
+
+WHAT WE DO NOW (TWO JOBS)
+-------------------------
+  Job A  gssweb-ci       Jenkins. Git, build, tests, zip, Artifactory.
+  Job B  gssweb-deploy   Jenkins starts Ansible. Ansible does 3–5 above
+                         PLUS Windows Server / IIS configuration.
+
+  Developer commit Git
+          |
+          v
+  Jenkins CI  (windows agent)
+    Checkout → MSBuild GSSWebComponent → tests → zip gssweb-iis.zip
+    SonarQube + Security Gate (existing EBS jobs)
+    Upload zip + deploy-manifest to Artifactory
+    Create Release Bundle
+          |
+          v
+  Deploy Request JSON
+          |
+          +-- DEV / SIT --> run deploy pipeline now
+          |
+          +-- CAT / PRD --> Change Request first, then deploy pipeline
+          |
+          v
+  Ansible (control node → WinRM → Windows Server)
+    Connection test (ucd_{EIR}_ebs)
+    Configure IIS features, app pool, site
+    Download zip from Artifactory
+    Backup IIS
+    Stop app pool, copy files, start app pool
+    Smoke test
+          |
+          v
+  Application running on Windows IIS
+
+
+PLACEHOLDERS — swap these before the first enterprise run
+--------------------------------------------------------
+  GIT_URL              = https://github.com/YourOrg/gss-root.git
+  GIT_BRANCH           = main
+  EIR                  = 9999
+                         (your EIR number. Service account = ucd_9999_ebs)
+  JENKINS_URL          = (EBS Jenkins, not http://localhost:8080)
+  ARTIFACTORY_URL      = https://artifactory.example.local/artifactory
+  ARTIFACTORY_REPO     = generic-local
+  ANSIBLE_TOWER        = (non-production Ansible tower from NIT)
+  WINDOWS_HOST_DEV     = DEV-WEB-01.example.local
+  WINDOWS_HOST_SIT     = SIT-WEB-01.example.local
+  IIS_SITE_NAME        = GSSWeb
+  IIS_APP_POOL         = GSSWeb
+  IIS_PHYSICAL         = C:\inetpub\wwwroot\GSSWeb
+  IIS_HTTP_PORT        = 80
+  ARTIFACT_ZIP         = gssweb-iis.zip
+  MSBUILD_EXE          = (same search order as GSSWebIIS: VS 18, 2022, 2019)
+
+GSSWeb build facts that do NOT change:
+
+  Do NOT use dotnet restore / dotnet build.
+  Do NOT use the website MSI for this path (Copy Files).
+  Skip Crystal Reports Backup Files\GSSWebComponent.csproj.
+  Skip SSRS .rptproj / .vdproj.
+  Do NOT aspnet_compiler (CS1647). Copy website folder + Bin DLL.
+  64-bit IIS app pool compiles on first request.
+
+
+================================================================================
+PART 0 — MAP OLD JENKINS STAGES TO THE NEW JOBS
+================================================================================
+Old GSSWebIIS stage                 New owner
+---------------------------------   ---------------------------------------
+Get latest GSSWeb                   Jenkins CI  stage Checkout Git
+Build GSSWebComponent + publish     Jenkins CI  stage Build GSSWebComponent
+(none — tests were not a stage)     Jenkins CI  stage Run tests
+(none — files stayed on the node)   Jenkins CI  stage Package artifact
+                                    Jenkins CI  upload Artifactory + manifest
+Create IIS site (manual PART 1)     Ansible     win_feature + win_iis_*
+Backup IIS                          Ansible     same PowerShell, on the server
+Deploy to IIS                       Ansible     same Stop / Copy / Start
+Smoke test                          Ansible     GET http://localhost:PORT/
+Application running                 Target IIS  after Ansible succeeds
+
+Keep the old job for a rollback demo on the VDI. Enterprise deploys
+go through Artifactory + Ansible so SIT / CAT / PRD get the same zip.
+
+
+================================================================================
+PART 1 — PREREQUISITES (FY26 GUIDE)
+================================================================================
+Do these before you change any Jenkins job. The FY26 guide lists
+them as required.
+
+1. Existing CI/CD pipeline
+   Your team should already have EBS pipeline jobs for:
+     building
+     SonarQube scanning
+     Artifactory upload
+     Security Gate
+   This notepad walks you through adding the Ansible deploy steps.
+   Do not throw away the EBS build / scan / upload jobs.
+
+2. Ansible service account
+   BPL or BSA requests a Windows Domain Service Account — USA
+   in eAccess. Naming convention:
+
+     ucd_{EIR}_ebs
+     example:  ucd_9999_ebs
+
+   Only users with manager access can request the account.
+   See the FY26 page  Configure Ansible for Automated Deployments
+   for the full eAccess request (parameters + security groups).
+
+3. Verify Ansible connectivity
+   Test the connection to the Ansible non-production tower so NIT
+   has granted the required permissions.
+   Use the EBS sample job:  Ansible Connection Test
+   A green ping means WinRM + ucd_{EIR}_ebs can reach the Windows
+   hosts. Do not start a deploy until this is green.
+
+4. Request Ansible templates
+   Email  NITInfrastructureDesign@usgs.gov  and ask for Ansible
+   templates for ALL environments and EACH deployable component.
+
+   Environments:  DEV, SIT, CAT, PRD
+   Your component type for GSSWeb:  IIS / Windows  (Copy Files)
+
+   The FY26 examples list Tomcat, WebSphere, Oracle, batch.
+   GSSWeb is none of those. Say that clearly in the request:
+
+     Application: GSSWeb (classic ASP.NET Web Forms / IIS)
+     Deploy type: Copy Files into IIS (not MSI, not Tomcat)
+     Site / pool / path: GSSWeb / GSSWeb / C:\inetpub\wwwroot\GSSWeb
+     We already ran this with Jenkins PowerShell on a VDI.
+     Please provide the IIS / Windows Ansible template, or confirm
+     we may use ansible/deploy-iis.yml from our repo until then.
+
+   Also attend the DevSecOps Daily Working Session (10:30 EST)
+   for breakout rooms per component type.
+
+Checklist before PART 2:
+
+  [ ] EBS build / SonarQube / Artifactory / Security Gate jobs exist
+  [ ] ucd_{EIR}_ebs requested and granted
+  [ ] Ansible Connection Test job is green against non-prod tower
+  [ ] IIS / Windows Ansible template requested (or lab playbook accepted)
+  [ ] Jenkins URL + login (not localhost:8080) — see
+      docs/fixes/AWS-JENKINS-TEAM-QUESTIONS.txt PART A
+
+
+================================================================================
+PART 2 — DEVELOPER COMMITS CODE IN GIT
+================================================================================
+This replaces "Get latest" on the VDI (git fetch of F:\GSS\AppDev\gss-root).
+
+1. Developer works on GIT_BRANCH (example: main, or a release branch).
+2. Commit the .NET change. Push to origin.
+
+     git add ...
+     git commit -m "..."
+     git push origin GIT_BRANCH
+
+3. EBS Jenkins job gssweb-ci is triggered:
+     - webhook from Git, or
+     - Pipeline script from SCM polling, or
+     - Build Now
+
+Jenkins clones GIT_URL. It does not depend on F:\GSS\AppDev\gss-root
+being already on the controller.
+
+Private repo: Jenkins credentials ID (same question as
+AWS-JENKINS-TEAM-QUESTIONS.txt item 5).
+
+
+================================================================================
+PART 3 — JENKINS BUILDS .NET, RUNS TESTS, CREATES ARTIFACTS
+================================================================================
+Job name:  gssweb-ci
+File:      jenkins/Jenkinsfile.dotnet-ci
+Agent:     label windows  (MSBuild lives here, same as before)
+
+This Jenkinsfile is a template in DevOpsTool. The CI job must see
+the GSS source (WebV3\gssweb, Shared Components\GSSWebComponent):
+
+  A. Paste jenkins/Jenkinsfile.dotnet-ci into the EBS job
+     (same as we pasted GSSWebIIS-Jenkins-script-3.txt), OR
+  B. Copy that file into the GSS Git repo and use
+     Pipeline script from SCM (Script Path below).
+
+Do not point SCM at DevOpsTool and expect GSSWeb to compile.
+
+Create the job:
+
+1. EBS Jenkins → New Item → Name: gssweb-ci → Pipeline → OK
+2. Pipeline → Definition: Pipeline script from SCM
+     SCM: Git
+     Repository URL: GIT_URL   (the GSS app repo, not DevOpsTool)
+     Credentials: (item 5)
+     Branch: */GIT_BRANCH
+     Script Path: jenkins/Jenkinsfile.dotnet-ci
+3. Save. Do not deploy from this job.
+
+Stages in jenkins/Jenkinsfile.dotnet-ci (same MSBuild as GSSWebIIS):
+
+  Checkout Git
+    git status, git rev-parse
+    (Declarative Pipeline already checked out the repo)
+
+  Build GSSWebComponent
+    Find MSBuild (VS 18, VS 2022, then MSBUILD_EXE)
+    Skip Crystal Reports Backup Files csproj
+    msbuild GSSWebComponent.csproj /p:Configuration=Release /t:Build
+    Copy GSSWebComponent.dll into WebV3\gssweb\gssweb\Bin
+    Do NOT FolderProfile the .sln (SSRS MSB4226)
+    Do NOT aspnet_compiler (CS1647)
+
+  Run tests
+    If any *Tests.dll exists under bin\Release or bin\Debug,
+    run vstest.console.exe. If none, skip (GSSWeb website often
+    has no unit-test assembly). A failing test fails the job.
+    Do not upload a zip from a red test stage.
+
+  Package artifact
+    Copy website folder (skip .git, packages, .sln, .resx)
+    Zip to artifacts\gssweb-iis.zip
+    Write / copy deploy-manifest.json next to the zip
+
+  Upload to Artifactory
+    Only if ARTIFACTORY_URL is set.
+    Prefer the existing EBS Artifactory / JFrog plugin step
+    (FY26: you should already have this job). The Jenkinsfile
+    has a PLACEHOLDER echo until that URL is filled in.
+
+  post
+    archiveArtifacts artifacts\gssweb-iis.zip  (Jenkins copy)
+    The deployable unit is that zip, not the Jenkins workspace.
+
+Green CI means: zip exists, DLL is in Bin, tests did not fail.
+It does NOT mean IIS was updated. Ansible does that.
+
+Paste-only option (no SCM file yet):
+  Open jenkins/Jenkinsfile.dotnet-ci, paste the whole file into
+  the job's Pipeline script box, swap PLACEHOLDERS, Save,
+  Build Now. After it is green, switch to Pipeline script from SCM.
+
+
+================================================================================
+PART 4 — SONARQUBE, SECURITY GATE, ARTIFACTORY, RELEASE BUNDLE
+================================================================================
+FY26 assumes these EBS jobs already exist. Do not rebuild them
+inside gssweb-ci unless the Jenkins team says to merge them.
+
+Order after a green build:
+
+  1. SonarQube scan of the same Git commit
+  2. Security Gate  (must pass)
+  3. Artifactory upload of:
+       artifacts/gssweb-iis.zip
+       docs/samples/deploy-manifest-gssweb.json
+  4. Create a Release Bundle in Artifactory
+       name:    GSSWeb
+       version: Jenkins BUILD_NUMBER  (or the version your team uses)
+  5. View the Release Bundle in Artifactory and confirm both files
+     are in it.
+
+Sample manifest (draft — NIT may require extra fields):
+
+  docs/samples/deploy-manifest-gssweb.json
+
+It says:
+  type = iis
+  artifact = gssweb-iis.zip
+  site / pool / path = GSSWeb / GSSWeb / C:\inetpub\wwwroot\GSSWeb
+  skip dotnet restore, website MSI, SSRS, Crystal backup csproj
+
+If NIT gives you a sample deploy_manifest, copy their field names
+over this draft. Do not invent a second schema.
+
+
+================================================================================
+PART 5 — DEPLOY REQUEST JSON
+================================================================================
+The deploy request is what the deploy pipeline reads. It is not
+the application zip. It points at the Release Bundle + environment.
+
+Samples:
+
+  docs/samples/deploy-request-dev.json     DEV, no CR
+  docs/samples/deploy-request-sit.json     SIT, no CR
+  docs/samples/deploy-request-cat.json     CAT, changeRequestRequired true
+
+Swap {{BUILD_NUMBER}} for the CI build that passed Security Gate.
+
+DEV / SIT: attach this JSON and run the deploy pipeline (PART 7).
+
+CAT / PRD: generate a Change Request with this payload first
+(FY26: Generating a CR with your Deploy Request Payload).
+Wait for approval. Then run the same deploy pipeline.
+
+
+================================================================================
+PART 6 — ANSIBLE SERVICE ACCOUNT, PING, TEMPLATES
+================================================================================
+Already started in PART 1. Before the first deploy:
+
+1. Confirm the account  ucd_{EIR}_ebs  can log on to DEV-WEB-01
+   and SIT-WEB-01 (and later CAT / PRD).
+
+2. Run EBS job  Ansible Connection Test
+   against the non-production tower.
+   Green = WinRM + permissions are in place.
+
+3. Lab ping from the Ansible control node (optional):
+
+     ansible iis_servers -i ansible/inventories/dev.ini -m win_ping
+
+   Inventories (PLACEHOLDERS — swap hostnames):
+
+     ansible/inventories/dev.ini
+     ansible/inventories/sit.ini
+     ansible/inventories/cat.ini
+     ansible/inventories/prd.ini
+
+   ansible_user = ucd_EIR_ebs
+   ansible_connection = winrm
+   Do not put the password in Git. Jenkins credentials or Vault.
+
+4. If NIT has not issued the IIS template yet, use the lab playbook:
+
+     ansible/deploy-iis.yml
+
+   That playbook is the Jenkins Deploy-to-IIS PowerShell, moved
+   onto the Windows host, plus IIS feature / site / pool setup.
+
+
+================================================================================
+PART 7 — ANSIBLE CONFIGURES WINDOWS SERVER AND DEPLOYS TO IIS
+================================================================================
+Job name:  gssweb-deploy
+File:      jenkins/Jenkinsfile.ansible-deploy
+Agent:     label ansible  (Linux control node, NOT the old laptop)
+
+Official EBS path
+  The existing Deployment Pipeline Execution job consumes the
+  deploy request and runs NIT templates. Use that job when NIT
+  has given you the IIS / Windows template. Parameters:
+
+    ENVIRONMENT        DEV or SIT (CAT/PRD after CR)
+    ARTIFACT_VERSION   CI build number
+    deploy request     JSON from PART 5
+
+Lab path (until the template exists)
+  1. New Item → gssweb-deploy → Pipeline
+  2. Pipeline script from SCM
+       Script Path: jenkins/Jenkinsfile.ansible-deploy
+  3. Build with parameters:
+       ENVIRONMENT = DEV
+       ARTIFACT_VERSION = (the green gssweb-ci number)
+  4. CAT/PRD parameter values fail the Guard CAT/PRD stage on
+     purpose until the CR is approved.
+
+What ansible/deploy-iis.yml does on each Windows host
+(same order as the old Jenkins PowerShell):
+
+  A. Server configuration (new — used to be a one-time manual step)
+     Enable IIS + ASP.NET 4.8 features
+     Create app pool GSSWeb, managedRuntimeVersion v4.0
+     Create site GSSWeb on IIS_HTTP_PORT
+     Physical path C:\inetpub\wwwroot\GSSWeb
+
+  B. Get the zip
+     Download from Artifactory, or copy artifacts/gssweb-iis.zip
+     Unzip to C:\temp\gssweb-deploy\site
+
+  C. Backup IIS
+     Copy current site to C:\inetpub\backups\GSSWeb\yyyyMMdd-HHmmss
+     Same idea as Jenkins stage Backup IIS.
+
+  D. Deploy
+     Stop-WebAppPool GSSWeb  (wait up to 30s)
+     Copy files, skip .git, packages, .sln, .resx
+     Start-WebAppPool GSSWeb
+     Fail if the pool is not Started
+
+  E. Smoke test
+     GET http://localhost:IIS_HTTP_PORT/
+     Fail on HTTP >= 400
+     Console: Application is running on IIS site GSSWeb
+
+Run by hand from the control node (lab):
+
+  ansible-galaxy collection install ansible.windows community.windows
+
+  ansible-playbook -i ansible/inventories/dev.ini ansible/deploy-iis.yml \
+    --extra-vars "artifact_version=42 artifactory_url=https://..."
+
+
+================================================================================
+PART 8 — APPLICATION RUNS IN THE TARGET ENVIRONMENT
+================================================================================
+After Ansible is green:
+
+  Browser (from a jump host that can reach the server):
+
+    http://DEV-WEB-01/          (or the host header NIT assigned)
+    http://SIT-WEB-01/
+
+  On the Windows server (same checks as the old VDI):
+
+    Import-Module WebAdministration
+    Get-Website -Name GSSWeb
+    Get-WebAppPoolState -Name GSSWeb
+    Get-WebFilePath -PSPath "IIS:\Sites\GSSWeb"
+    dir C:\inetpub\wwwroot\GSSWeb
+    dir C:\inetpub\wwwroot\GSSWeb\Bin\GSSWebComponent.dll
+
+  You should see Bin\ and Web.config. App pool state = Started.
+  Smoke test HTTP 200.
+
+PROD extras (from docs/deployment-flow.md, still apply):
+  Drain the load balancer (health.gif → health.dat) before deploy
+  Wait until connections = 0
+  Deploy one server
+  Return to LB (health.dat → health.gif)
+  Ask NIT whether the Ansible template already does this. If it
+  does not, keep the drain / return as a pre / post step.
+
+
+================================================================================
+PART 9 — DEV / SIT vs CAT / PRD
+================================================================================
+DEV / SIT  (FY26: Running your pipeline for DEV/SIT)
+
+  1. Developer push
+  2. gssweb-ci green (build, tests, zip)
+  3. SonarQube + Security Gate green
+  4. Artifactory + Release Bundle
+  5. deploy-request-dev.json or deploy-request-sit.json
+  6. Run gssweb-deploy / EBS deploy pipeline
+  7. Confirm the site in PART 8
+
+CAT / PRD  (FY26: Generating a CR ... and Pre-Requisite for CAT/PRD)
+
+  1–4 same as above (do not rebuild in CAT — promote the same zip)
+  5. Fill docs/samples/deploy-request-cat.json
+  6. Generate the Change Request with that payload
+  7. Wait for approval
+  8. Run the deploy pipeline
+  9. Confirm the site
+
+jenkins/Jenkinsfile.ansible-deploy refuses CAT/PRD without that
+approval step (Guard CAT/PRD stage).
+
+
+================================================================================
+PART 10 — CREATE THE TWO JENKINS JOBS (CHECKLIST)
+================================================================================
+Job gssweb-ci
+  [ ] Pipeline script from SCM → jenkins/Jenkinsfile.dotnet-ci
+  [ ] Windows agent with MSBuild (same machine class as GSSWebIIS)
+  [ ] Git credentials
+  [ ] ARTIFACTORY_URL filled, or left blank for Jenkins archive only
+  [ ] First build Finished: SUCCESS
+  [ ] artifacts/gssweb-iis.zip is in Jenkins Archive and/or Artifactory
+
+Job gssweb-deploy
+  [ ] Pipeline script from SCM → jenkins/Jenkinsfile.ansible-deploy
+  [ ] Agent label ansible (control node)
+  [ ] Ansible Connection Test already green
+  [ ] Inventory hostnames swapped
+  [ ] ucd_{EIR}_ebs in Jenkins credentials / Vault, not in Git
+  [ ] First DEV or SIT deploy Finished: SUCCESS
+  [ ] Browser shows GSSWeb, not an IIS placeholder page
+
+Do not put both jobs in one Pipeline until the Jenkins team
+confirms Option 2 (AWS-JENKINS-TEAM-QUESTIONS.txt item 7).
+Two jobs is the usual split: build artifact, then deploy it.
+
+
+================================================================================
+PART 11 — DAILY USE
+================================================================================
+Change code → git push → gssweb-ci → (gate) → gssweb-deploy DEV/SIT.
+
+Rollback one Ansible deploy:
+
+  On the Windows server:
+
+    dir C:\inetpub\backups\GSSWeb
+    Pick the stamp folder from before the bad deploy.
+    Copy it back over C:\inetpub\wwwroot\GSSWeb
+    Import-Module WebAdministration
+    Restart-WebAppPool -Name GSSWeb
+
+  Or re-run Ansible against the previous Release Bundle version.
+
+Do not roll back by re-running the old GSSWebIIS localhost job
+against a SIT / CAT / PRD server.
+
+
+================================================================================
+PART 12 — TROUBLESHOOTING
+================================================================================
+gssweb-ci — MSBuild not found
+  Same as GSSWebIIS. Search VS 18, VS 2022, then MSBUILD_EXE.
+  docs/fixes/gssweb-msbuild-not-recognized.txt
+
+gssweb-ci — Crystal Reports Backup Files csproj
+  Recurse + First 1 picked the backup project (CS2001).
+  Skip any path under "Crystal Reports Backup Files".
+  Real project:
+    Shared Components\GSSWebComponent\GSSWebComponent.csproj
+
+gssweb-ci — MSB4226 SSRSReports.rptproj
+  Do not FolderProfile gssweb.sln. CI only builds the component
+  DLL and zips the website folder.
+
+gssweb-ci — tests skipped
+  Normal when there is no *Tests.dll. If you add a test project,
+  the stage starts running vstest automatically.
+
+Artifactory upload skipped
+  ARTIFACTORY_URL is empty. Jenkins still archives the zip.
+  Fill the URL or use the existing EBS upload job.
+
+Ansible Connection Test red
+  WinRM closed, wrong user, or NIT has not granted the account
+  on that host. Fix ping before deploy. Do not skip this.
+
+Ansible cannot stop / start app pool
+  Import-Module WebAdministration must run as a local admin
+  equivalent. ucd_{EIR}_ebs needs that right on the IIS box.
+  If the pool is Stopping forever: iisreset, then re-run.
+
+Zip missing on the Windows server
+  CI never uploaded, or artifact_version does not match the
+  Artifactory folder. Open the Release Bundle and copy the
+  exact path into the extra-vars.
+
+Smoke test HTTP 500
+  Files arrived, app crashed. Check Web.config and
+  Windows Event Viewer → Application.
+  App pool must be v4.0 (not "No Managed Code").
+  This is classic ASP.NET, not ASP.NET Core — no Hosting Bundle.
+
+Smoke test hits the wrong site
+  Jenkins is still 8080. IIS is 80 (or the NIT host header).
+  Do not point IIS_HTTP_PORT at the Jenkins port.
+
+CAT/PRD job failed immediately
+  Guard CAT/PRD is supposed to fail until the CR is approved.
+  Use DEV/SIT, or remove that stage only after the CR process
+  is wired to Jenkins.
+
+
+================================================================================
+PART 13 — FILES IN THIS REPO
+================================================================================
+  jenkins/Jenkinsfile.dotnet-ci
+      CI: Git, MSBuild, tests, zip, optional Artifactory
+
+  jenkins/Jenkinsfile.ansible-deploy
+      CD: connection test, ansible-playbook, CAT/PRD guard
+
+  ansible/deploy-iis.yml
+      IIS features, app pool, site, backup, copy files, smoke test
+
+  ansible/inventories/dev.ini  sit.ini  cat.ini  prd.ini
+      WinRM hosts. Swap names. No passwords in Git.
+
+  docs/samples/deploy-manifest-gssweb.json
+  docs/samples/deploy-request-dev.json
+  docs/samples/deploy-request-sit.json
+  docs/samples/deploy-request-cat.json
+  docs/samples/deploy-request-prd.json
+      Draft JSON. Prefer NIT / FY26 samples when they exist.
+
+  docs/jenkins-ansible-iis-flow.md
+      Flowchart of this process
+
+  docs/fixes/JENKINS-GSSWEB-IIS-PIPELINE.txt
+      PREVIOUS process (Jenkins built AND deployed localhost IIS)
+
+  docs/fixes/GSSWebIIS-Jenkins-script-3.txt
+      Paste file for that previous job
+
+  docs/fixes/AWS-JENKINS-TEAM-QUESTIONS.txt
+      Jenkins URL, one job vs two, artifact store, credentials
+
+  Jenkinsfile  (repo root)
+      MSI + Windows service. Different from this Copy Files path.
+
+  docs/deployment-flow.md
+      MAUI DevOps tool tabs. Different from Jenkins/Ansible.
+
+
+================================================================================
+CHECKLIST (END TO END)
+================================================================================
+[ ] PART 1 prerequisites (account, ping, templates, EBS CI jobs)
+[ ] Developer can git push GIT_BRANCH
+[ ] Job gssweb-ci green; artifacts/gssweb-iis.zip exists
+[ ] SonarQube + Security Gate green
+[ ] Zip + deploy-manifest in Artifactory Release Bundle
+[ ] Deploy request JSON filled with that version
+[ ] Ansible Connection Test green
+[ ] DEV or SIT Ansible deploy green
+[ ] Browser shows GSSWeb on the target Windows IIS site
+[ ] CAT/PRD CR process known; do not skip it
+
+
+================================================================================
+END
+================================================================================

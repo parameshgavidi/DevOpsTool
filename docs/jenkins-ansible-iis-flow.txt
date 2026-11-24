@@ -1,0 +1,39 @@
+%% Jenkins CI + Ansible CD — .NET to Windows IIS
+%% Plain-text Mermaid source for copy-paste.
+flowchart TD
+    Dev([Developer commit]) --> Git[Git repository]
+    Git --> CiJob[Jenkins job gssweb-ci]
+
+    subgraph CI["JENKINS CI — windows agent"]
+        direction TB
+        Checkout[Checkout Git]
+        Checkout --> Build["Build GSSWebComponent<br/>MSBuild + copy DLL to Bin"]
+        Build --> Tests[Run tests]
+        Tests --> Zip["Package artifact<br/>gssweb-iis.zip"]
+        Zip --> Scan[SonarQube + Security Gate]
+        Scan --> Upload["Upload zip + deploy-manifest<br/>to Artifactory"]
+        Upload --> Bundle[Create Release Bundle]
+    end
+
+    CiJob --> Checkout
+    Bundle --> Req{Environment?}
+
+    Req -->|DEV / SIT| DeployJob[Jenkins job gssweb-deploy]
+    Req -->|CAT / PRD| CR[Change Request with deploy-request JSON]
+    CR --> Approved{CR approved?}
+    Approved -->|No| Wait[Wait]
+    Approved -->|Yes| DeployJob
+
+    subgraph CD["ANSIBLE — control node to Windows via WinRM"]
+        direction TB
+        Ping["Connection test<br/>ucd_{EIR}_ebs"]
+        Ping --> Features["Configure Windows Server<br/>IIS + ASP.NET 4.8 features"]
+        Features --> Site["App pool v4.0 + IIS site"]
+        Site --> Download[Download zip from Artifactory]
+        Download --> Backup[Backup IIS site folder]
+        Backup --> Copy["Stop app pool, copy files,<br/>start app pool"]
+        Copy --> Smoke[Smoke test HTTP]
+    end
+
+    DeployJob --> Ping
+    Smoke --> Running([Application running on Windows IIS])

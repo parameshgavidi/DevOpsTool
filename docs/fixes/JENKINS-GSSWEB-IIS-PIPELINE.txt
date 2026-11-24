@@ -346,6 +346,10 @@ RELATED FILES
       Questions to ask Jenkins / AWS team before the same
       GSSWeb IIS flow is run in AWS (not localhost)
 
+  docs/fixes/JENKINS-ANSIBLE-IIS-WINDOWS-STEPS.txt
+      NEXT process: Jenkins CI (build / tests / zip) then Ansible
+      deploys that zip onto Windows Server IIS (DEV / SIT / CAT / PRD)
+
 
 ================================================================================
 END

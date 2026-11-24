@@ -181,6 +181,9 @@ RELATED FILES
   docs/fixes/MSI-Install-Deploy-Steps.txt
       MSI + IIS / Windows service (different from Copy Files)
 
+  docs/fixes/JENKINS-ANSIBLE-IIS-WINDOWS-STEPS.txt
+      Jenkins CI + Ansible CD for Windows IIS (the FY26 split)
+
 
 ================================================================================
 END

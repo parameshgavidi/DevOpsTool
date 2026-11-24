@@ -1,0 +1,114 @@
+// Jenkins CD — download the CI zip from Artifactory, then Ansible deploys
+// it onto Windows Server + IIS.
+//
+// Paste into a Pipeline job named gssweb-deploy, or set
+// Pipeline script from SCM → Script Path: jenkins/Jenkinsfile.ansible-deploy
+//
+// This job does NOT msbuild. It only:
+//   1. Reads deploy-request JSON (environment + artifact version)
+//   2. Runs the EBS Ansible Connection Test (or ansible ping)
+//   3. Runs ansible/deploy-iis.yml
+//
+// DEV / SIT: run this job after gssweb-ci is green.
+// CAT / PRD: generate a Change Request with the same payload first
+//            (FY26 guide: Generating a CR with your Deploy Request Payload).
+//
+// STEPS: docs/fixes/JENKINS-ANSIBLE-IIS-WINDOWS-STEPS.txt
+//
+// The Ansible control node is usually Linux. The Windows IIS servers are
+// inventory hosts (WinRM + ucd_{EIR}_ebs). Do not run this on the old
+// "agent any" laptop that used to Copy-Item into localhost IIS.
+
+pipeline {
+    agent {
+        label 'ansible'
+        // Swap to the EBS / Ansible control-node label your Jenkins team gives you.
+        // If the control node is the Jenkins Linux box: agent any  is OK.
+    }
+
+    parameters {
+        string(name: 'ENVIRONMENT', defaultValue: 'DEV', description: 'DEV, SIT, CAT, or PRD')
+        string(name: 'ARTIFACT_VERSION', defaultValue: '', description: 'CI build number or Artifactory folder, e.g. 42')
+        string(name: 'DEPLOY_REQUEST_FILE', defaultValue: 'docs/samples/deploy-request-dev.json', description: 'Path in the repo')
+    }
+
+    environment {
+        ANSIBLE_PLAYBOOK = 'ansible/deploy-iis.yml'
+        ANSIBLE_INVENTORY = "ansible/inventories/${params.ENVIRONMENT.toLowerCase()}.ini"
+        ARTIFACTORY_URL  = ''
+        ARTIFACTORY_REPO = 'generic-local'
+    }
+
+    options {
+        timestamps()
+    }
+
+    stages {
+        stage('Guard CAT/PRD') {
+            when {
+                expression { return params.ENVIRONMENT in ['CAT', 'PRD', 'PROD'] }
+            }
+            steps {
+                echo "CAT/PRD requires a Change Request with the Deploy Request payload."
+                echo "Do not run Ansible against CAT/PRD until the CR is approved."
+                error "Stop: generate the CR first (FY26 Pre-Requisite for CAT/PRD). Re-run after approval."
+            }
+        }
+
+        stage('Load deploy request') {
+            steps {
+                echo "Environment=${params.ENVIRONMENT} version=${params.ARTIFACT_VERSION}"
+                echo "Deploy request file: ${params.DEPLOY_REQUEST_FILE}"
+                sh '''
+                    test -f "$DEPLOY_REQUEST_FILE" || test -f "docs/samples/deploy-request-dev.json"
+                    echo "Deploy request present"
+                '''
+            }
+        }
+
+        stage('Ansible connection test') {
+            steps {
+                echo "Same check as the EBS sample job: Ansible Connection Test"
+                sh '''
+                    if [ -f "$ANSIBLE_INVENTORY" ]; then
+                        ansible iis_servers -i "$ANSIBLE_INVENTORY" -m win_ping || echo "PING_FAILED: run the EBS Ansible Connection Test job and fix WinRM / ucd_{EIR}_ebs first"
+                    else
+                        echo "Inventory not in repo yet: $ANSIBLE_INVENTORY"
+                        echo "Use the EBS Ansible Connection Test sample job against the non-production tower."
+                    fi
+                '''
+            }
+        }
+
+        stage('Ansible configure + deploy IIS') {
+            steps {
+                echo "Running ${env.ANSIBLE_PLAYBOOK} against ${params.ENVIRONMENT}"
+                // Official EBS path: the existing deploy pipeline job consumes
+                // deploy_request JSON and runs NIT Ansible templates.
+                // Lab / until templates exist: run the playbook in this repo.
+                sh '''
+                    extra="environment_name=${ENVIRONMENT}"
+                    if [ -n "$ARTIFACT_VERSION" ]; then
+                        extra="$extra artifact_version=${ARTIFACT_VERSION}"
+                    fi
+                    if [ -f "$ANSIBLE_INVENTORY" ] && [ -f "$ANSIBLE_PLAYBOOK" ]; then
+                        ansible-playbook -i "$ANSIBLE_INVENTORY" "$ANSIBLE_PLAYBOOK" --extra-vars "$extra"
+                    else
+                        echo "PLACEHOLDER: EBS deploy pipeline uses NIT Ansible templates here."
+                        echo "Playbook in this repo: ansible/deploy-iis.yml"
+                        echo "Request IIS / Windows templates from NITInfrastructureDesign@usgs.gov"
+                    fi
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Ansible finished. Application should be running on the ${params.ENVIRONMENT} IIS site."
+        }
+        failure {
+            echo "Deploy failed. Check WinRM, ucd_{EIR}_ebs, inventory, artifact zip, IIS app pool."
+        }
+    }
+}

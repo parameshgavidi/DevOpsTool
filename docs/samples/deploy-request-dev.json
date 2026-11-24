@@ -1,0 +1,17 @@
+{
+  "application": "GSSWeb",
+  "environment": "DEV",
+  "action": "deploy",
+  "releaseBundle": "GSSWeb-{{BUILD_NUMBER}}",
+  "deployManifest": "deploy-manifest-gssweb.json",
+  "artifactVersion": "{{BUILD_NUMBER}}",
+  "components": [
+    {
+      "name": "gssweb-iis",
+      "type": "iis",
+      "artifact": "gssweb-iis.zip"
+    }
+  ],
+  "changeRequestRequired": false,
+  "notes": "DEV/SIT can run the EBS deploy pipeline directly. CAT/PRD need a CR first."
+}
