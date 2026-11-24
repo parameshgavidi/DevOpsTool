@@ -1,0 +1,190 @@
+// Jenkins CI only — Git checkout, build .NET, tests, zip artifacts.
+// Do NOT copy files into IIS here. Ansible does deploy.
+//
+// Paste into a Pipeline job named gssweb-ci, or set
+// Pipeline script from SCM → Script Path: jenkins/Jenkinsfile.dotnet-ci
+//
+// PAIR WITH: jenkins/Jenkinsfile.ansible-deploy
+// STEPS:     docs/fixes/JENKINS-ANSIBLE-IIS-WINDOWS-STEPS.txt
+// PREVIOUS:  docs/fixes/JENKINS-GSSWEB-IIS-PIPELINE.txt  (build AND deploy)
+//
+// PLACEHOLDERS — swap before the first run.
+
+pipeline {
+    agent {
+        label 'windows'
+    }
+
+    options {
+        timestamps()
+        // CI clones Git. Do not skipDefaultCheckout (that was the local VDI job).
+    }
+
+    environment {
+        GIT_BRANCH      = 'main'
+        MSBUILD_EXE     = 'C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Professional\\MSBuild\\Current\\Bin\\amd64\\MSBuild.exe'
+        SLN_REL         = 'WebV3\\gssweb\\gssweb.sln'
+        SITE_REL        = 'WebV3\\gssweb\\gssweb'
+        WEB_REL         = 'WebV3\\gssweb'
+        COMPONENT_REL   = 'Shared Components\\GSSWebComponent\\GSSWebComponent.csproj'
+        ARTIFACT_ZIP    = 'gssweb-iis.zip'
+        ARTIFACT_DIR    = 'artifacts'
+        TEST_DLL_GLOB   = '**\\*Tests.dll'
+        // Artifactory (swap). Leave blank to skip upload and only archive in Jenkins.
+        ARTIFACTORY_URL = ''
+        ARTIFACTORY_REPO = 'generic-local'
+        ARTIFACTORY_PATH = "gssweb/${env.BUILD_NUMBER}"
+    }
+
+    stages {
+        stage('Checkout Git') {
+            steps {
+                echo "Checked out ${env.GIT_BRANCH} at ${env.WORKSPACE}"
+                bat 'git status -sb && git rev-parse --short HEAD'
+            }
+        }
+
+        stage('Build GSSWebComponent') {
+            steps {
+                powershell '''
+                    $msbuild = @(
+                        'F:\\Program Files\\Microsoft Visual Studio\\18\\Professional\\MSBuild\\Current\\Bin\\amd64\\MSBuild.exe',
+                        'C:\\Program Files\\Microsoft Visual Studio\\2022\\Professional\\MSBuild\\Current\\Bin\\amd64\\MSBuild.exe',
+                        $env:MSBUILD_EXE
+                    ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+                    if (-not $msbuild) {
+                        throw "MSBuild not found. Tried VS 18, VS 2022, and MSBUILD_EXE=$($env:MSBUILD_EXE)"
+                    }
+                    Write-Host "Using MSBuild: $msbuild"
+
+                    $csproj = Join-Path $env:WORKSPACE $env:COMPONENT_REL
+                    if (-not (Test-Path $csproj)) {
+                        $csproj = Get-ChildItem -Path (Join-Path $env:WORKSPACE "Shared Components") -Filter "GSSWebComponent.csproj" -Recurse -ErrorAction SilentlyContinue |
+                            Where-Object { $_.FullName -notmatch 'Crystal Reports Backup Files' } |
+                            Select-Object -First 1 -ExpandProperty FullName
+                    }
+                    if (-not $csproj -or ($csproj -match 'Crystal Reports Backup Files')) {
+                        throw "GSSWebComponent.csproj not found (skip Crystal Reports Backup Files)"
+                    }
+
+                    Write-Host "Building $csproj"
+                    & $msbuild $csproj /p:Configuration=Release /t:Build /v:m
+                    if ($LASTEXITCODE -ne 0) { throw "GSSWebComponent msbuild failed: $LASTEXITCODE" }
+
+                    $dll = @(
+                        (Join-Path (Split-Path $csproj) "bin\\Release\\GSSWebComponent.dll"),
+                        (Join-Path (Split-Path $csproj) "bin\\Release\\net48\\GSSWebComponent.dll")
+                    ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+                    if (-not $dll) { throw "GSSWebComponent.dll not found after build" }
+
+                    $site = Join-Path $env:WORKSPACE $env:SITE_REL
+                    $bin  = Join-Path $site "Bin"
+                    if (-not (Test-Path $bin)) { New-Item -ItemType Directory -Path $bin | Out-Null }
+                    Copy-Item $dll (Join-Path $bin "GSSWebComponent.dll") -Force
+                    Write-Host "Copied $dll -> $bin\\GSSWebComponent.dll"
+                '''
+            }
+        }
+
+        stage('Run tests') {
+            steps {
+                powershell '''
+                    $vstest = @(
+                        "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Professional\\Common7\\IDE\\CommonExtensions\\Microsoft\\TestWindow\\vstest.console.exe",
+                        "C:\\Program Files\\Microsoft Visual Studio\\2022\\Professional\\Common7\\IDE\\Extensions\\TestPlatform\\vstest.console.exe",
+                        "C:\\Program Files\\Microsoft Visual Studio\\18\\Professional\\Common7\\IDE\\Extensions\\TestPlatform\\vstest.console.exe"
+                    ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+                    $dlls = Get-ChildItem -Path $env:WORKSPACE -Filter "*Tests.dll" -Recurse -ErrorAction SilentlyContinue |
+                        Where-Object { $_.FullName -match '\\bin\\(Release|Debug)\\' -and $_.FullName -notmatch '\\packages\\' }
+
+                    if (-not $dlls) {
+                        Write-Host "No *Tests.dll under bin. Skipping vstest (GSSWeb website has no unit-test assembly)."
+                        return
+                    }
+                    if (-not $vstest) { throw "Test DLLs found but vstest.console.exe is missing" }
+
+                    $out = Join-Path $env:WORKSPACE "TestResults"
+                    New-Item -ItemType Directory -Path $out -Force | Out-Null
+                    & $vstest @($dlls.FullName) /Logger:trx /ResultsDirectory:$out
+                    if ($LASTEXITCODE -ne 0) { throw "Tests failed: $LASTEXITCODE" }
+                '''
+            }
+        }
+
+        stage('Package artifact') {
+            steps {
+                powershell '''
+                    $site = Join-Path $env:WORKSPACE $env:SITE_REL
+                    if (-not (Test-Path (Join-Path $site "Bin\\GSSWebComponent.dll"))) {
+                        throw "Site Bin\\GSSWebComponent.dll missing. Build stage did not copy the DLL."
+                    }
+                    $outDir = Join-Path $env:WORKSPACE $env:ARTIFACT_DIR
+                    New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+                    $stage = Join-Path $outDir "site"
+                    if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+                    New-Item -ItemType Directory -Path $stage | Out-Null
+
+                    Get-ChildItem $site -Force |
+                        Where-Object { $_.Name -notin @('.git','packages') -and $_.Extension -notin @('.sln','.resx') } |
+                        Copy-Item -Destination $stage -Recurse -Force
+
+                    $zip = Join-Path $outDir $env:ARTIFACT_ZIP
+                    if (Test-Path $zip) { Remove-Item $zip -Force }
+                    Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zip -Force
+                    Write-Host "Artifact: $zip  size=$((Get-Item $zip).Length)"
+
+                    $manifest = Join-Path $outDir "deploy-manifest.json"
+                    Copy-Item (Join-Path $env:WORKSPACE "docs\\samples\\deploy-manifest-gssweb.json") $manifest -ErrorAction SilentlyContinue
+                    if (-not (Test-Path $manifest)) {
+                        @"
+{
+  "application": "GSSWeb",
+  "component": "gssweb-iis",
+  "type": "iis",
+  "artifact": "$($env:ARTIFACT_ZIP)",
+  "buildNumber": "$($env:BUILD_NUMBER)",
+  "gitCommit": "$(git -C $env:WORKSPACE rev-parse HEAD)"
+}
+"@ | Set-Content -Path $manifest -Encoding UTF8
+                    }
+                    Write-Host "Manifest: $manifest"
+                '''
+            }
+        }
+
+        stage('Upload to Artifactory') {
+            when {
+                expression { return env.ARTIFACTORY_URL?.trim() }
+            }
+            steps {
+                echo "Upload ${env.ARTIFACT_DIR}/${env.ARTIFACT_ZIP} to ${env.ARTIFACTORY_URL}/${env.ARTIFACTORY_REPO}/${env.ARTIFACTORY_PATH}"
+                // Official EBS jobs already do Artifactory upload + Security Gate.
+                // Swap this block for the EBS / JFrog plugin step your Jenkins team gives you:
+                //
+                //   rtUpload serverId: 'artifactory', spec: '''{ "files": [ {
+                //     "pattern": "artifacts/*",
+                //     "target": "generic-local/gssweb/${BUILD_NUMBER}/"
+                //   } ] }'''
+                //   rtPublishBuildInfo serverId: 'artifactory'
+                bat '''
+                    echo PLACEHOLDER: use the EBS Artifactory upload step, or jfrog rt upload
+                    echo   jfrog rt upload "%ARTIFACT_DIR%\\*" "%ARTIFACTORY_REPO%/%ARTIFACTORY_PATH%/"
+                '''
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: 'artifacts/*, TestResults/**/*.trx', allowEmptyArchive: true
+            echo "CI finished: ${currentBuild.currentResult}"
+        }
+        success {
+            echo "Artifact ready: ${env.ARTIFACT_DIR}\\${env.ARTIFACT_ZIP}  — Ansible deploys this, not Jenkins."
+        }
+        failure {
+            echo "CI failed. Check Checkout Git, MSBuild path, Crystal Reports backup csproj, tests."
+        }
+    }
+}

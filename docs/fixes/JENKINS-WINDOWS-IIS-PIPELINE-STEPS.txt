@@ -918,6 +918,10 @@ RELATED FILES
       Jenkins job gssweb-iis: get latest, FolderProfile publish,
       copy GSSWeb into IIS (not the website MSI)
 
+  docs/fixes/JENKINS-ANSIBLE-IIS-WINDOWS-STEPS.txt
+      Enterprise split: Jenkins CI builds the zip, Ansible deploys
+      it to Windows Server IIS (not this laptop localhost copy)
+
 
 ================================================================================
 END

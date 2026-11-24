@@ -1,0 +1,32 @@
+{
+  "application": "GSSWeb",
+  "component": "gssweb-iis",
+  "type": "iis",
+  "description": "Classic ASP.NET Web Forms site. Copy Files into IIS (not the website MSI).",
+  "artifact": {
+    "name": "gssweb-iis.zip",
+    "packaging": "zip",
+    "repository": "generic-local",
+    "path": "gssweb/{{BUILD_NUMBER}}/gssweb-iis.zip"
+  },
+  "target": {
+    "os": "windows",
+    "runtime": "iis",
+    "managedRuntimeVersion": "v4.0",
+    "siteName": "GSSWeb",
+    "appPool": "GSSWeb",
+    "physicalPath": "C:\\inetpub\\wwwroot\\GSSWeb",
+    "httpPort": 80
+  },
+  "ansible": {
+    "template": "iis-windows",
+    "playbook": "ansible/deploy-iis.yml",
+    "serviceAccount": "ucd_{EIR}_ebs"
+  },
+  "skip": {
+    "dotnetRestore": true,
+    "websiteMsi": true,
+    "ssrsRptproj": true,
+    "crystalReportsBackupCsproj": true
+  }
+}

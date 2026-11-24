@@ -13,6 +13,20 @@ workflow (BUILD → SIT → CAT → PROD, with backup, DB script deploy, and log
 
 Plain-text Mermaid source for copy-paste: [`docs/deployment-flow.txt`](docs/deployment-flow.txt)
 
+## Jenkins CI + Ansible CD (Windows IIS)
+
+The local Jenkins job that both built GSSWeb **and** copied it into IIS is
+[`docs/fixes/JENKINS-GSSWEB-IIS-PIPELINE.txt`](docs/fixes/JENKINS-GSSWEB-IIS-PIPELINE.txt).
+
+Enterprise process (FY26 DevSecOps): developer commits to Git → Jenkins
+builds .NET, runs tests, and publishes artifacts → Ansible configures
+Windows Server and deploys into IIS.
+
+Step-by-step notepad:
+[`docs/fixes/JENKINS-ANSIBLE-IIS-WINDOWS-STEPS.txt`](docs/fixes/JENKINS-ANSIBLE-IIS-WINDOWS-STEPS.txt)
+
+Flowchart: [`docs/jenkins-ansible-iis-flow.md`](docs/jenkins-ansible-iis-flow.md)
+
 ## Architecture — split BuildTab into class files
 
 BuildTab `@code` should stay thin (UI only). Move git, build, DB rollup, email,
